@@ -77,6 +77,14 @@ tempo map。
 按稳定评分选择；手动移调跳过搜索。半音等距时默认向低音自然音取整，越界按八度
 折返。同一时刻映射到同键的音符会确定性去重并计数。
 
+人工音高核对可生成顺序听音文件：
+
+```powershell
+uv run --directory python python -m glt_core.tools.mapping_check artifacts/mapping-check
+```
+
+输出 WAV 每个音之间留有空隙，JSON manifest 同时记录按键顺序和 MIDI 音高。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：
