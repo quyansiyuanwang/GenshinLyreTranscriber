@@ -21,9 +21,13 @@
 目前尚未提供完整的用户转谱命令或 TUI，但已经具备可验证的 ONNX 处理基础：
 
 - `glt` Rust 二进制可以构建并输出版本号。
+- `glt doctor` 可以启动协议 worker 并显示 worker、应用和模型版本。
+- CLI 已定义 `transcribe`、`convert-midi`、`preview` 与 `tui` 命令及退出码。
 - `glt_core` Python 包可以安装并运行最小测试。
 - Python worker 探针可以使用固定 Basic Pitch ONNX 模型把 WAV 转为 MIDI。
-- 数据协议、完整媒体处理、节奏分析和三类谱导出仍待实现。
+- 正式 JSONL worker 服务、完整媒体处理、节奏分析和三类谱导出仍待实现。
+
+CLI 命令行为、worker 发现规则和退出码见 [docs/USAGE.md](docs/USAGE.md)。
 
 ## 开发环境
 

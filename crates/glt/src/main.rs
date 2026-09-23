@@ -1,3 +1,3 @@
 fn main() {
-    println!("glt {}", glt::VERSION);
+    std::process::exit(glt::cli::run());
 }
