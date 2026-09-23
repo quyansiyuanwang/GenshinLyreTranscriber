@@ -166,6 +166,7 @@ pub enum WorkerEvent {
     Warning {
         code: String,
         message: String,
+        details: Option<Value>,
     },
     Result(ResultPayload),
     Error(FailurePayload),
@@ -200,6 +201,8 @@ struct ProgressPayload {
 struct WarningPayload {
     code: String,
     message: String,
+    #[serde(default)]
+    details: Option<Value>,
 }
 
 pub struct WorkerClient {
@@ -345,6 +348,7 @@ impl WorkerClient {
                 Ok(WorkerEvent::Warning {
                     code: payload.code,
                     message: payload.message,
+                    details: payload.details,
                 })
             }
             "result" => {

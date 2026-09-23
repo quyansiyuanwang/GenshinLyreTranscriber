@@ -56,6 +56,13 @@ velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复
 起点非常接近且确实重叠的同音事件会合并；正常重触发保留。输出包含 `cleaned.mid`
 和逐类计数；清理后仍执行 NoteSequence 范围与排序校验。
 
+## 拍点与局部速度
+
+音频使用逐 onset 间隔估计候选拍点和局部 BPM，而不是假定整曲恒定速度。拍点
+写入 `beat_grid`，局部速度写入 `tempo_map`；少于最小拍点数、BPM 越界或置信度
+不足时不伪造 BPM，保留原始时序并发送 `TIMING_FALLBACK` 告警。MIDI 输入保留已有
+tempo map。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：

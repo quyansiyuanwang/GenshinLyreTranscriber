@@ -401,7 +401,7 @@ fn run_job(
                 Some(value) => eprintln!("{stage}: {:.0}%", value * 100.0),
                 None => eprintln!("{stage}: ..."),
             },
-            Ok(WorkerEvent::Warning { code, message }) => {
+            Ok(WorkerEvent::Warning { code, message, .. }) => {
                 eprintln!("warning [{code}]: {message}");
             }
             Ok(WorkerEvent::Result(result)) => {

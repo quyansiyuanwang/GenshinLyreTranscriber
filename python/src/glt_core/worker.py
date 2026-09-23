@@ -27,7 +27,7 @@ from glt_core.media import (
     resolve_ffmpeg_tools,
     sha256_file,
 )
-from glt_core.processing import clean_note_sequence
+from glt_core.processing import analyze_timing, clean_note_sequence
 from glt_core.transcription import (
     BasicPitchRuntime,
     TranscriptionCancelled,
@@ -314,8 +314,25 @@ class WorkerServer:
             )
             source_hash = sha256_file(source_midi)
             cleaning = clean_note_sequence(transcription.note_sequence)
+            timing = analyze_timing(decoded_path, cleaning.cleaned)
+            if timing.fallback:
+                self._writer.send(
+                    kind="warning",
+                    job_id=job_id,
+                    payload={
+                        "code": "TIMING_FALLBACK",
+                        "message": (
+                            "automatic timing was not used; original onsets were preserved "
+                            f"({timing.reason})"
+                        ),
+                        "details": {
+                            "confidence": timing.confidence,
+                            "beat_count": timing.beat_count,
+                        },
+                    },
+                )
             cleaned_midi = write_note_sequence_midi(
-                cleaning.cleaned,
+                timing.sequence,
                 staging_dir / CLEANED_MIDI_NAME,
                 overwrite=True,
             )
@@ -354,16 +371,7 @@ class WorkerServer:
                     "duplicate_keys": 0,
                     "compatibility_collisions": 0,
                 },
-                "warnings": (
-                    [
-                        {
-                            "code": "CLEANING_LOSS",
-                            "message": f"cleaning removed {cleaning_removed} notes",
-                        }
-                    ]
-                    if cleaning_removed
-                    else []
-                ),
+                "warnings": _report_warnings(cleaning_removed, timing.fallback),
                 "artifacts": [
                     {
                         "kind": "source_midi",
@@ -441,8 +449,9 @@ class WorkerServer:
         imported = import_midi(input_path)
         _raise_if_cancelled(cancelled)
         cleaning = clean_note_sequence(imported.sequence)
+        timing = analyze_timing(None, cleaning.cleaned)
         cleaned_midi = write_note_sequence_midi(
-            cleaning.cleaned,
+            timing.sequence,
             staging_dir / CLEANED_MIDI_NAME,
             overwrite=True,
         )
@@ -493,11 +502,7 @@ class WorkerServer:
             "warnings": [
                 {"code": warning.code, "message": warning.message} for warning in imported.warnings
             ]
-            + (
-                [{"code": "CLEANING_LOSS", "message": f"cleaning removed {cleaning_removed} notes"}]
-                if cleaning_removed
-                else []
-            ),
+            + (_report_warnings(cleaning_removed, timing.fallback)),
             "artifacts": [
                 {
                     "kind": "source_midi",
@@ -592,6 +597,25 @@ def _report_parameters(options: dict[str, Any]) -> dict[str, Any]:
         if value is not None:
             result[key] = value
     return result
+
+
+def _report_warnings(cleaning_removed: int, timing_fallback: bool) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    if cleaning_removed:
+        warnings.append(
+            {
+                "code": "CLEANING_LOSS",
+                "message": f"cleaning removed {cleaning_removed} notes",
+            }
+        )
+    if timing_fallback:
+        warnings.append(
+            {
+                "code": "TIMING_FALLBACK",
+                "message": "automatic timing was not used; original onsets were preserved",
+            }
+        )
+    return warnings
 
 
 def main() -> int:
