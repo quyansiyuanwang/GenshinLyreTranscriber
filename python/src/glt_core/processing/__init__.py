@@ -7,6 +7,14 @@ from glt_core.processing.clean import (
     NoteChange,
     clean_note_sequence,
 )
+from glt_core.processing.quantize import (
+    FallbackRegion,
+    QuantizationChange,
+    QuantizationConfig,
+    QuantizationResult,
+    QuantizationStats,
+    quantize_note_sequence,
+)
 from glt_core.processing.timing import (
     TimingAnalysis,
     TimingConfig,
@@ -19,9 +27,15 @@ __all__ = [
     "CleanResult",
     "CleanStats",
     "NoteChange",
+    "FallbackRegion",
+    "QuantizationChange",
+    "QuantizationConfig",
+    "QuantizationResult",
+    "QuantizationStats",
     "TimingAnalysis",
     "TimingConfig",
     "TimingError",
     "analyze_timing",
     "clean_note_sequence",
+    "quantize_note_sequence",
 ]

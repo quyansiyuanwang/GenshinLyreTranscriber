@@ -23,6 +23,10 @@ glt convert-midi INPUT --output DIR [OPTIONS]
 - `--json`
 - `--worker PATH`，仅开发或高级诊断使用
 
+`--timing auto` 比较直拍与三连音候选；证据不足时保留原始起音。`preserve`
+完全不改时间，`straight`/`triplet` 强制使用对应网格。`--bpm` 是显式速度
+覆盖，优先于自动分析。
+
 没有传入 `--worker` 时，程序读取 `GLT_WORKER_PATH`，然后查找与主程序相邻的
 `glt-worker` 目录。程序不会通过 shell 拼接输入路径。
 

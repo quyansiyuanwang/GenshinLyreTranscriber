@@ -27,7 +27,12 @@ from glt_core.media import (
     resolve_ffmpeg_tools,
     sha256_file,
 )
-from glt_core.processing import analyze_timing, clean_note_sequence
+from glt_core.processing import (
+    QuantizationConfig,
+    analyze_timing,
+    clean_note_sequence,
+    quantize_note_sequence,
+)
 from glt_core.transcription import (
     BasicPitchRuntime,
     TranscriptionCancelled,
@@ -331,8 +336,12 @@ class WorkerServer:
                         },
                     },
                 )
-            cleaned_midi = write_note_sequence_midi(
+            quantization = quantize_note_sequence(
                 timing.sequence,
+                _quantization_config(options, default_mode="auto"),
+            )
+            cleaned_midi = write_note_sequence_midi(
+                quantization.quantized,
                 staging_dir / CLEANED_MIDI_NAME,
                 overwrite=True,
             )
@@ -371,7 +380,11 @@ class WorkerServer:
                     "duplicate_keys": 0,
                     "compatibility_collisions": 0,
                 },
-                "warnings": _report_warnings(cleaning_removed, timing.fallback),
+                "warnings": _report_warnings(
+                    cleaning_removed,
+                    timing.fallback,
+                    len(quantization.fallback_regions),
+                ),
                 "artifacts": [
                     {
                         "kind": "source_midi",
@@ -450,8 +463,12 @@ class WorkerServer:
         _raise_if_cancelled(cancelled)
         cleaning = clean_note_sequence(imported.sequence)
         timing = analyze_timing(None, cleaning.cleaned)
-        cleaned_midi = write_note_sequence_midi(
+        quantization = quantize_note_sequence(
             timing.sequence,
+            _quantization_config(options, default_mode="preserve"),
+        )
+        cleaned_midi = write_note_sequence_midi(
+            quantization.quantized,
             staging_dir / CLEANED_MIDI_NAME,
             overwrite=True,
         )
@@ -502,7 +519,13 @@ class WorkerServer:
             "warnings": [
                 {"code": warning.code, "message": warning.message} for warning in imported.warnings
             ]
-            + (_report_warnings(cleaning_removed, timing.fallback)),
+            + (
+                _report_warnings(
+                    cleaning_removed,
+                    timing.fallback,
+                    len(quantization.fallback_regions),
+                )
+            ),
             "artifacts": [
                 {
                     "kind": "source_midi",
@@ -599,7 +622,11 @@ def _report_parameters(options: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _report_warnings(cleaning_removed: int, timing_fallback: bool) -> list[dict[str, str]]:
+def _report_warnings(
+    cleaning_removed: int,
+    timing_fallback: bool,
+    quantization_fallbacks: int,
+) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = []
     if cleaning_removed:
         warnings.append(
@@ -615,7 +642,26 @@ def _report_warnings(cleaning_removed: int, timing_fallback: bool) -> list[dict[
                 "message": "automatic timing was not used; original onsets were preserved",
             }
         )
+    if quantization_fallbacks:
+        warnings.append(
+            {
+                "code": "QUANTIZATION_FALLBACK",
+                "message": f"{quantization_fallbacks} notes kept their original timing",
+            }
+        )
     return warnings
+
+
+def _quantization_config(options: dict[str, Any], *, default_mode: str) -> QuantizationConfig:
+    mode = str(options.get("timing", default_mode))
+    bpm_value = options.get("bpm")
+    try:
+        bpm = float(bpm_value) if bpm_value is not None else None
+        config = QuantizationConfig(mode=mode, bpm=bpm)  # type: ignore[arg-type]
+        config.validate()
+    except (TypeError, ValueError) as exc:
+        raise WorkerJobError("SCHEMA_INVALID", f"invalid timing options: {exc}") from exc
+    return config
 
 
 def main() -> int:

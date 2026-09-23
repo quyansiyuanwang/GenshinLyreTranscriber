@@ -63,6 +63,13 @@ velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复
 不足时不伪造 BPM，保留原始时序并发送 `TIMING_FALLBACK` 告警。MIDI 输入保留已有
 tempo map。
 
+## 量化
+
+量化在局部拍点上比较直拍四分细分与三连音三分细分。`auto` 只有在候选误差明显
+更优时才选择，模糊网格保留原时序；`preserve` 不移动 onset；`straight`/`triplet`
+强制执行指定网格。显式 BPM 和手动拍点优先于自动分析，超过最大位移或低置信
+的单个音符单独回退并记录原因。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：
