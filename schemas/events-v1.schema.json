@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:events:v1",
+  "title": "Lyre Events v1",
+  "description": "Version 1 integer-microsecond lyre key onset events. Cross-event ordering and duration bounds require semantic validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "time_unit", "duration_us", "events"],
+  "properties": {
+    "format_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "time_unit": {
+      "type": "string",
+      "const": "us"
+    },
+    "duration_us": {
+      "$ref": "#/$defs/time"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string", "maxLength": 256},
+        "generator": {"type": "string", "minLength": 1, "maxLength": 128},
+        "mapping_profile": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "key": {
+      "type": "string",
+      "enum": ["Z", "X", "C", "V", "B", "N", "M", "A", "S", "D", "F", "G", "H", "J", "Q", "W", "E", "R", "T", "Y", "U"]
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at_us", "keys"],
+      "properties": {
+        "at_us": {"$ref": "#/$defs/time"},
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 21,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/key"}
+        }
+      }
+    }
+  }
+}

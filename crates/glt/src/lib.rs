@@ -1,5 +1,7 @@
 //! Core crate surface for the `glt` application.
 
+pub mod protocol;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]

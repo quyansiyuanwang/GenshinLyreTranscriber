@@ -1,0 +1,361 @@
+{
+  "case_format_version": 1,
+  "raw_json_cases": [
+    {
+      "name": "events-duplicate-object-key",
+      "fixture": "raw/duplicate-object-key.json",
+      "expected_error": "INVALID_JSON"
+    },
+    {
+      "name": "events-nonfinite-number",
+      "fixture": "raw/nonfinite.json",
+      "expected_error": "INVALID_JSON"
+    }
+  ],
+  "cases": [
+    {
+      "name": "events-basic",
+      "schema_file": "events-v1.schema.json",
+      "fixture": "events/basic.json",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "expected_dispatch_us": [0, 333333, 500000, 1120000],
+      "expected_finish_us": 1500000
+    },
+    {
+      "name": "events-leading-tail",
+      "schema_file": "events-v1.schema.json",
+      "fixture": "events/leading-tail.json",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "expected_dispatch_us": [500000, 1250000],
+      "expected_finish_us": 2000000
+    },
+    {
+      "name": "events-empty",
+      "schema_file": "events-v1.schema.json",
+      "fixture": "events/empty.json",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "expected_dispatch_us": [],
+      "expected_finish_us": 1000000
+    },
+    {
+      "name": "events-variable",
+      "schema_file": "events-v1.schema.json",
+      "fixture": "events/variable.json",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "expected_dispatch_us": [0, 166667, 333333, 500000, 740000, 1090000, 1700000],
+      "expected_finish_us": 2300000
+    },
+    {
+      "name": "events-unsorted-chord",
+      "schema_file": "events-v1.schema.json",
+      "fixture": "events/unsorted-chord.json",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "expected_dispatch_us": [0, 100000],
+      "expected_finish_us": 100000
+    },
+    {
+      "name": "events-unsupported-version",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 2, "time_unit": "us", "duration_us": 0, "events": []},
+      "schema_valid": false,
+      "semantic_valid": false,
+      "expected_error": "UNSUPPORTED_VERSION"
+    },
+    {
+      "name": "events-illegal-key",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": 0, "keys": ["I"]}]},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-duplicate-chord-key",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": 0, "keys": ["A", "A"]}]},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-negative-onset",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": -1, "keys": ["A"]}]},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-unordered",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": 500000, "keys": ["A"]}, {"at_us": 100000, "keys": ["S"]}]},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "EVENT_ORDER"
+    },
+    {
+      "name": "events-same-instant",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": 0, "keys": ["A"]}, {"at_us": 0, "keys": ["S"]}]},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "EVENT_ORDER"
+    },
+    {
+      "name": "events-after-duration",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 100000, "events": [{"at_us": 200000, "keys": ["A"]}]},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "DURATION_RANGE"
+    },
+    {
+      "name": "events-fractional-microsecond",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": 0.5, "keys": ["A"]}]},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-unknown-field",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 0, "events": [], "bpm": 120},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-empty-chord",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 1000000, "events": [{"at_us": 0, "keys": []}]},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-unsafe-integer",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": 9007199254740992, "events": []},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "events-boolean-time",
+      "schema_file": "events-v1.schema.json",
+      "document": {"format_version": 1, "time_unit": "us", "duration_us": true, "events": []},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "worker-ready",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": null, "type": "ready", "payload": {"worker_version": "0.1.0", "application_version": "0.1.0", "model_version": "basic-pitch-0.4.0"}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-start-transcribe",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "start", "payload": {"operation": "transcribe", "input_path": "C:/music/input.wav", "staging_dir": "C:/output/.glt-job-001", "options": {"timing": "auto", "bpm": 120, "transpose": "auto", "preview_wav": true}}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-start-convert-midi",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-002", "type": "start", "payload": {"operation": "convert_midi", "input_path": "C:/music/input.mid", "staging_dir": "C:/output/.glt-job-002", "options": {"timing": "preserve", "transpose": -3}}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-progress",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "progress", "payload": {"stage": "transcribing", "fraction": 0.25}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-cancel",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "cancel", "payload": {}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-warning",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "warning", "payload": {"code": "LOW_CONFIDENCE_TIMING", "message": "Some onsets kept their original timing.", "details": {"segments": 2}}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-result",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "result", "payload": {"output_dir": "C:/output/job-001", "report_path": "report.json", "artifacts": [{"kind": "events", "relative_path": "score.events.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size_bytes": 1234}]}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-error",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "error", "payload": {"code": "INPUT_DECODE_FAILED", "message": "The input could not be decoded.", "retryable": false}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-cancelled",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "cancelled", "payload": {}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "worker-unsupported-version",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 2, "job_id": null, "type": "ready", "payload": {"worker_version": "0.1.0", "application_version": "0.1.0", "model_version": "basic-pitch-0.4.0"}},
+      "schema_valid": false,
+      "semantic_valid": false,
+      "expected_error": "UNSUPPORTED_VERSION"
+    },
+    {
+      "name": "worker-missing-payload",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "cancel"},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "worker-unknown-stage",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "progress", "payload": {"stage": "guessing", "fraction": 0.5}},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "worker-fraction-out-of-range",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "progress", "payload": {"stage": "transcribing", "fraction": 1.1}},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "worker-unknown-field",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "cancel", "payload": {}, "extra": true},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "worker-ready-with-job",
+      "schema_file": "worker-v1.schema.json",
+      "document": {"protocol_version": 1, "job_id": "local-job-001", "type": "ready", "payload": {"worker_version": "0.1.0", "application_version": "0.1.0", "model_version": "basic-pitch-0.4.0"}},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "note-sequence-basic",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 1500000, "notes": [{"pitch": 69, "start_us": 0, "end_us": 400000, "velocity": 96, "confidence": 0.9, "track": 0, "channel": 0}, {"pitch": 72, "start_us": 333333, "end_us": 700000, "velocity": 88, "confidence": null, "track": 0, "channel": 0}], "tempo_map": [{"at_us": 0, "bpm": 120.0, "source": "estimated"}], "beat_grid": [{"at_us": 0, "beat_position": 0.0, "bpm": 120.0, "confidence": 0.8}], "provenance": {"source_type": "audio", "source_offset_us": 0, "model_version": "basic-pitch-0.4.0", "parameters": {"onset_threshold": 0.5}}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "note-sequence-empty",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 0, "notes": [], "tempo_map": [], "beat_grid": [], "provenance": {"source_type": "midi", "source_offset_us": 0, "model_version": null, "parameters": {}}},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "note-sequence-end-before-start",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 1000000, "notes": [{"pitch": 60, "start_us": 500000, "end_us": 400000, "velocity": 80, "confidence": null, "track": 0, "channel": 0}], "tempo_map": [], "beat_grid": [], "provenance": {"source_type": "midi", "source_offset_us": 0, "model_version": null, "parameters": {}}},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "NOTE_RANGE"
+    },
+    {
+      "name": "note-sequence-after-duration",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 100000, "notes": [{"pitch": 60, "start_us": 50000, "end_us": 200000, "velocity": 80, "confidence": null, "track": 0, "channel": 0}], "tempo_map": [], "beat_grid": [], "provenance": {"source_type": "midi", "source_offset_us": 0, "model_version": null, "parameters": {}}},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "NOTE_RANGE"
+    },
+    {
+      "name": "note-sequence-unsorted",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 1000000, "notes": [{"pitch": 72, "start_us": 200000, "end_us": 300000, "velocity": 80, "confidence": null, "track": 0, "channel": 0}, {"pitch": 69, "start_us": 100000, "end_us": 400000, "velocity": 80, "confidence": null, "track": 0, "channel": 0}], "tempo_map": [], "beat_grid": [], "provenance": {"source_type": "midi", "source_offset_us": 0, "model_version": null, "parameters": {}}},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "NOTE_ORDER"
+    },
+    {
+      "name": "note-sequence-invalid-confidence",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 1000000, "notes": [{"pitch": 60, "start_us": 0, "end_us": 100000, "velocity": 80, "confidence": 1.5, "track": 0, "channel": 0}], "tempo_map": [], "beat_grid": [], "provenance": {"source_type": "audio", "source_offset_us": 0, "model_version": "test", "parameters": {}}},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "note-sequence-missing-provenance",
+      "schema_file": "note-sequence-v1.schema.json",
+      "document": {"schema_version": 1, "time_unit": "us", "duration_us": 0, "notes": [], "tempo_map": [], "beat_grid": []},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "report-audio",
+      "schema_file": "report-v1.schema.json",
+      "document": {"schema_version": 1, "application_version": "0.1.0", "engine": {"name": "basic-pitch", "version": "0.4.0", "backend": "onnxruntime-cpu"}, "model": {"name": "nmp", "version": "v0.4.0", "sha256": "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec"}, "input": {"source_type": "audio", "filename": "input.wav", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "segment_start_us": 0}, "parameters": {"timing": "auto", "transpose": "auto", "preview_wav": true}, "selected_track": 0, "elapsed_ms": 1234.5, "counts": {"input_notes": 20, "output_notes": 18, "dropped_notes": 2, "mapped_keys": 18, "replaced_semitones": 1, "octave_folds": 2, "duplicate_keys": 0, "compatibility_collisions": 1}, "warnings": [{"code": "LOW_CONFIDENCE_TIMING", "message": "Some onsets kept their original timing."}], "artifacts": [{"kind": "events", "relative_path": "score.events.json", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size_bytes": 4321}]},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "report-midi",
+      "schema_file": "report-v1.schema.json",
+      "document": {"schema_version": 1, "application_version": "0.1.0", "engine": {"name": "midi-import", "version": "mido", "backend": "python"}, "model": null, "input": {"source_type": "midi", "filename": "input.mid", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "segment_start_us": 0}, "parameters": {"timing": "preserve", "transpose": 0}, "selected_track": null, "elapsed_ms": 12.0, "counts": {"input_notes": 0, "output_notes": 0, "dropped_notes": 0, "mapped_keys": 0, "replaced_semitones": 0, "octave_folds": 0, "duplicate_keys": 0, "compatibility_collisions": 0}, "warnings": [], "artifacts": []},
+      "schema_valid": true,
+      "semantic_valid": true
+    },
+    {
+      "name": "report-unsafe-artifact-path",
+      "schema_file": "report-v1.schema.json",
+      "document": {"schema_version": 1, "application_version": "0.1.0", "engine": {"name": "midi-import", "version": "mido", "backend": "python"}, "model": null, "input": {"source_type": "midi", "filename": "input.mid", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "segment_start_us": 0}, "parameters": {}, "selected_track": null, "elapsed_ms": 1.0, "counts": {"input_notes": 0, "output_notes": 0, "dropped_notes": 0, "mapped_keys": 0, "replaced_semitones": 0, "octave_folds": 0, "duplicate_keys": 0, "compatibility_collisions": 0}, "warnings": [], "artifacts": [{"kind": "events", "relative_path": "../escape.events.json", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "size_bytes": 1}]},
+      "schema_valid": true,
+      "semantic_valid": false,
+      "expected_error": "UNSAFE_PATH"
+    },
+    {
+      "name": "report-invalid-hash",
+      "schema_file": "report-v1.schema.json",
+      "document": {"schema_version": 1, "application_version": "0.1.0", "engine": {"name": "midi-import", "version": "mido", "backend": "python"}, "model": null, "input": {"source_type": "midi", "filename": "input.mid", "sha256": "bad", "segment_start_us": 0}, "parameters": {}, "selected_track": null, "elapsed_ms": 1.0, "counts": {"input_notes": 0, "output_notes": 0, "dropped_notes": 0, "mapped_keys": 0, "replaced_semitones": 0, "octave_folds": 0, "duplicate_keys": 0, "compatibility_collisions": 0}, "warnings": [], "artifacts": []},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    },
+    {
+      "name": "report-negative-count",
+      "schema_file": "report-v1.schema.json",
+      "document": {"schema_version": 1, "application_version": "0.1.0", "engine": {"name": "midi-import", "version": "mido", "backend": "python"}, "model": null, "input": {"source_type": "midi", "filename": "input.mid", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "segment_start_us": 0}, "parameters": {}, "selected_track": null, "elapsed_ms": 1.0, "counts": {"input_notes": -1, "output_notes": 0, "dropped_notes": 0, "mapped_keys": 0, "replaced_semitones": 0, "octave_folds": 0, "duplicate_keys": 0, "compatibility_collisions": 0}, "warnings": [], "artifacts": []},
+      "schema_valid": false,
+      "semantic_valid": null,
+      "expected_error": "SCHEMA_INVALID"
+    }
+  ]
+}

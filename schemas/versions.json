@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "status": "frozen",
+  "files": {
+    "events-v1.schema.json": "cd7b1816aa63cb1155ea9ef112d29d953710f40a6abdb8310b191261f5daf065",
+    "note-sequence-v1.schema.json": "408a6ea006725ac51e5572c520638e48007a25deb7fbe6cfb53c59acd560ef9d",
+    "report-v1.schema.json": "4ff4a7ef5994407d3073eb54809b6105feba6b3b49f30a0fa321811315b6e04d",
+    "worker-v1.schema.json": "f50bce828d81c40c2d48b7183081ae40eb991ab29c7ae86ae39d911397b37b31"
+  }
+}

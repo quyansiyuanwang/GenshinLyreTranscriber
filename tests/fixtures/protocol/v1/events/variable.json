@@ -1,0 +1,17 @@
+{
+  "format_version": 1,
+  "time_unit": "us",
+  "duration_us": 2300000,
+  "events": [
+    {"at_us": 0, "keys": ["A"]},
+    {"at_us": 166667, "keys": ["S"]},
+    {"at_us": 333333, "keys": ["D"]},
+    {"at_us": 500000, "keys": ["F"]},
+    {"at_us": 740000, "keys": ["G"]},
+    {"at_us": 1090000, "keys": ["H"]},
+    {"at_us": 1700000, "keys": ["A", "Q"]}
+  ],
+  "metadata": {
+    "title": "Triplet-like onsets followed by free timing"
+  }
+}

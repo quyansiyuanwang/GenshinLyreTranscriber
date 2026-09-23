@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "time_unit": "us",
+  "duration_us": 1500000,
+  "events": [
+    {"at_us": 0, "keys": ["A"]},
+    {"at_us": 333333, "keys": ["S", "G"]},
+    {"at_us": 500000, "keys": ["D"]},
+    {"at_us": 1120000, "keys": ["Q"]}
+  ],
+  "metadata": {
+    "title": "Single notes and a chord",
+    "generator": "GenshinLyreTranscriber",
+    "mapping_profile": "lyre-21-default"
+  }
+}
