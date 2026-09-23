@@ -11,7 +11,7 @@ if not model_path.is_file():
 datas = [(str(model_path), "glt_core/resources/models/basic_pitch")]
 
 a = Analysis(
-    [str(source_dir / "glt_core/worker_probe.py")],
+    [str(source_dir / "glt_core/worker.py")],
     pathex=[str(source_dir)],
     binaries=[],
     datas=datas,

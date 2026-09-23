@@ -225,6 +225,14 @@ impl WorkerClient {
         if let Some(directory) = spec.working_directory {
             command.current_dir(directory);
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        }
         let mut child = command.spawn()?;
         let stdin = child
             .stdin

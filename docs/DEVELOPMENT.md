@@ -37,6 +37,12 @@ Basic Pitch 的元数据在 Windows 和 Python 3.11 以上会尝试安装旧版 
 当前 worker 仍包含 NumPy、SciPy、Numba 和 LLVM 运行库，后续必须在发布前继续
 评估双运行时包体积。
 
+## 转录分段
+
+正式 adapter 使用 15 秒分段、1 秒重叠。每个分段单独运行 ONNX 后只保留音符事件，
+接缝融合仅合并来自不同分段的同音高重叠事件，避免把同一分段内的重触发合并。
+当前输出为 `source.mid`；纯静音是成功空结果。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：
@@ -67,12 +73,19 @@ uv run --project python python scripts/fetch_resources.py basic-pitch
 ./scripts/build_worker.ps1
 ```
 
-构建产物位于 `artifacts/worker/glt-worker`。发布前还需运行真实模型 smoke、
+构建产物位于 `artifacts/worker/glt-worker`，入口使用正式 JSONL worker 协议。发布前还需运行真实模型 smoke、
 资源缺失错误、非源码目录启动、无系统 Python/FFmpeg 和离线验收。
 
 当前宿主未提供可用的管理员级网络隔离环境，因此只完成了无效代理、精简
 `PATH` 和进程连接监测。真正断网的干净 Windows 验收仍必须在发布候选包上执行，
 当前结果不能替代该门禁。
+
+开发环境可按以下方式让 Rust CLI 使用 Python 入口：
+
+```powershell
+$env:GLT_FFMPEG_DIR = "path/to/ffmpeg/bin"
+glt transcribe input.mp4 --output output --worker python/src/glt_core/worker.py --json
+```
 
 ## 媒体工具发现
 

@@ -15,7 +15,9 @@ dependencies = [
   "basic-pitch==0.4.0",
   "jsonschema==4.26.0",
   "onnxruntime==1.30.0",
+  "pretty-midi==0.2.11.post0",
   "setuptools==78.1.1",
+  "soundfile==0.14.0",
 ]
 
 [dependency-groups]
@@ -53,5 +55,5 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["basic_pitch.*", "onnxruntime"]
+module = ["basic_pitch.*", "onnxruntime", "pretty_midi.*", "soundfile.*"]
 ignore_missing_imports = true

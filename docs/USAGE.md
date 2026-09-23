@@ -1,8 +1,8 @@
 # 命令行使用
 
-当前 Rust 前端已提供命令解析、worker 启动、JSONL 状态处理、取消和退出码。完整
-音频处理 worker 尚未接入，因此除 `doctor` 外，`transcribe` 和 `convert-midi`
-需要显式指向符合正式 worker v1 协议的开发 worker。
+当前 Rust 前端已提供命令解析、worker 启动、JSONL 状态处理、取消和退出码。正式
+worker 已支持从本地音频/视频提取音轨并生成 `source.mid` 与基础 `report.json`；
+清理、节奏分析、琴键映射、完整报告和三类谱导出仍在后续模块中实现。
 
 ```powershell
 glt --help
@@ -25,6 +25,12 @@ glt convert-midi INPUT --output DIR [OPTIONS]
 
 没有传入 `--worker` 时，程序读取 `GLT_WORKER_PATH`，然后查找与主程序相邻的
 `glt-worker` 目录。程序不会通过 shell 拼接输入路径。
+
+源码开发时可直接选择 Python 入口：
+
+```powershell
+glt transcribe input.mp4 --output output --worker python/src/glt_core/worker.py
+```
 
 ## 输出与退出码
 
