@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
+import mido
 import pytest
 
 import glt_core.worker as worker_module
@@ -16,6 +19,22 @@ from glt_core.worker import WorkerServer
 class MemoryInput:
     def __init__(self, lines: list[bytes]) -> None:
         self.buffer = io.BytesIO(b"".join(lines))
+
+
+class ControlledInput:
+    def __init__(self, lines: list[bytes]) -> None:
+        self.buffer = self
+        self._lines = lines
+        self._release = threading.Event()
+
+    def readline(self, _limit: int = -1) -> bytes:
+        if self._lines:
+            return self._lines.pop(0)
+        self._release.wait()
+        return b""
+
+    def release(self) -> None:
+        self._release.set()
 
 
 class FakeServer(WorkerServer):
@@ -129,3 +148,42 @@ def test_worker_rejects_version_and_long_line() -> None:
     output = io.StringIO()
     assert FakeServer([b"x" * (worker_module.MAX_LINE_BYTES + 1) + b"\n"], output).run() == 1
     assert _outputs(output)[-1]["payload"]["code"] == "LINE_TOO_LONG"
+
+
+def test_worker_converts_midi_to_source_copy(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "input.mid"
+    midi = mido.MidiFile(type=1, ticks_per_beat=480)
+    track = mido.MidiTrack()
+    track.extend(
+        [
+            mido.Message("note_on", note=60, velocity=100, time=0),
+            mido.Message("note_off", note=60, velocity=0, time=480),
+        ]
+    )
+    midi.tracks.append(track)
+    midi.save(str(source))
+    staging = tmp_path / "output"
+    message = _message(
+        "start",
+        operation="convert_midi",
+        input_path=str(source),
+        staging_dir=str(staging),
+        options={"timing": "preserve", "transpose": 0},
+    )
+    output = io.StringIO()
+    controlled = ControlledInput([message])
+    server = WorkerServer(controlled, output)
+    thread = threading.Thread(target=server.run)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while '"type":"result"' not in output.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controlled.release()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    result = _outputs(output)[-1]
+    assert result["type"] == "result"
+    assert (staging / "source.mid").read_bytes() == source.read_bytes()
+    report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
+    assert report["input"]["source_type"] == "midi"
+    assert report["counts"]["input_notes"] == 1

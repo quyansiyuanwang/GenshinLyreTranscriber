@@ -6,7 +6,7 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
-from glt_core.protocol.validation import ProtocolValidationError, validate_note_sequence
+from glt_core.protocol.validation import ProtocolValidationError
 
 TempoSource = Literal["midi", "estimated", "manual"]
 SourceType = Literal["audio", "video", "midi"]
@@ -69,6 +69,10 @@ class NoteSequence:
         }
 
     def validate(self) -> None:
+        if self.schema_version != 1 or self.time_unit != "us":
+            raise ProtocolValidationError(
+                "UNSUPPORTED_VERSION", "NoteSequence must use schema version 1 and microseconds"
+            )
         if not 0 <= self.duration_us <= SAFE_INTEGER_MAX:
             raise ProtocolValidationError(
                 "NOTE_RANGE", "duration_us is outside the safe integer range"
@@ -95,4 +99,33 @@ class NoteSequence:
             if previous is not None and order < previous:
                 raise ProtocolValidationError("NOTE_ORDER", "notes are not sorted")
             previous = order
-        validate_note_sequence(self.to_dict())
+        previous_tempo: int | None = None
+        for tempo_point in self.tempo_map:
+            if not 0 <= tempo_point.at_us <= SAFE_INTEGER_MAX:
+                raise ProtocolValidationError("TEMPO_ORDER", "tempo time is invalid")
+            if previous_tempo is not None and tempo_point.at_us < previous_tempo:
+                raise ProtocolValidationError("TEMPO_ORDER", "tempo map is not sorted")
+            if tempo_point.source not in {"midi", "estimated", "manual"}:
+                raise ProtocolValidationError("TEMPO_ORDER", "tempo source is invalid")
+            if not math.isfinite(tempo_point.bpm) or not 0 < tempo_point.bpm <= 1000:
+                raise ProtocolValidationError("TEMPO_ORDER", "tempo BPM is invalid")
+            previous_tempo = tempo_point.at_us
+        previous_beat: int | None = None
+        for beat_point in self.beat_grid:
+            if not 0 <= beat_point.at_us <= SAFE_INTEGER_MAX:
+                raise ProtocolValidationError("BEAT_ORDER", "beat time is invalid")
+            if previous_beat is not None and beat_point.at_us < previous_beat:
+                raise ProtocolValidationError("BEAT_ORDER", "beat grid is not sorted")
+            if not math.isfinite(beat_point.beat_position):
+                raise ProtocolValidationError("BEAT_ORDER", "beat position is not finite")
+            if not math.isfinite(beat_point.bpm) or not 0 < beat_point.bpm <= 1000:
+                raise ProtocolValidationError("BEAT_ORDER", "beat BPM is invalid")
+            if beat_point.confidence is not None and (
+                not math.isfinite(beat_point.confidence) or not 0 <= beat_point.confidence <= 1
+            ):
+                raise ProtocolValidationError("BEAT_ORDER", "confidence is invalid")
+            previous_beat = beat_point.at_us
+        if self.provenance.source_type not in {"audio", "video", "midi"}:
+            raise ProtocolValidationError("SCHEMA_INVALID", "source type is invalid")
+        if not 0 <= self.provenance.source_offset_us <= SAFE_INTEGER_MAX:
+            raise ProtocolValidationError("SCHEMA_INVALID", "source offset is invalid")

@@ -13,6 +13,11 @@ from collections.abc import Callable
 from typing import Any
 
 from glt_core import __version__
+from glt_core.domain.midi_import import (
+    MidiImportError,
+    copy_source_midi,
+    import_midi,
+)
 from glt_core.media import (
     MediaError,
     build_extraction_plan,
@@ -195,14 +200,17 @@ class WorkerServer:
             if not isinstance(payload, dict):
                 raise WorkerJobError("SCHEMA_INVALID", "start payload must be an object")
             operation = payload.get("operation")
-            if operation != "transcribe":
+            if operation == "transcribe":
+                result = self._transcribe(payload, job_id, cancel_event.is_set)
+            elif operation == "convert_midi":
+                result = self._convert_midi(payload, job_id, cancel_event.is_set)
+            else:
                 raise WorkerJobError(
                     "NOT_IMPLEMENTED",
                     f"operation is not implemented: {operation!r}",
                 )
-            result = self._transcribe(payload, job_id, cancel_event.is_set)
             self._writer.send(kind="result", job_id=job_id, payload=result)
-        except (TranscriptionCancelled, MediaError, TranscriptionError) as exc:
+        except (TranscriptionCancelled, MediaError, TranscriptionError, MidiImportError) as exc:
             if getattr(exc, "code", None) == "CANCELLED":
                 self._writer.send(kind="cancelled", job_id=job_id, payload={})
             else:
@@ -372,6 +380,108 @@ class WorkerServer:
         finally:
             decoded_path.unlink(missing_ok=True)
 
+    def _convert_midi(
+        self,
+        payload: dict[str, Any],
+        job_id: str,
+        cancelled: Callable[[], bool],
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        input_path = pathlib.Path(str(payload.get("input_path", ""))).expanduser().resolve()
+        staging_dir = pathlib.Path(str(payload.get("staging_dir", ""))).expanduser().resolve()
+        if not input_path.is_file():
+            raise WorkerJobError("INPUT_NOT_FOUND", "input MIDI file does not exist")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        options = payload.get("options")
+        if not isinstance(options, dict):
+            raise WorkerJobError("SCHEMA_INVALID", "options must be an object")
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "validating", "fraction": 0.0},
+        )
+        _raise_if_cancelled(cancelled)
+        imported = import_midi(input_path)
+        _raise_if_cancelled(cancelled)
+        for warning in imported.warnings:
+            self._writer.send(
+                kind="warning",
+                job_id=job_id,
+                payload={
+                    "code": warning.code,
+                    "message": warning.message,
+                    "details": {"count": warning.count},
+                },
+            )
+        source_midi = staging_dir / SOURCE_MIDI_NAME
+        copy_source_midi(input_path, source_midi, overwrite=True)
+        source_hash = sha256_file(source_midi)
+        report = {
+            "schema_version": 1,
+            "application_version": __version__,
+            "engine": {"name": "midi-import", "version": "mido", "backend": "python"},
+            "model": None,
+            "input": {
+                "source_type": "midi",
+                "filename": input_path.name,
+                "sha256": imported.source_sha256,
+                "segment_start_us": 0,
+            },
+            "parameters": _report_parameters(options),
+            "selected_track": None,
+            "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+            "counts": {
+                "input_notes": len(imported.sequence.notes),
+                "output_notes": len(imported.sequence.notes),
+                "dropped_notes": 0,
+                "mapped_keys": 0,
+                "replaced_semitones": 0,
+                "octave_folds": 0,
+                "duplicate_keys": 0,
+                "compatibility_collisions": 0,
+            },
+            "warnings": [
+                {"code": warning.code, "message": warning.message} for warning in imported.warnings
+            ],
+            "artifacts": [
+                {
+                    "kind": "source_midi",
+                    "relative_path": SOURCE_MIDI_NAME,
+                    "sha256": source_hash,
+                    "size_bytes": source_midi.stat().st_size,
+                }
+            ],
+        }
+        report_path = staging_dir / REPORT_NAME
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        artifacts = [
+            {
+                "kind": "source_midi",
+                "relative_path": SOURCE_MIDI_NAME,
+                "sha256": source_hash,
+                "size_bytes": source_midi.stat().st_size,
+            },
+            {
+                "kind": "report",
+                "relative_path": REPORT_NAME,
+                "sha256": sha256_file(report_path),
+                "size_bytes": report_path.stat().st_size,
+            },
+        ]
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "completed", "fraction": 1.0},
+        )
+        return {
+            "output_dir": str(staging_dir),
+            "report_path": REPORT_NAME,
+            "artifacts": artifacts,
+        }
+
     def _protocol_error(self, job_id: str | None, code: str, message: str) -> None:
         self._writer.send(
             kind="error",
@@ -392,6 +502,11 @@ def _optional_integer(value: Any, name: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise WorkerJobError("INVALID_RANGE", f"{name} must be a non-negative integer")
     return value
+
+
+def _raise_if_cancelled(cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise TranscriptionCancelled()
 
 
 def _source_type(path: pathlib.Path) -> str:

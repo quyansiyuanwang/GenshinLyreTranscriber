@@ -1,7 +1,7 @@
 # 命令行使用
 
 当前 Rust 前端已提供命令解析、worker 启动、JSONL 状态处理、取消和退出码。正式
-worker 已支持从本地音频/视频提取音轨并生成 `source.mid` 与基础 `report.json`；
+worker 已支持从本地音频/视频转录，或导入 MIDI，并生成 `source.mid` 与基础 `report.json`；
 清理、节奏分析、琴键映射、完整报告和三类谱导出仍在后续模块中实现。
 
 ```powershell

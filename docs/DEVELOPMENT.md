@@ -43,6 +43,13 @@ Basic Pitch 的元数据在 Windows 和 Python 3.11 以上会尝试安装旧版 
 接缝融合仅合并来自不同分段的同音高重叠事件，避免把同一分段内的重触发合并。
 当前输出为 `source.mid`；纯静音是成功空结果。
 
+## MIDI 导入
+
+`convert_midi` 支持 MIDI format 0/1，拒绝 format 2 和 SMPTE division。Tempo 改变
+使用有理数累计后按微秒取整，避免逐段浮点漂移；同音重叠使用 FIFO note-off 配对，
+velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复和 channel 10
+打击乐过滤都会写入 warning/report。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：
