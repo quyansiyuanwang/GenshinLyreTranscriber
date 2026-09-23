@@ -1,1 +1,64 @@
-.tmp/
+.[t]mp/
+
+# Rust build output
+/target/
+/crates/*/target/
+
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local build and package output
+/build/
+/dist/
+/artifacts/
+*.zip
+
+# Runtime assets and local user data
+/models/
+/model-cache/
+/media/
+/input/
+/output/
+/cache/
+
+# Raw media is not tracked, except explicitly whitelisted test fixtures.
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.mp4
+*.mkv
+*.mov
+*.webm
+!tests/fixtures/**/*.wav
+!tests/fixtures/**/*.mp3
+!tests/fixtures/**/*.flac
+!tests/fixtures/**/*.mid
+
+# Model weights and downloaded tools are package resources, not source files.
+*.onnx
+*.tflite
+*.pb
+
+# Local secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+
+# Editors and operating-system metadata
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
