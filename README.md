@@ -26,7 +26,8 @@
 - `glt_core` Python 包可以安装并运行最小测试。
 - Python 媒体模块可以通过 ffprobe 选择音轨，并用参数数组调用 FFmpeg 提取模型音频。
 - Python JSONL worker 可以完成媒体探测、音频提取、Basic Pitch ONNX 分段转录、MIDI 导入和 source MIDI 导出。
-- 清理、节奏分析、21 键映射和三类谱导出仍待实现。
+- 清理阶段可以过滤低置信/短音、稳定去重与重叠合并，并输出 `cleaned.mid` 和损失计数。
+- 自动拍点、量化、21 键映射和三类谱导出仍待实现。
 
 CLI 命令行为、worker 发现规则和退出码见 [docs/USAGE.md](docs/USAGE.md)。
 

@@ -184,6 +184,7 @@ def test_worker_converts_midi_to_source_copy(tmp_path: pathlib.Path) -> None:
     result = _outputs(output)[-1]
     assert result["type"] == "result"
     assert (staging / "source.mid").read_bytes() == source.read_bytes()
+    assert (staging / "cleaned.mid").is_file()
     report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
     assert report["input"]["source_type"] == "midi"
     assert report["counts"]["input_notes"] == 1

@@ -50,6 +50,12 @@ Basic Pitch 的元数据在 Windows 和 Python 3.11 以上会尝试安装旧版 
 velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复和 channel 10
 打击乐过滤都会写入 warning/report。
 
+## 音符清理
+
+清理默认参数为最低置信度 0.2、最短音长 50ms、重触发间隔 30ms。只有精确重复或
+起点非常接近且确实重叠的同音事件会合并；正常重触发保留。输出包含 `cleaned.mid`
+和逐类计数；清理后仍执行 NoteSequence 范围与排序校验。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：

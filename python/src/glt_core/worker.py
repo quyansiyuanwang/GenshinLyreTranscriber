@@ -18,6 +18,7 @@ from glt_core.domain.midi_import import (
     copy_source_midi,
     import_midi,
 )
+from glt_core.export import write_note_sequence_midi
 from glt_core.media import (
     MediaError,
     build_extraction_plan,
@@ -26,6 +27,7 @@ from glt_core.media import (
     resolve_ffmpeg_tools,
     sha256_file,
 )
+from glt_core.processing import clean_note_sequence
 from glt_core.transcription import (
     BasicPitchRuntime,
     TranscriptionCancelled,
@@ -39,6 +41,7 @@ PROTOCOL_VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024
 MODEL_VERSION = "basic-pitch-0.4.0/nmp.onnx"
 SOURCE_MIDI_NAME = "source.mid"
+CLEANED_MIDI_NAME = "cleaned.mid"
 REPORT_NAME = "report.json"
 DECODED_AUDIO_NAME = "source.decoded.wav"
 
@@ -310,6 +313,19 @@ class WorkerServer:
                 cancelled=cancelled,
             )
             source_hash = sha256_file(source_midi)
+            cleaning = clean_note_sequence(transcription.note_sequence)
+            cleaned_midi = write_note_sequence_midi(
+                cleaning.cleaned,
+                staging_dir / CLEANED_MIDI_NAME,
+                overwrite=True,
+            )
+            cleaned_hash = sha256_file(cleaned_midi)
+            cleaning_removed = (
+                cleaning.stats.dropped_low_confidence
+                + cleaning.stats.dropped_short
+                + cleaning.stats.duplicate_notes_removed
+                + cleaning.stats.overlapped_notes_merged
+            )
             report = {
                 "schema_version": 1,
                 "application_version": __version__,
@@ -329,23 +345,38 @@ class WorkerServer:
                 "selected_track": plan.stream.position,
                 "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
                 "counts": {
-                    "input_notes": transcription.note_count,
-                    "output_notes": transcription.note_count,
-                    "dropped_notes": 0,
+                    "input_notes": cleaning.stats.input_notes,
+                    "output_notes": cleaning.stats.output_notes,
+                    "dropped_notes": cleaning_removed,
                     "mapped_keys": 0,
                     "replaced_semitones": 0,
                     "octave_folds": 0,
                     "duplicate_keys": 0,
                     "compatibility_collisions": 0,
                 },
-                "warnings": [],
+                "warnings": (
+                    [
+                        {
+                            "code": "CLEANING_LOSS",
+                            "message": f"cleaning removed {cleaning_removed} notes",
+                        }
+                    ]
+                    if cleaning_removed
+                    else []
+                ),
                 "artifacts": [
                     {
                         "kind": "source_midi",
                         "relative_path": SOURCE_MIDI_NAME,
                         "sha256": source_hash,
                         "size_bytes": source_midi.stat().st_size,
-                    }
+                    },
+                    {
+                        "kind": "cleaned_midi",
+                        "relative_path": CLEANED_MIDI_NAME,
+                        "sha256": cleaned_hash,
+                        "size_bytes": cleaned_midi.stat().st_size,
+                    },
                 ],
             }
             report_path = staging_dir / REPORT_NAME
@@ -359,6 +390,12 @@ class WorkerServer:
                     "relative_path": SOURCE_MIDI_NAME,
                     "sha256": source_hash,
                     "size_bytes": source_midi.stat().st_size,
+                },
+                {
+                    "kind": "cleaned_midi",
+                    "relative_path": CLEANED_MIDI_NAME,
+                    "sha256": cleaned_hash,
+                    "size_bytes": cleaned_midi.stat().st_size,
                 },
                 {
                     "kind": "report",
@@ -403,6 +440,19 @@ class WorkerServer:
         _raise_if_cancelled(cancelled)
         imported = import_midi(input_path)
         _raise_if_cancelled(cancelled)
+        cleaning = clean_note_sequence(imported.sequence)
+        cleaned_midi = write_note_sequence_midi(
+            cleaning.cleaned,
+            staging_dir / CLEANED_MIDI_NAME,
+            overwrite=True,
+        )
+        cleaned_hash = sha256_file(cleaned_midi)
+        cleaning_removed = (
+            cleaning.stats.dropped_low_confidence
+            + cleaning.stats.dropped_short
+            + cleaning.stats.duplicate_notes_removed
+            + cleaning.stats.overlapped_notes_merged
+        )
         for warning in imported.warnings:
             self._writer.send(
                 kind="warning",
@@ -431,9 +481,9 @@ class WorkerServer:
             "selected_track": None,
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
             "counts": {
-                "input_notes": len(imported.sequence.notes),
-                "output_notes": len(imported.sequence.notes),
-                "dropped_notes": 0,
+                "input_notes": cleaning.stats.input_notes,
+                "output_notes": cleaning.stats.output_notes,
+                "dropped_notes": cleaning_removed,
                 "mapped_keys": 0,
                 "replaced_semitones": 0,
                 "octave_folds": 0,
@@ -442,14 +492,25 @@ class WorkerServer:
             },
             "warnings": [
                 {"code": warning.code, "message": warning.message} for warning in imported.warnings
-            ],
+            ]
+            + (
+                [{"code": "CLEANING_LOSS", "message": f"cleaning removed {cleaning_removed} notes"}]
+                if cleaning_removed
+                else []
+            ),
             "artifacts": [
                 {
                     "kind": "source_midi",
                     "relative_path": SOURCE_MIDI_NAME,
                     "sha256": source_hash,
                     "size_bytes": source_midi.stat().st_size,
-                }
+                },
+                {
+                    "kind": "cleaned_midi",
+                    "relative_path": CLEANED_MIDI_NAME,
+                    "sha256": cleaned_hash,
+                    "size_bytes": cleaned_midi.stat().st_size,
+                },
             ],
         }
         report_path = staging_dir / REPORT_NAME
@@ -463,6 +524,12 @@ class WorkerServer:
                 "relative_path": SOURCE_MIDI_NAME,
                 "sha256": source_hash,
                 "size_bytes": source_midi.stat().st_size,
+            },
+            {
+                "kind": "cleaned_midi",
+                "relative_path": CLEANED_MIDI_NAME,
+                "sha256": cleaned_hash,
+                "size_bytes": cleaned_midi.stat().st_size,
             },
             {
                 "kind": "report",

@@ -14,6 +14,7 @@ from typing import Any
 import pretty_midi
 import soundfile
 
+from glt_core.domain.note_sequence import Note, NoteSequence, Provenance
 from glt_core.transcription.onnx_probe import (
     ModelInfo,
     _load_basic_pitch_api,
@@ -58,6 +59,7 @@ class TranscriptionResult:
     elapsed_seconds: float
     peak_working_set_bytes: int | None
     output_bytes: int
+    note_sequence: NoteSequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +197,8 @@ def transcribe_to_midi(
 
     fused = fuse_segment_events(events)
     midi_data = _events_to_midi(fused)
+    duration_us = round(info.frames / sample_rate * 1_000_000)
+    note_sequence = _events_to_note_sequence(fused, duration_us, model_info)
     partial = destination.with_name(f".{destination.name}.partial")
     partial.unlink(missing_ok=True)
     try:
@@ -220,6 +224,7 @@ def transcribe_to_midi(
         elapsed_seconds=round(time.perf_counter() - started, 6),
         peak_working_set_bytes=_peak_working_set_bytes(),
         output_bytes=destination.stat().st_size,
+        note_sequence=note_sequence,
     )
 
 
@@ -298,6 +303,44 @@ def _events_to_midi(events: list[NoteEvent]) -> pretty_midi.PrettyMIDI:
             pretty_midi.Note(velocity=velocity, pitch=pitch, start=start, end=end)
         )
     return midi
+
+
+def _events_to_note_sequence(
+    events: list[NoteEvent],
+    duration_us: int,
+    model_info: ModelInfo,
+) -> NoteSequence:
+    notes: list[Note] = []
+    for start, end, pitch, amplitude, _bends in events:
+        start_us = round(start * 1_000_000)
+        end_us = min(duration_us, round(end * 1_000_000))
+        if start_us < 0 or start_us >= end_us:
+            continue
+        notes.append(
+            Note(
+                pitch=pitch,
+                start_us=start_us,
+                end_us=end_us,
+                velocity=max(1, min(127, round(amplitude * 127))),
+                confidence=max(0.0, min(1.0, amplitude)),
+                track=0,
+                channel=0,
+            )
+        )
+    sequence = NoteSequence(
+        duration_us=duration_us,
+        notes=tuple(notes),
+        tempo_map=(),
+        beat_grid=(),
+        provenance=Provenance(
+            source_type="audio",
+            source_offset_us=0,
+            model_version=pathlib.Path(model_info.path).name,
+            parameters={"engine": "basic-pitch", "backend": "onnxruntime-cpu"},
+        ),
+    )
+    sequence.validate()
+    return sequence
 
 
 def _valid_event(start: Any, end: Any, pitch: Any, amplitude: Any) -> bool:
