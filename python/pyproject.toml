@@ -11,13 +11,24 @@ license = "MIT"
 authors = [
   { name = "quyansiyuanwang" },
 ]
-dependencies = []
+dependencies = [
+  "basic-pitch==0.4.0",
+  "onnxruntime==1.30.0",
+  "setuptools==78.1.1",
+]
 
 [dependency-groups]
 dev = [
   "mypy>=1.18",
+  "pyinstaller==6.22.3",
   "pytest>=8.4",
   "ruff>=0.13",
+]
+
+[tool.uv]
+environments = ["sys_platform == 'win32'"]
+override-dependencies = [
+  "tensorflow<0; python_version < '0'",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -38,3 +49,7 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["basic_pitch.*", "onnxruntime"]
+ignore_missing_imports = true

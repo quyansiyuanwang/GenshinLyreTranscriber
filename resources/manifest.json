@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "resources": {
+    "basic_pitch_onnx": {
+      "url": "https://raw.githubusercontent.com/spotify/basic-pitch/9991303bba609a3b93089d13ec80d1d495083596/basic_pitch/saved_models/icassp_2022/nmp.onnx",
+      "sha256": "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec",
+      "size": 230444,
+      "destination": "python/src/glt_core/resources/models/basic_pitch/nmp.onnx",
+      "license": "Apache-2.0",
+      "source": "https://github.com/spotify/basic-pitch/tree/9991303bba609a3b93089d13ec80d1d495083596"
+    },
+    "ffmpeg_windows_x64": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-23-14-55/ffmpeg-n8.1.3-win64-lgpl-shared-8.1.zip",
+      "sha256": "60a055792e88524db437a78c2fcd4471536abf3b30d34fae1249591c00e13432",
+      "size": 80085041,
+      "destination": "artifacts/resources/ffmpeg",
+      "license": "LGPL-3.0-or-later",
+      "source": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-23-14-55",
+      "build_source_commit": "ccbffa4f85d0e8de5c135c69ebb10e4c14911fa9",
+      "ffmpeg_source_commit": "23151b11c75aa44d9ab8db796a53c76acf00f6c0"
+    }
+  }
+}
