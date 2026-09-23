@@ -28,9 +28,12 @@ from glt_core.media import (
     sha256_file,
 )
 from glt_core.processing import (
+    MappingConfig,
     QuantizationConfig,
     analyze_timing,
     clean_note_sequence,
+    default_mapping_layout,
+    map_note_sequence,
     quantize_note_sequence,
 )
 from glt_core.transcription import (
@@ -47,6 +50,7 @@ MAX_LINE_BYTES = 1024 * 1024
 MODEL_VERSION = "basic-pitch-0.4.0/nmp.onnx"
 SOURCE_MIDI_NAME = "source.mid"
 CLEANED_MIDI_NAME = "cleaned.mid"
+MAPPED_MIDI_NAME = "mapped.mid"
 REPORT_NAME = "report.json"
 DECODED_AUDIO_NAME = "source.decoded.wav"
 
@@ -340,12 +344,22 @@ class WorkerServer:
                 timing.sequence,
                 _quantization_config(options, default_mode="auto"),
             )
+            mapping = map_note_sequence(
+                quantization.quantized,
+                _mapping_config(options),
+            )
             cleaned_midi = write_note_sequence_midi(
                 quantization.quantized,
                 staging_dir / CLEANED_MIDI_NAME,
                 overwrite=True,
             )
             cleaned_hash = sha256_file(cleaned_midi)
+            mapped_midi = write_note_sequence_midi(
+                mapping.mapped,
+                staging_dir / MAPPED_MIDI_NAME,
+                overwrite=True,
+            )
+            mapped_hash = sha256_file(mapped_midi)
             cleaning_removed = (
                 cleaning.stats.dropped_low_confidence
                 + cleaning.stats.dropped_short
@@ -372,12 +386,12 @@ class WorkerServer:
                 "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
                 "counts": {
                     "input_notes": cleaning.stats.input_notes,
-                    "output_notes": cleaning.stats.output_notes,
-                    "dropped_notes": cleaning_removed,
-                    "mapped_keys": 0,
-                    "replaced_semitones": 0,
-                    "octave_folds": 0,
-                    "duplicate_keys": 0,
+                    "output_notes": mapping.stats.mapped_notes,
+                    "dropped_notes": cleaning_removed + mapping.stats.collision_notes_removed,
+                    "mapped_keys": mapping.stats.unique_keys_used,
+                    "replaced_semitones": mapping.stats.replaced_semitones,
+                    "octave_folds": mapping.stats.octave_folds,
+                    "duplicate_keys": mapping.stats.collision_notes_removed,
                     "compatibility_collisions": 0,
                 },
                 "warnings": _report_warnings(
@@ -398,6 +412,12 @@ class WorkerServer:
                         "sha256": cleaned_hash,
                         "size_bytes": cleaned_midi.stat().st_size,
                     },
+                    {
+                        "kind": "mapped_midi",
+                        "relative_path": MAPPED_MIDI_NAME,
+                        "sha256": mapped_hash,
+                        "size_bytes": mapped_midi.stat().st_size,
+                    },
                 ],
             }
             report_path = staging_dir / REPORT_NAME
@@ -417,6 +437,12 @@ class WorkerServer:
                     "relative_path": CLEANED_MIDI_NAME,
                     "sha256": cleaned_hash,
                     "size_bytes": cleaned_midi.stat().st_size,
+                },
+                {
+                    "kind": "mapped_midi",
+                    "relative_path": MAPPED_MIDI_NAME,
+                    "sha256": mapped_hash,
+                    "size_bytes": mapped_midi.stat().st_size,
                 },
                 {
                     "kind": "report",
@@ -467,12 +493,19 @@ class WorkerServer:
             timing.sequence,
             _quantization_config(options, default_mode="preserve"),
         )
+        mapping = map_note_sequence(quantization.quantized, _mapping_config(options))
         cleaned_midi = write_note_sequence_midi(
             quantization.quantized,
             staging_dir / CLEANED_MIDI_NAME,
             overwrite=True,
         )
         cleaned_hash = sha256_file(cleaned_midi)
+        mapped_midi = write_note_sequence_midi(
+            mapping.mapped,
+            staging_dir / MAPPED_MIDI_NAME,
+            overwrite=True,
+        )
+        mapped_hash = sha256_file(mapped_midi)
         cleaning_removed = (
             cleaning.stats.dropped_low_confidence
             + cleaning.stats.dropped_short
@@ -508,12 +541,12 @@ class WorkerServer:
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
             "counts": {
                 "input_notes": cleaning.stats.input_notes,
-                "output_notes": cleaning.stats.output_notes,
-                "dropped_notes": cleaning_removed,
-                "mapped_keys": 0,
-                "replaced_semitones": 0,
-                "octave_folds": 0,
-                "duplicate_keys": 0,
+                "output_notes": mapping.stats.mapped_notes,
+                "dropped_notes": cleaning_removed + mapping.stats.collision_notes_removed,
+                "mapped_keys": mapping.stats.unique_keys_used,
+                "replaced_semitones": mapping.stats.replaced_semitones,
+                "octave_folds": mapping.stats.octave_folds,
+                "duplicate_keys": mapping.stats.collision_notes_removed,
                 "compatibility_collisions": 0,
             },
             "warnings": [
@@ -539,6 +572,12 @@ class WorkerServer:
                     "sha256": cleaned_hash,
                     "size_bytes": cleaned_midi.stat().st_size,
                 },
+                {
+                    "kind": "mapped_midi",
+                    "relative_path": MAPPED_MIDI_NAME,
+                    "sha256": mapped_hash,
+                    "size_bytes": mapped_midi.stat().st_size,
+                },
             ],
         }
         report_path = staging_dir / REPORT_NAME
@@ -558,6 +597,12 @@ class WorkerServer:
                 "relative_path": CLEANED_MIDI_NAME,
                 "sha256": cleaned_hash,
                 "size_bytes": cleaned_midi.stat().st_size,
+            },
+            {
+                "kind": "mapped_midi",
+                "relative_path": MAPPED_MIDI_NAME,
+                "sha256": mapped_hash,
+                "size_bytes": mapped_midi.stat().st_size,
             },
             {
                 "kind": "report",
@@ -661,6 +706,20 @@ def _quantization_config(options: dict[str, Any], *, default_mode: str) -> Quant
         config.validate()
     except (TypeError, ValueError) as exc:
         raise WorkerJobError("SCHEMA_INVALID", f"invalid timing options: {exc}") from exc
+    return config
+
+
+def _mapping_config(options: dict[str, Any]) -> MappingConfig:
+    transpose: object = options.get("transpose", "auto")
+    if not (
+        transpose == "auto" or (isinstance(transpose, int) and not isinstance(transpose, bool))
+    ):
+        raise WorkerJobError("SCHEMA_INVALID", "transpose must be 'auto' or an integer")
+    config = MappingConfig(layout=default_mapping_layout(), transpose=transpose)
+    try:
+        config.validate()
+    except ValueError as exc:
+        raise WorkerJobError("SCHEMA_INVALID", f"invalid transpose: {exc}") from exc
     return config
 
 
