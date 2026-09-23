@@ -73,3 +73,21 @@ uv run --project python python scripts/fetch_resources.py basic-pitch
 当前宿主未提供可用的管理员级网络隔离环境，因此只完成了无效代理、精简
 `PATH` 和进程连接监测。真正断网的干净 Windows 验收仍必须在发布候选包上执行，
 当前结果不能替代该门禁。
+
+## 媒体工具发现
+
+媒体模块按以下顺序定位 FFmpeg 与 ffprobe：
+
+1. 显式传入的工具路径。
+2. `GLT_FFMPEG_DIR` 指向的同一目录。
+3. 同时设置的 `GLT_FFMPEG` 与 `GLT_FFPROBE`。
+4. 冻结应用内的相对资源目录。
+5. 开发环境下系统 `PATH`。
+
+`--audio-track` 使用音频流位置编号，从 0 开始；实际 ffprobe stream index 由模块
+记录并传给 FFmpeg。裁剪时间使用整数微秒，输出始终先写 `.partial` 文件，成功后
+原子替换。媒体测试：
+
+```powershell
+uv run --directory python pytest tests/test_media.py
+```

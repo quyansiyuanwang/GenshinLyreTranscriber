@@ -24,6 +24,7 @@
 - `glt doctor` 可以启动协议 worker 并显示 worker、应用和模型版本。
 - CLI 已定义 `transcribe`、`convert-midi`、`preview` 与 `tui` 命令及退出码。
 - `glt_core` Python 包可以安装并运行最小测试。
+- Python 媒体模块可以通过 ffprobe 选择音轨，并用参数数组调用 FFmpeg 提取模型音频。
 - Python worker 探针可以使用固定 Basic Pitch ONNX 模型把 WAV 转为 MIDI。
 - 正式 JSONL worker 服务、完整媒体处理、节奏分析和三类谱导出仍待实现。
 
