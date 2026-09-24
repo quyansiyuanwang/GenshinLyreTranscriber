@@ -110,6 +110,61 @@ impl From<TransposeArg> for Transpose {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CleaningOptions {
+    pub min_confidence: f64,
+    pub min_duration_us: u64,
+    pub retrigger_gap_us: u64,
+}
+
+impl Default for CleaningOptions {
+    fn default() -> Self {
+        Self {
+            min_confidence: 0.2,
+            min_duration_us: 50_000,
+            retrigger_gap_us: 30_000,
+        }
+    }
+}
+
+impl CleaningOptions {
+    pub(crate) fn validate(self) -> Result<Self, CliError> {
+        if !self.min_confidence.is_finite() || !(0.0..=1.0).contains(&self.min_confidence) {
+            return Err(CliError::InvalidArgument(
+                "min-confidence must be finite and in range 0..=1".to_owned(),
+            ));
+        }
+        if self.min_duration_us > 60_000_000 {
+            return Err(CliError::InvalidArgument(
+                "min-duration-ms must be at most 60000".to_owned(),
+            ));
+        }
+        if self.retrigger_gap_us > 60_000_000 {
+            return Err(CliError::InvalidArgument(
+                "retrigger-gap-ms must be at most 60000".to_owned(),
+            ));
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn worker_env(self) -> Vec<(String, String)> {
+        vec![
+            (
+                "GLT_MIN_CONFIDENCE".to_owned(),
+                self.min_confidence.to_string(),
+            ),
+            (
+                "GLT_MIN_DURATION_US".to_owned(),
+                self.min_duration_us.to_string(),
+            ),
+            (
+                "GLT_RETRIGGER_GAP_US".to_owned(),
+                self.retrigger_gap_us.to_string(),
+            ),
+        ]
+    }
+}
+
 #[derive(Debug, clap::Args)]
 struct TranscribeArgs {
     /// Local audio or video path.
@@ -138,6 +193,15 @@ struct TranscribeArgs {
     /// Request a synthesized preview WAV.
     #[arg(long)]
     preview_wav: bool,
+    /// Minimum Basic Pitch note confidence.
+    #[arg(long)]
+    min_confidence: Option<f64>,
+    /// Minimum note duration in milliseconds.
+    #[arg(long)]
+    min_duration_ms: Option<u64>,
+    /// Retrigger/overlap merge gap in milliseconds.
+    #[arg(long)]
+    retrigger_gap_ms: Option<u64>,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -165,6 +229,15 @@ struct ConvertMidiArgs {
     /// Request a synthesized preview WAV.
     #[arg(long)]
     preview_wav: bool,
+    /// Minimum Basic Pitch note confidence.
+    #[arg(long)]
+    min_confidence: Option<f64>,
+    /// Minimum note duration in milliseconds.
+    #[arg(long)]
+    min_duration_ms: Option<u64>,
+    /// Retrigger/overlap merge gap in milliseconds.
+    #[arg(long)]
+    retrigger_gap_ms: Option<u64>,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -275,12 +348,18 @@ fn run_transcribe(args: TranscribeArgs) -> Result<(), CliError> {
         args.preview_wav,
         args.overwrite,
     )?;
+    let cleaning = build_cleaning_options(
+        args.min_confidence,
+        args.min_duration_ms,
+        args.retrigger_gap_ms,
+    )?;
     run_job(
         args.worker,
         args.input,
         args.output,
         Operation::Transcribe,
         options,
+        cleaning,
         args.json,
     )
 }
@@ -296,12 +375,18 @@ fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
         args.preview_wav,
         args.overwrite,
     )?;
+    let cleaning = build_cleaning_options(
+        args.min_confidence,
+        args.min_duration_ms,
+        args.retrigger_gap_ms,
+    )?;
     run_job(
         args.worker,
         args.input,
         args.output,
         Operation::ConvertMidi,
         options,
+        cleaning,
         args.json,
     )
 }
@@ -368,6 +453,19 @@ pub(crate) fn build_job_options(
     })
 }
 
+pub(crate) fn build_cleaning_options(
+    min_confidence: Option<f64>,
+    min_duration_ms: Option<u64>,
+    retrigger_gap_ms: Option<u64>,
+) -> Result<CleaningOptions, CliError> {
+    CleaningOptions {
+        min_confidence: min_confidence.unwrap_or(0.2),
+        min_duration_us: min_duration_ms.unwrap_or(50) * 1_000,
+        retrigger_gap_us: retrigger_gap_ms.unwrap_or(30) * 1_000,
+    }
+    .validate()
+}
+
 fn seconds_to_microseconds(value: Option<f64>, name: &str) -> Result<Option<u64>, CliError> {
     let Some(value) = value else {
         return Ok(None);
@@ -408,6 +506,7 @@ fn run_job(
     output: PathBuf,
     operation: Operation,
     options: StartOptions,
+    cleaning: CleaningOptions,
     json_output: bool,
 ) -> Result<(), CliError> {
     let cancellation = cancellation_flag()?;
@@ -417,6 +516,7 @@ fn run_job(
         output,
         operation,
         options,
+        cleaning,
         cancellation,
         |update| match update {
             JobUpdate::Progress { stage, fraction } => match fraction {
@@ -445,12 +545,14 @@ fn run_job(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_job_with_cancel<F>(
     worker_override: Option<PathBuf>,
     input: PathBuf,
     output: PathBuf,
     operation: Operation,
     options: StartOptions,
+    cleaning: CleaningOptions,
     cancellation: Arc<AtomicBool>,
     mut on_update: F,
 ) -> Result<JobOutcome, CliError>
@@ -490,7 +592,7 @@ where
         staging_dir: staging_dir.clone(),
         options,
     };
-    let spec = resolve_worker_spec(worker_override)?;
+    let spec = resolve_worker_spec(worker_override)?.with_env(cleaning.worker_env());
     let mut client = WorkerClient::launch(spec, DEFAULT_READY_TIMEOUT)?;
     client.start(job_id.clone(), &request)?;
     let started = Instant::now();

@@ -50,6 +50,13 @@ Basic Pitch 的元数据在 Windows 和 Python 3.11 以上会尝试安装旧版 
 velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复和 channel 10
 打击乐过滤都会写入 warning/report。
 
+## 可配置清理阈值
+
+清理参数由 Rust CLI/TUI 验证后，通过 worker 子进程环境传给 Python，包括
+`GLT_MIN_CONFIDENCE`、`GLT_MIN_DURATION_US` 和 `GLT_RETRIGGER_GAP_US`。这些值不改变已冻结
+的 worker JSONL v1 Schema；worker 会再次校验并把实际值写入 `CLEANING_CONFIG` 报告告警。
+默认值保持 0.2 / 50ms / 30ms，避免未显式设置时改变既有独奏行为。
+
 ## 音符清理
 
 清理默认参数为最低置信度 0.2、最短音长 50ms、重触发间隔 30ms。只有精确重复或

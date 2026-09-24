@@ -46,6 +46,7 @@ impl WorkerError {
 pub struct WorkerSpec {
     pub program: PathBuf,
     pub args: Vec<OsString>,
+    pub env: Vec<(OsString, OsString)>,
     pub working_directory: Option<PathBuf>,
 }
 
@@ -54,6 +55,7 @@ impl WorkerSpec {
         Self {
             program: program.into(),
             args: Vec::new(),
+            env: Vec::new(),
             working_directory: None,
         }
     }
@@ -64,6 +66,19 @@ impl WorkerSpec {
         S: Into<OsString>,
     {
         self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_env<I, K, V>(mut self, env: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.env.extend(
+            env.into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
         self
     }
 
@@ -225,6 +240,9 @@ impl WorkerClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (key, value) in &spec.env {
+            command.env(key, value);
+        }
         if let Some(directory) = spec.working_directory {
             command.current_dir(directory);
         }

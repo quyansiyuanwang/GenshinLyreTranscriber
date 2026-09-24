@@ -211,3 +211,20 @@ fn refuses_to_overwrite_an_output_containing_the_source_input() {
     assert_eq!(result.status.code(), Some(2));
     assert_eq!(std::fs::read(&input).unwrap(), b"source");
 }
+
+#[test]
+fn invalid_cleaning_threshold_is_usage_error() {
+    let unique = format!("glt-cli-cleaning-{}", std::process::id());
+    let input = std::env::temp_dir().join(format!("{unique}.wav"));
+    std::fs::write(&input, b"test").unwrap();
+    let output = Command::new(binary())
+        .args(["transcribe"])
+        .arg(&input)
+        .arg("--output")
+        .arg(std::env::temp_dir().join(unique))
+        .args(["--min-confidence", "1.5"])
+        .output()
+        .expect("run invalid cleaning options");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("min-confidence"));
+}

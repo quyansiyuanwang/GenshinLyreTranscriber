@@ -20,7 +20,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::cli::{CliError, JobOutcome, JobUpdate, build_job_options, run_job_with_cancel};
+use crate::cli::{
+    CleaningOptions, CliError, JobOutcome, JobUpdate, build_cleaning_options, build_job_options,
+    run_job_with_cancel,
+};
 use crate::jobs::{Operation, StartOptions, Timing, Transpose};
 use crate::preview::PlaybackService;
 
@@ -34,7 +37,10 @@ const FIELD_START: usize = 6;
 const FIELD_END: usize = 7;
 const FIELD_PREVIEW: usize = 8;
 const FIELD_OVERWRITE: usize = 9;
-const FIELD_COUNT: usize = 10;
+const FIELD_MIN_CONFIDENCE: usize = 10;
+const FIELD_MIN_DURATION: usize = 11;
+const FIELD_RETRIGGER_GAP: usize = 12;
+const FIELD_COUNT: usize = 13;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -128,6 +134,9 @@ impl Default for TuiApp {
             FIELD_TIMING => "auto".to_owned(),
             FIELD_TRANSPOSE => "auto".to_owned(),
             FIELD_PREVIEW | FIELD_OVERWRITE => "false".to_owned(),
+            FIELD_MIN_CONFIDENCE => "0.2".to_owned(),
+            FIELD_MIN_DURATION => "50".to_owned(),
+            FIELD_RETRIGGER_GAP => "30".to_owned(),
             _ => String::new(),
         });
         Self {
@@ -211,6 +220,14 @@ impl TuiApp {
         )
     }
 
+    fn build_clean_options(&self) -> Result<CleaningOptions, CliError> {
+        build_cleaning_options(
+            parse_optional_f64(self.field(FIELD_MIN_CONFIDENCE), "min-confidence")?,
+            parse_optional_u64(self.field(FIELD_MIN_DURATION), "min-duration-ms")?,
+            parse_optional_u64(self.field(FIELD_RETRIGGER_GAP), "retrigger-gap-ms")?,
+        )
+    }
+
     fn start_job(&mut self) {
         let input = PathBuf::from(self.field(FIELD_INPUT));
         let output = PathBuf::from(self.field(FIELD_OUTPUT));
@@ -219,6 +236,13 @@ impl TuiApp {
             return;
         }
         let options = match self.build_options() {
+            Ok(options) => options,
+            Err(error) => {
+                self.message = error.to_string();
+                return;
+            }
+        };
+        let cleaning = match self.build_clean_options() {
             Ok(options) => options,
             Err(error) => {
                 self.message = error.to_string();
@@ -243,6 +267,7 @@ impl TuiApp {
                 output,
                 operation,
                 options,
+                cleaning,
                 thread_cancel,
                 |update| {
                     let _ = sender.send(UiJobEvent::Update(update));
@@ -497,6 +522,9 @@ impl TuiApp {
                     || self.focus == FIELD_TRACK
                     || self.focus == FIELD_START
                     || self.focus == FIELD_END
+                    || self.focus == FIELD_MIN_CONFIDENCE
+                    || self.focus == FIELD_MIN_DURATION
+                    || self.focus == FIELD_RETRIGGER_GAP
                 {
                     self.fields[self.focus].pop();
                 }
@@ -646,6 +674,9 @@ impl TuiApp {
                     ("end_seconds", FIELD_END),
                     ("preview_wav", FIELD_PREVIEW),
                     ("overwrite", FIELD_OVERWRITE),
+                    ("min_confidence", FIELD_MIN_CONFIDENCE),
+                    ("min_duration_ms", FIELD_MIN_DURATION),
+                    ("retrigger_gap_ms", FIELD_RETRIGGER_GAP),
                 ];
                 let lines = labels
                     .iter()
@@ -785,6 +816,17 @@ fn parse_optional_u32(value: &str, name: &str) -> Result<Option<u32>, CliError> 
         .map_err(|_| CliError::InvalidArgument(format!("{name} must be a non-negative integer")))
 }
 
+fn parse_optional_u64(value: &str, name: &str) -> Result<Option<u64>, CliError> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    value
+        .trim()
+        .parse::<u64>()
+        .map(Some)
+        .map_err(|_| CliError::InvalidArgument(format!("{name} must be a non-negative integer")))
+}
+
 fn parse_timing(value: &str) -> Result<Timing, CliError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "auto" => Ok(Timing::Auto),
@@ -899,6 +941,13 @@ mod tests {
         app.set_field(FIELD_TRACK, "1".to_owned());
         app.set_field(FIELD_PREVIEW, "true".to_owned());
         app.set_field(FIELD_OVERWRITE, "true".to_owned());
+        app.set_field(FIELD_MIN_CONFIDENCE, "0.55".to_owned());
+        app.set_field(FIELD_MIN_DURATION, "125".to_owned());
+        app.set_field(FIELD_RETRIGGER_GAP, "40".to_owned());
+        let cleaning = app.build_clean_options().unwrap();
+        assert_eq!(cleaning.min_confidence, 0.55);
+        assert_eq!(cleaning.min_duration_us, 125_000);
+        assert_eq!(cleaning.retrigger_gap_us, 40_000);
         let options = app.build_options().unwrap();
         assert_eq!(options.timing, Some(Timing::Straight));
         assert_eq!(options.bpm, Some(120.0));

@@ -284,3 +284,15 @@ def test_worker_protocol_output_is_ascii_even_for_non_ascii_errors() -> None:
     )
     output.getvalue().encode("ascii")
     assert "\\u4e2d\\u6587\\u9519\\u8bef" in output.getvalue()
+
+
+def test_worker_reads_cleaning_thresholds_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GLT_MIN_CONFIDENCE", "0.45")
+    monkeypatch.setenv("GLT_MIN_DURATION_US", "120000")
+    monkeypatch.setenv("GLT_RETRIGGER_GAP_US", "40000")
+    config = worker_module._cleaning_config()
+    assert config.min_confidence == 0.45
+    assert config.min_duration_us == 120_000
+    assert config.retrigger_gap_us == 40_000

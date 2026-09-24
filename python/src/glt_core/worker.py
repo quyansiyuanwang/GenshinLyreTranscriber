@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import pathlib
 import sys
 import threading
@@ -38,6 +39,7 @@ from glt_core.media import (
     sha256_file,
 )
 from glt_core.processing import (
+    CleanConfig,
     MappingConfig,
     QuantizationConfig,
     analyze_timing,
@@ -338,7 +340,8 @@ class WorkerServer:
                 cancelled=cancelled,
             )
             source_hash = sha256_file(source_midi)
-            cleaning = clean_note_sequence(transcription.note_sequence)
+            cleaning_config = _cleaning_config()
+            cleaning = clean_note_sequence(transcription.note_sequence, cleaning_config)
             timing = analyze_timing(decoded_path, cleaning.cleaned)
             if timing.fallback:
                 self._writer.send(
@@ -440,6 +443,7 @@ class WorkerServer:
                     cleaning_removed,
                     timing.fallback,
                     len(quantization.fallback_regions),
+                    cleaning_config,
                 )
                 + _compatibility_warnings(text_exports.compatibility)
                 + _preview_warnings(
@@ -574,7 +578,8 @@ class WorkerServer:
         _raise_if_cancelled(cancelled)
         imported = import_midi(input_path)
         _raise_if_cancelled(cancelled)
-        cleaning = clean_note_sequence(imported.sequence)
+        cleaning_config = _cleaning_config()
+        cleaning = clean_note_sequence(imported.sequence, cleaning_config)
         timing = analyze_timing(None, cleaning.cleaned)
         quantization = quantize_note_sequence(
             timing.sequence,
@@ -670,6 +675,7 @@ class WorkerServer:
                     cleaning_removed,
                     timing.fallback,
                     len(quantization.fallback_regions),
+                    cleaning_config,
                 )
             )
             + _compatibility_warnings(text_exports.compatibility)
@@ -910,6 +916,25 @@ def _compatibility_warnings(compatibility: CompatibilityScore) -> list[dict[str,
     return warnings
 
 
+def _cleaning_config() -> CleanConfig:
+    try:
+        min_confidence = float(os.environ.get("GLT_MIN_CONFIDENCE", "0.2"))
+        min_duration_us = int(os.environ.get("GLT_MIN_DURATION_US", "50000"))
+        retrigger_gap_us = int(os.environ.get("GLT_RETRIGGER_GAP_US", "30000"))
+    except ValueError as exc:
+        raise WorkerJobError("INVALID_CLEANING_OPTIONS", "cleaning options are invalid") from exc
+    config = CleanConfig(
+        min_confidence=min_confidence,
+        min_duration_us=min_duration_us,
+        retrigger_gap_us=retrigger_gap_us,
+    )
+    try:
+        config.validate()
+    except ValueError as exc:
+        raise WorkerJobError("INVALID_CLEANING_OPTIONS", str(exc)) from exc
+    return config
+
+
 class WorkerJobError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -951,8 +976,19 @@ def _report_warnings(
     cleaning_removed: int,
     timing_fallback: bool,
     quantization_fallbacks: int,
+    cleaning_config: CleanConfig,
 ) -> list[dict[str, str]]:
-    warnings: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = [
+        {
+            "code": "CLEANING_CONFIG",
+            "message": (
+                "cleaning thresholds: "
+                f"min_confidence={cleaning_config.min_confidence}, "
+                f"min_duration_us={cleaning_config.min_duration_us}, "
+                f"retrigger_gap_us={cleaning_config.retrigger_gap_us}"
+            ),
+        }
+    ]
     if cleaning_removed:
         warnings.append(
             {
