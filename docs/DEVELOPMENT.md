@@ -260,5 +260,10 @@ uv run --project python python scripts/fetch_resources.py basic-pitch
 
 ## 自动化制品
 
-Nightly 和 Debug workflow 上传 Actions artifacts，不创建正式 Release。下载步骤见
-[制品下载](DOWNLOADS.md)。正式版本发布必须获得明确的版本、提交和发布方式批准。
+Nightly workflow 使用固定 `nightly` tag 和同名 Pre-release。每次成功构建都会覆盖
+`glt-nightly-windows-x64.zip` 与对应的 SHA256 资产，同时保留一份 14 天的 Actions artifact
+用于构建诊断。该机制不会创建稳定 `v*` tag。下载与手动触发步骤见
+[Nightly 下载](DOWNLOADS.md)。
+
+Debug workflow 仍只上传 Actions artifact。正式版本发布必须获得明确的版本、提交和发布
+方式批准。

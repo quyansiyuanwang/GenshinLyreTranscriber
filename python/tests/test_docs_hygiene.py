@@ -28,3 +28,14 @@ def test_public_documents_do_not_expose_local_task_state() -> None:
                     violations.append(f"{relative}:{line_number}: {label}")
 
     assert not violations, "local task state leaked into public docs:\n" + "\n".join(violations)
+
+
+def test_nightly_workflow_publishes_fixed_prerelease_assets() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+
+    assert "tag_name: nightly" in workflow
+    assert "name: Nightly" in workflow
+    assert "prerelease: true" in workflow
+    assert "overwrite_files: true" in workflow
+    assert "glt-nightly-windows-x64.zip" in workflow
+    assert "glt-nightly-windows-x64.sha256" in workflow

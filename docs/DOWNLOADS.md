@@ -1,74 +1,81 @@
-# 制品下载
+# Nightly 下载
 
-项目当前使用 GitHub Actions artifacts 分发 Nightly 和 Debug 构建。它不会自动创建
-`v*` Git tag 或 GitHub Release；正式发布必须经过单独的版本与提交审批。
+项目采用与 RustDesk 相同的固定 Nightly tag 模型：
 
-## 从网页下载
+- Git tag：`nightly`
+- GitHub Release：`Nightly`
+- Release 类型：Pre-release
+- Windows 资产：`glt-nightly-windows-x64.zip`
+- 校验资产：`glt-nightly-windows-x64.sha256`
 
-1. 打开仓库的 [Nightly workflow](https://github.com/quyansiyuanwang/GenshinLyreTranscriber/actions/workflows/nightly.yml)。
-2. 选择最近一次绿色勾选的运行。
-3. 在页面底部找到 **Artifacts**。
-4. 下载 `glt-nightly-windows-x64-日期-提交`。
-5. 解压后先核对 `SHA256SUMS`，再运行其中的 `glt.exe`。
+每天定时构建或手动触发成功后，workflow 会创建 `nightly` tag（如果尚不存在）并更新同名
+Pre-release 的资产。稳定版本仍使用独立的 `v*` tag，不会自动创建。
 
-如果最新运行显示成功但没有 Artifact，通常表示该提交已经存在同 SHA 的有效制品，工作流
-跳过了重复构建。请继续查看更早的成功运行，优先选择同一提交 SHA、制品尚未过期的记录。
+## 从 Releases 下载
+
+打开 [Nightly Pre-release](https://github.com/quyansiyuanwang/GenshinLyreTranscriber/releases/tag/nightly)，
+在 **Assets** 中下载：
+
+- `glt-nightly-windows-x64.zip`
+- `glt-nightly-windows-x64.sha256`
+
+也可以从仓库首页右侧 Releases 区域进入 `Nightly`。
 
 ## 使用 GitHub CLI 下载
 
-先确认已登录：
+下载全部 Nightly 资产：
 
 ```powershell
-gh auth login
-```
-
-列出 Nightly 运行：
-
-```powershell
-gh run list --workflow nightly.yml --limit 10
-```
-
-下载指定运行中的全部制品：
-
-```powershell
-gh run download RUN_ID --dir .\nightly
-```
-
-只下载一个命名制品：
-
-```powershell
-gh run download RUN_ID `
-  --name "glt-nightly-windows-x64-YYYYMMDD-SHORT_SHA" `
+gh release download nightly `
+  --repo quyansiyuanwang/GenshinLyreTranscriber `
   --dir .\nightly
 ```
 
-其中 `RUN_ID` 来自 `gh run list` 的输出，制品名称可以从运行页面的 Artifacts 区域查看。
+只下载 ZIP：
+
+```powershell
+gh release download nightly `
+  --repo quyansiyuanwang/GenshinLyreTranscriber `
+  --pattern "glt-nightly-windows-x64.zip" `
+  --dir .\nightly
+```
+
+## 校验与解压
+
+先在 PowerShell 中计算 ZIP 哈希：
+
+```powershell
+Get-FileHash .\nightly\glt-nightly-windows-x64.zip -Algorithm SHA256
+```
+
+输出应与 `glt-nightly-windows-x64.sha256` 中的值一致，然后解压并运行 `glt.exe`。
 
 ## 手动触发
 
-Nightly 默认每天北京时间 04:00 运行。也可以手动触发：
+Nightly 默认每天北京时间 04:00 运行，也可以手动触发：
 
 ```powershell
 gh workflow run nightly.yml --ref main
 gh run list --workflow nightly.yml --limit 5
 ```
 
-构建完成后按上面的步骤下载。按当前策略，Nightly 与 Debug 制品保留 14 天。
+构建成功后，[Nightly Pre-release](https://github.com/quyansiyuanwang/GenshinLyreTranscriber/releases/tag/nightly)
+资产会自动更新。GitHub Actions artifact 也会保留 14 天，便于查看构建诊断，但正式下载入口是
+上面的 Release 资产。
 
-## 制品内容与边界
+## 包内容与边界
 
-Nightly 制品用于测试和诊断，通常包含：
+Nightly ZIP 当前包含：
 
 - `glt.exe`
 - `glt-worker/`
 - `README.md`、`docs/` 和 `LICENSE`
 - `SHA256SUMS`
 
-它不是正式离线发行包。音频/视频转录仍可能要求可用的 FFmpeg/ffprobe，正式发行包应把
-经许可核查的媒体工具、模型和所有通知完整打包。系统要求、已知限制和卸载方式以正式
-Release 说明为准。
+Nightly 用于测试最新 `main`，不是正式离线发行包。音频/视频转录仍可能要求可用的
+FFmpeg/ffprobe；稳定发布包会额外完成媒体工具、模型、许可证、断网和干净 Windows 验收。
 
-## 创建正式 tag 的条件
+## 稳定版本
 
-只有用户明确批准版本号、目标提交和发布方式后，才可以创建正式 `v*` tag 或 GitHub
-Release。Nightly 成功不会自动升级为正式版本。
+正式 `v*` tag 和稳定 Release 必须由维护者明确批准版本号和目标提交后创建。Nightly 成功不会
+自动升级为稳定版本。

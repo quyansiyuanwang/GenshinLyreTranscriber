@@ -114,6 +114,7 @@ target\debug\glt.exe filter "output" --output "output-filter" --filter-file "fil
 
 - [文档索引](docs/README.md)
 - [命令行使用](docs/USAGE.md)
+- [Nightly 下载](docs/DOWNLOADS.md)
 - [开发与构建](docs/DEVELOPMENT.md)
 - [故障排查](docs/TROUBLESHOOTING.md)
 - [参考播放器兼容契约](docs/REFERENCE_PLAYER_CONTRACT.md)
