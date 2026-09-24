@@ -50,10 +50,10 @@ jobs:
         run: cargo test --locked
       - name: Python static checks
         run: |
-          uv run --project python ruff check .
-          uv run --project python ruff format --check .
-          uv run --project python mypy .
+          uv run --directory python ruff check .
+          uv run --directory python ruff format --check .
+          uv run --directory python mypy .
       - name: Python tests
-        run: uv run --project python pytest -q
+        run: uv run --directory python pytest -q
       - name: Reference player contract
         run: uv run --project python python scripts/verify_reference_player_contract.py --player-root reference-player

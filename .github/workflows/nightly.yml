@@ -63,10 +63,10 @@ jobs:
           cargo fmt --all --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
-          uv run --project python ruff check .
-          uv run --project python ruff format --check .
-          uv run --project python mypy .
-          uv run --project python pytest -q
+          uv run --directory python ruff check .
+          uv run --directory python ruff format --check .
+          uv run --directory python mypy .
+          uv run --directory python pytest -q
       - name: Build nightly revision
         if: steps.inventory.outputs.skip_build != 'true'
         run: |
