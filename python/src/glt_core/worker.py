@@ -65,6 +65,7 @@ from glt_core.processing import (
     quantize_note_sequence,
 )
 from glt_core.protocol import validate_report
+from glt_core.separation.cli import main as separation_main
 from glt_core.synthesis import synthesize_preview_wav
 from glt_core.transcription import (
     BasicPitchRuntime,
@@ -1655,6 +1656,8 @@ def _mapping_config(options: dict[str, Any]) -> MappingConfig:
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "analyze":
         return analysis_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "separate":
+        return separation_main(sys.argv[2:])
     logging.basicConfig(level=logging.WARNING)
     return WorkerServer(sys.stdin, sys.stdout).run()
 

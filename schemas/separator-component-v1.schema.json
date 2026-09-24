@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:separator-component:v1",
+  "title": "Separator Component v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "component_id", "component_version", "protocol_version", "runtime", "license", "models"],
+  "properties": {
+    "format_version": {"const": 1},
+    "component_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "component_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "protocol_version": {"const": 1},
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable", "sha256", "arguments"],
+      "properties": {
+        "executable": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "arguments": {"type": "array", "items": {"type": "string", "maxLength": 1024}}
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path"],
+      "properties": {
+        "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024}
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/model"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "quality", "relative_path", "sha256", "size_bytes", "source_url", "license_name"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "quality": {"enum": ["fast", "balanced", "high_quality"]},
+        "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "source_url": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "license_name": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    }
+  }
+}

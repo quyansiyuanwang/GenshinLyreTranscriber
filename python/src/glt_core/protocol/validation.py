@@ -14,6 +14,8 @@ from jsonschema import Draft202012Validator
 SAFE_INTEGER_MAX = 9_007_199_254_740_991
 SCHEMA_FILES = {
     "analysis_manifest": "analysis-manifest-v1.schema.json",
+    "separator_component": "separator-component-v1.schema.json",
+    "stem_set": "stem-set-v1.schema.json",
     "events": "events-v1.schema.json",
     "worker": "worker-v2.schema.json",
     "note_sequence": "note-sequence-v1.schema.json",
@@ -231,3 +233,15 @@ def validate_analysis_manifest(document: Any) -> None:
             str(artifact["relative_path"]),
             f"/files/{index}/relative_path",
         )
+
+
+def validate_separator_component(document: Any) -> None:
+    """Validate an optional separator component manifest."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["separator_component"])
+
+
+def validate_stem_set(document: Any) -> None:
+    """Validate a separated stem set document."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["stem_set"])

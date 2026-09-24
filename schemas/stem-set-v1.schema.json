@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:stem-set:v1",
+  "title": "Stem Set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "source", "separation", "sample_rate", "channels", "stems", "instrumental"],
+  "properties": {
+    "format_version": {"const": 1},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256"],
+      "properties": {"sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "separation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["component_id", "component_version", "model_id", "model_sha256", "quality"],
+      "properties": {
+        "component_id": {"type": "string", "minLength": 1},
+        "component_version": {"type": "string", "minLength": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "model_sha256": {"$ref": "#/$defs/sha256"},
+        "quality": {"enum": ["fast", "balanced", "high_quality"]}
+      }
+    },
+    "sample_rate": {"const": 44100},
+    "channels": {"const": 2},
+    "stems": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {"$ref": "#/$defs/stem"},
+        {"$ref": "#/$defs/stem"},
+        {"$ref": "#/$defs/stem"},
+        {"$ref": "#/$defs/stem"}
+      ],
+      "items": false
+    },
+    "instrumental": {"$ref": "#/$defs/stem"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "relative_path", "sha256", "size_bytes", "sample_rate", "channels", "duration_us"],
+      "properties": {
+        "role": {"enum": ["vocals", "drums", "bass", "other", "instrumental"]},
+        "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "sample_rate": {"const": 44100},
+        "channels": {"const": 2},
+        "duration_us": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}
