@@ -253,6 +253,9 @@ struct ConvertMidiArgs {
 struct PreviewArgs {
     /// Result directory to preview.
     result_dir: PathBuf,
+    /// Playback volume in range 0..=1.
+    #[arg(long, default_value_t = 1.0)]
+    volume: f32,
 }
 
 #[derive(Debug, Error)]
@@ -265,23 +268,22 @@ pub(crate) enum CliError {
     WorkerFailure(String),
     #[error("worker protocol failed: {0}")]
     Worker(#[from] WorkerError),
+    #[error("environment error: {0}")]
+    Environment(String),
     #[error("output operation failed: {0}")]
     Output(#[from] std::io::Error),
     #[error("job cancelled by user")]
     Cancelled,
-    #[error("feature is not implemented yet: {0}")]
-    NotImplemented(&'static str),
 }
 
 impl CliError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::InvalidArgument(_) => EXIT_USAGE,
-            Self::WorkerNotFound(_) => EXIT_ENVIRONMENT,
+            Self::WorkerNotFound(_) | Self::Environment(_) => EXIT_ENVIRONMENT,
             Self::Worker(_) | Self::WorkerFailure(_) => EXIT_PROCESSING,
             Self::Output(_) => EXIT_OUTPUT,
             Self::Cancelled => EXIT_CANCELLED,
-            Self::NotImplemented(_) => EXIT_ENVIRONMENT,
         }
     }
 }
@@ -309,7 +311,7 @@ fn execute(cli: Cli) -> Result<(), CliError> {
         Some(Command::Doctor(args)) => run_doctor(args),
         Some(Command::Transcribe(args)) => run_transcribe(args),
         Some(Command::ConvertMidi(args)) => run_convert_midi(args),
-        Some(Command::Preview(_)) => Err(CliError::NotImplemented("preview")),
+        Some(Command::Preview(args)) => run_preview(args),
         Some(Command::Tui) | None => crate::tui::run(),
     }
 }
@@ -334,6 +336,69 @@ fn run_doctor(args: DoctorArgs) -> Result<(), CliError> {
         println!("application: {}", ready.application_version);
         println!("model: {}", ready.model_version);
     }
+    Ok(())
+}
+
+fn run_preview(args: PreviewArgs) -> Result<(), CliError> {
+    if !args.volume.is_finite() || !(0.0..=1.0).contains(&args.volume) {
+        return Err(CliError::InvalidArgument(
+            "volume must be finite and in range 0..=1".to_owned(),
+        ));
+    }
+    let result_dir = absolute_path(&args.result_dir)?;
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(result_dir.join("report.json")).map_err(
+            |error| CliError::InvalidArgument(format!("cannot read result report: {error}")),
+        )?)
+        .map_err(|error| {
+            CliError::InvalidArgument(format!("result report is invalid JSON: {error}"))
+        })?;
+    let preview_relative = report
+        .get("artifacts")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|artifacts| {
+            artifacts.iter().find_map(|artifact| {
+                (artifact.get("kind").and_then(serde_json::Value::as_str) == Some("preview_wav"))
+                    .then(|| {
+                        artifact
+                            .get("relative_path")
+                            .and_then(serde_json::Value::as_str)
+                    })
+                    .flatten()
+            })
+        })
+        .ok_or_else(|| {
+            CliError::InvalidArgument(
+                "result has no preview.wav; rerun with --preview-wav".to_owned(),
+            )
+        })?;
+    let preview_path = crate::jobs::safe_join(&result_dir, preview_relative)?;
+    if !preview_path.is_file() {
+        return Err(CliError::InvalidArgument(format!(
+            "preview artifact is missing: {}",
+            preview_path.display()
+        )));
+    }
+    let mut playback = crate::preview::PlaybackService::open_wav(preview_path.clone());
+    playback
+        .set_volume(args.volume)
+        .map_err(|error| CliError::Environment(error.to_string()))?;
+    if let Some(error) = playback.error() {
+        return Err(CliError::Environment(error.to_string()));
+    }
+    playback
+        .play()
+        .map_err(|error| CliError::Environment(error.to_string()))?;
+    println!("preview: {}", preview_path.display());
+    let cancellation = cancellation_flag()?;
+    while !playback.is_finished() {
+        if cancellation.load(Ordering::Relaxed) {
+            let _ = playback.stop();
+            return Err(CliError::Cancelled);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = playback.stop();
     Ok(())
 }
 

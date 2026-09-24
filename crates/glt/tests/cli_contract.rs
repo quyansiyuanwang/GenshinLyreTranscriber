@@ -228,3 +228,24 @@ fn invalid_cleaning_threshold_is_usage_error() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("min-confidence"));
 }
+
+#[test]
+fn preview_reports_missing_audio_without_opening_device() {
+    let root = unique_test_dir("preview-missing");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let report = serde_json::json!({"artifacts": []});
+    std::fs::write(
+        root.join("report.json"),
+        serde_json::to_vec(&report).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(binary())
+        .arg("preview")
+        .arg(&root)
+        .output()
+        .expect("run glt preview");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--preview-wav"));
+}

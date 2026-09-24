@@ -11,6 +11,7 @@ glt tui
 glt doctor [--worker PATH] [--json]
 glt transcribe INPUT --output DIR [OPTIONS]
 glt convert-midi INPUT --output DIR [OPTIONS]
+glt preview RESULT_DIR [--volume 0..1]
 ```
 
 ## TUI
@@ -40,6 +41,10 @@ glt convert-midi INPUT --output DIR [OPTIONS]
 - `--overwrite`
 - `--json`
 - `--worker PATH`，仅开发或高级诊断使用
+
+`glt preview RESULT_DIR` 读取 `report.json` 中的 `preview_wav` artifact 并播放；音量范围为
+`0..=1`。没有预览文件时提示重新执行并加 `--preview-wav`。播放设备不可用只影响预览命令，
+不会影响已有结果。
 
 `--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
 静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。
