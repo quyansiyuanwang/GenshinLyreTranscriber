@@ -35,7 +35,7 @@
 - 精确事件 JSON 使用整数微秒，冻结 Schema 校验事件顺序与时长；MIDI 起音 round-trip 误差不超过 1ms。
 - `score.readable.txt` 面向人工阅读并明确不是旧播放器执行格式；`score.compat.txt` 使用参考播放器的 10ms 单逻辑行编码并报告网格碰撞与尾部静音限制。
 - `--preview-wav` 按映射起音生成自合成轻量 WAV，不包含游戏采样；空谱不会伪造可听文件。
-- Ratatui/Crossterm TUI 提供输入/输出路径、文件浏览、参数确认、真实阶段/未知进度和取消；后台线程保证长任务不阻塞界面。
+- Ratatui/Crossterm TUI 提供输入/输出路径、文件浏览、参数确认、真实阶段/未知进度和取消；结果页显示损失/产物并控制试听，失败后可返回参数重试。
 - Rust rodio 播放控制已提供播放、暂停、恢复、停止和音量接口，设备不可用时保留可诊断降级状态。
 - worker 先写隐藏 staging，Rust 校验产物大小和 SHA256 后再发布；已有结果必须显式 `--overwrite`。
 

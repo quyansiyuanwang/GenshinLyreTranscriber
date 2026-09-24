@@ -22,6 +22,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::cli::{CliError, JobOutcome, JobUpdate, build_job_options, run_job_with_cancel};
 use crate::jobs::{Operation, StartOptions, Timing, Transpose};
+use crate::preview::PlaybackService;
 
 const FIELD_INPUT: usize = 0;
 const FIELD_OUTPUT: usize = 1;
@@ -110,6 +111,12 @@ pub struct TuiApp {
     fraction: Option<f64>,
     message: String,
     result_directory: Option<PathBuf>,
+    result_lines: Vec<String>,
+    result_scroll: u16,
+    preview_path: Option<PathBuf>,
+    playback: Option<PlaybackService>,
+    playback_paused: bool,
+    playback_volume: f32,
     receiver: Option<Receiver<UiJobEvent>>,
     cancel: Option<Arc<AtomicBool>>,
     join_handle: Option<JoinHandle<()>>,
@@ -133,6 +140,12 @@ impl Default for TuiApp {
             fraction: None,
             message: String::new(),
             result_directory: None,
+            result_lines: Vec::new(),
+            result_scroll: 0,
+            preview_path: None,
+            playback: None,
+            playback_paused: true,
+            playback_volume: 1.0,
             receiver: None,
             cancel: None,
             join_handle: None,
@@ -244,6 +257,127 @@ impl TuiApp {
         }));
     }
 
+    fn load_result(&mut self, outcome: &JobOutcome) {
+        self.result_directory = Some(outcome.result.output_dir.clone());
+        self.result_lines.clear();
+        self.preview_path = None;
+        self.playback = None;
+        self.playback_paused = true;
+        let report_path = outcome.result.output_dir.join(&outcome.result.report_path);
+        let report: serde_json::Value = match std::fs::read_to_string(&report_path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+        {
+            Some(report) => report,
+            None => {
+                self.result_lines
+                    .push(format!("cannot read report: {}", report_path.display()));
+                return;
+            }
+        };
+        if let Some(counts) = report.get("counts").and_then(serde_json::Value::as_object) {
+            for key in [
+                "input_notes",
+                "output_notes",
+                "dropped_notes",
+                "mapped_keys",
+                "replaced_semitones",
+                "octave_folds",
+                "duplicate_keys",
+                "compatibility_collisions",
+            ] {
+                if let Some(value) = counts.get(key) {
+                    self.result_lines.push(format!("{key}: {value}"));
+                }
+            }
+        }
+        if let Some(warnings) = report.get("warnings").and_then(serde_json::Value::as_array) {
+            for warning in warnings {
+                let code = warning
+                    .get("code")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("WARNING");
+                let message = warning
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                self.result_lines
+                    .push(format!("warning [{code}] {message}"));
+            }
+        }
+        if let Some(artifacts) = report
+            .get("artifacts")
+            .and_then(serde_json::Value::as_array)
+        {
+            self.result_lines.push("artifacts:".to_owned());
+            for artifact in artifacts {
+                let kind = artifact
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?");
+                let relative = artifact
+                    .get("relative_path")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?");
+                self.result_lines.push(format!("  {kind}: {relative}"));
+                if kind == "preview_wav" {
+                    self.preview_path = Some(outcome.result.output_dir.join(relative));
+                }
+            }
+        }
+    }
+
+    fn toggle_playback(&mut self) {
+        let Some(path) = self.preview_path.clone() else {
+            self.message = "no preview.wav; rerun with preview_wav enabled".to_owned();
+            return;
+        };
+        if self.playback.is_none() {
+            self.playback = Some(PlaybackService::open_wav(path));
+        }
+        let Some(playback) = self.playback.as_mut() else {
+            return;
+        };
+        if let Some(error) = playback.error() {
+            self.message = error.to_string();
+            return;
+        }
+        let result = if self.playback_paused {
+            playback.play()
+        } else {
+            playback.pause()
+        };
+        match result {
+            Ok(()) => {
+                self.playback_paused = !self.playback_paused;
+                self.message = if self.playback_paused {
+                    "preview paused".to_owned()
+                } else {
+                    "preview playing".to_owned()
+                };
+            }
+            Err(error) => self.message = error.to_string(),
+        }
+    }
+
+    fn stop_playback(&mut self) {
+        if let Some(playback) = self.playback.as_mut()
+            && let Err(error) = playback.stop()
+        {
+            self.message = error.to_string();
+        }
+        self.playback_paused = true;
+    }
+
+    fn adjust_volume(&mut self, delta: f32) {
+        self.playback_volume = (self.playback_volume + delta).clamp(0.0, 1.0);
+        if let Some(playback) = self.playback.as_mut()
+            && let Err(error) = playback.set_volume(self.playback_volume)
+        {
+            self.message = error.to_string();
+        }
+    }
+
     fn poll_job(&mut self) {
         let mut events = Vec::new();
         if let Some(receiver) = self.receiver.as_ref() {
@@ -261,7 +395,7 @@ impl TuiApp {
                     self.warnings.push(format!("[{code}] {message}"));
                 }
                 UiJobEvent::Completed(outcome) => {
-                    self.result_directory = Some(outcome.result.output_dir);
+                    self.load_result(&outcome);
                     self.message = format!("job {} completed", outcome.job_id);
                     self.screen = Screen::Completed;
                     self.cancel = None;
@@ -302,6 +436,27 @@ impl TuiApp {
             return false;
         }
         if self.screen == Screen::Running {
+            return false;
+        }
+        if self.screen == Screen::Completed {
+            match key.code {
+                KeyCode::Char(' ') => self.toggle_playback(),
+                KeyCode::Char('s') => self.stop_playback(),
+                KeyCode::Char('+' | '=') => self.adjust_volume(0.1),
+                KeyCode::Char('-') => self.adjust_volume(-0.1),
+                KeyCode::Char('r') => {
+                    self.screen = Screen::Parameters;
+                    self.focus = FIELD_TIMING;
+                }
+                KeyCode::Up => self.result_scroll = self.result_scroll.saturating_sub(1),
+                KeyCode::Down => self.result_scroll = self.result_scroll.saturating_add(1),
+                _ => {}
+            }
+            return false;
+        }
+        if self.screen == Screen::Failed && key.code == KeyCode::Char('r') {
+            self.screen = Screen::Parameters;
+            self.focus = FIELD_TIMING;
             return false;
         }
         if key.code == KeyCode::Esc {
@@ -441,7 +596,7 @@ impl TuiApp {
         }
         let footer = match self.screen {
             Screen::Running => "Ctrl+C cancel/exit",
-            Screen::Completed => "Esc exit",
+            Screen::Completed => "Space play/pause  S stop  +/- volume  R rerun  Esc exit",
             Screen::Failed => "Esc exit",
             Screen::Input => "Enter parameters  F2 browse  Esc quit",
             Screen::Parameters => "Space cycle/toggle  F5 run  Tab next  Esc quit",
@@ -535,19 +690,57 @@ impl TuiApp {
                     chunks[2],
                 );
             }
-            Screen::Completed | Screen::Failed => {
-                let title = if self.screen == Screen::Completed {
-                    "Completed"
+            Screen::Completed => {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(4), Constraint::Min(2)])
+                    .split(area);
+                let mut text = self.message.clone();
+                if let Some(directory) = &self.result_directory {
+                    text.push_str(&format!("\nresult: {}", directory.display()));
+                }
+                if let Some(playback) = &self.playback {
+                    if let Some(error) = playback.error() {
+                        text.push_str(&format!("\npreview unavailable: {error}"));
+                    } else {
+                        text.push_str(&format!("\npreview volume: {:.1}", self.playback_volume));
+                    }
+                } else if self.preview_path.is_none() {
+                    text.push_str("\npreview: not generated");
+                }
+                let title = if self
+                    .result_lines
+                    .iter()
+                    .any(|line| line.starts_with("warning ["))
+                {
+                    "Completed with warnings"
                 } else {
-                    "Failed"
+                    "Completed"
                 };
+                frame.render_widget(
+                    Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(title)),
+                    chunks[0],
+                );
+                frame.render_widget(
+                    Paragraph::new(self.result_lines.join("\n"))
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title("Result details"),
+                        )
+                        .scroll((self.result_scroll, 0))
+                        .wrap(Wrap { trim: false }),
+                    chunks[1],
+                );
+            }
+            Screen::Failed => {
                 let mut text = self.message.clone();
                 if let Some(directory) = &self.result_directory {
                     text.push_str(&format!("\nresult: {}", directory.display()));
                 }
                 frame.render_widget(
                     Paragraph::new(text)
-                        .block(Block::default().borders(Borders::ALL).title(title))
+                        .block(Block::default().borders(Borders::ALL).title("Failed"))
                         .wrap(Wrap { trim: false }),
                     area,
                 );
@@ -739,6 +932,59 @@ mod tests {
 
         app.set_field(FIELD_OUTPUT, "out".to_owned());
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.screen, Screen::Parameters);
+        assert_eq!(app.focus, FIELD_TIMING);
+    }
+
+    #[test]
+    fn result_view_shows_counts_warnings_and_preview() {
+        use crate::jobs::{Artifact, ResultPayload};
+
+        let root = std::env::temp_dir().join(format!("glt-tui-result-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("report.json"),
+            r#"{"counts":{"input_notes":2,"output_notes":1,"dropped_notes":1,"mapped_keys":1,"replaced_semitones":0,"octave_folds":0,"duplicate_keys":0,"compatibility_collisions":0},"warnings":[{"code":"CLEANING_LOSS","message":"one note dropped"}],"artifacts":[{"kind":"preview_wav","relative_path":"preview.wav"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("preview.wav"), b"fake").unwrap();
+        let outcome = JobOutcome {
+            job_id: "local-test".to_owned(),
+            result: ResultPayload {
+                output_dir: root.clone(),
+                report_path: PathBuf::from("report.json"),
+                artifacts: vec![Artifact {
+                    kind: "preview_wav".to_owned(),
+                    relative_path: "preview.wav".to_owned(),
+                    sha256: "a".repeat(64),
+                    size_bytes: 4,
+                }],
+            },
+        };
+        let mut app = TuiApp::default();
+        app.load_result(&outcome);
+        assert!(
+            app.result_lines
+                .iter()
+                .any(|line| line.contains("input_notes: 2"))
+        );
+        assert!(
+            app.result_lines
+                .iter()
+                .any(|line| line.contains("CLEANING_LOSS"))
+        );
+        assert_eq!(app.preview_path, Some(root.join("preview.wav")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_job_can_return_to_parameters_for_retry() {
+        let mut app = TuiApp {
+            screen: Screen::Failed,
+            ..TuiApp::default()
+        };
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
         assert_eq!(app.screen, Screen::Parameters);
         assert_eq!(app.focus, FIELD_TIMING);
     }
