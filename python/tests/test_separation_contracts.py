@@ -56,6 +56,7 @@ def _component(tmp_path: pathlib.Path) -> pathlib.Path:
                 "quality": "balanced",
                 "relative_path": "models/htdemucs.onnx",
                 "sha256": _hash(model),
+                "logical_sha256": "b" * 64,
                 "size_bytes": model.stat().st_size,
                 "source_url": "https://example.invalid/htdemucs",
                 "license_name": "MIT",
@@ -212,6 +213,7 @@ def test_component_provider_executes_and_validates_stem_set(
                         "type": "result",
                         "stem_set_path": str(manifest),
                         "elapsed_seconds": 0.1,
+                        "model_sha256": "b" * 64,
                     }
                 ),
                 flush=True,

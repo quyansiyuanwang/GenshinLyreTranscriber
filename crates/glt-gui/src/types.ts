@@ -195,6 +195,22 @@ export interface PlaybackStatus {
   available: boolean;
 }
 
+export interface SeparatorModelStatus {
+  id: string;
+  quality: string;
+  logical_sha256: string;
+  verified: boolean;
+}
+
+export interface SeparatorComponentStatus {
+  installed: boolean;
+  directory: string;
+  component_id: string | null;
+  component_version: string | null;
+  models: SeparatorModelStatus[];
+  error: string | null;
+}
+
 export interface DraftFilterRule {
   enabled: boolean;
   confidenceMin: string;

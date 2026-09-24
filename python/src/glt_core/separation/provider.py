@@ -66,6 +66,7 @@ def run_component(
         encoding="utf-8",
         errors="replace",
         creationflags=creation_flags,
+        cwd=component.directory,
     )
     if process.stdout is None:
         process.kill()
@@ -96,6 +97,9 @@ def run_component(
             raise SeparationError(stderr.strip() or f"separator exited with {return_code}")
         if result_payload is None:
             raise SeparationError("separator did not return a result")
+        actual_model_hash = result_payload.get("model_sha256")
+        if component.model is not None and actual_model_hash != component.model.logical_sha256:
+            raise SeparationError("separator model hash does not match component manifest")
         stem_set_path = result_payload.get("stem_set_path")
         if not isinstance(stem_set_path, str):
             raise SeparationError("separator result has no stem_set_path")

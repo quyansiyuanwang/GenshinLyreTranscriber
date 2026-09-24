@@ -25,6 +25,7 @@ class ModelPackage:
     quality: Quality
     relative_path: pathlib.Path
     sha256: str
+    logical_sha256: str
     size_bytes: int
     source_url: str
     license_name: str
@@ -93,6 +94,7 @@ def load_component(directory: pathlib.Path | str) -> ComponentManifest:
                 quality=quality,  # type: ignore[arg-type]
                 relative_path=_safe_relative(item, "relative_path"),
                 sha256=_sha256(item, "sha256"),
+                logical_sha256=_sha256(item, "logical_sha256"),
                 size_bytes=_non_negative_int(item, "size_bytes"),
                 source_url=_required_string(item, "source_url"),
                 license_name=_required_string(item, "license_name"),

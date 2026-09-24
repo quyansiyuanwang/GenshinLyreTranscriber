@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 mod analysis;
 mod project;
+mod separation;
 
 #[derive(Default)]
 struct GuiState {
@@ -296,6 +297,9 @@ pub fn run() {
         .manage(GuiState::default())
         .manage(analysis::AnalysisState::default())
         .invoke_handler(tauri::generate_handler![
+            separation::separator_component_status,
+            separation::separator_component_install,
+            separation::separator_component_uninstall,
             analysis::start_analysis,
             analysis::cancel_analysis,
             analysis::analysis_manifest,

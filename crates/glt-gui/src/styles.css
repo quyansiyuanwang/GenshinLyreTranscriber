@@ -152,7 +152,8 @@ button:disabled {
   background: rgb(255 255 255 / 1.5%);
 }
 
-.project-card {
+.project-card,
+.separator-card {
   display: grid;
   gap: 7px;
   padding: 13px;
@@ -161,7 +162,8 @@ button:disabled {
   background: rgb(229 195 108 / 3.5%);
 }
 
-.project-card > span {
+.project-card > span,
+.separator-card > span {
   color: var(--gold);
   font-size: 9px;
   font-weight: 700;
@@ -169,17 +171,21 @@ button:disabled {
 }
 
 .project-card strong,
-.project-card small {
+.project-card small,
+.separator-card strong,
+.separator-card small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.project-card strong {
+.project-card strong,
+.separator-card strong {
   font-size: 12px;
 }
 
-.project-card small {
+.project-card small,
+.separator-card small {
   color: var(--muted);
   font-size: 10px;
 }
@@ -935,7 +941,8 @@ select {
 
   .sidebar nav,
   .worker-card,
-  .project-card {
+  .project-card,
+  .separator-card {
     display: none;
   }
 

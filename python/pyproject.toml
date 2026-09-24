@@ -29,6 +29,11 @@ dev = [
   "ruff>=0.13",
   "types-jsonschema==4.26.0.20260518",
 ]
+separator = [
+  "demucs==4.1.0",
+  "torch==2.11.0",
+  "torchaudio==2.11.0",
+]
 
 [tool.uv]
 environments = ["sys_platform == 'win32'"]
@@ -56,5 +61,5 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["basic_pitch.*", "mido.*", "onnxruntime", "pretty_midi.*", "scipy.*", "soundfile.*"]
+module = ["basic_pitch.*", "demucs.*", "mido.*", "onnxruntime", "pretty_midi.*", "scipy.*", "soundfile.*", "torch.*", "torchaudio.*"]
 ignore_missing_imports = true

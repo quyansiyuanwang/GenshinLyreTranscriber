@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { join } from "@tauri-apps/api/path";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -23,6 +23,7 @@ import type {
   ProjectDocument,
   PlaybackStatus,
   ReportDocument,
+  SeparatorComponentStatus,
   SpectrogramImage,
   SpectrumFrame,
   Timing,
@@ -166,6 +167,8 @@ function App() {
   const [report, setReport] = useState<ReportDocument | null>(null);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
   const [project, setProject] = useState<ProjectDocument | null>(null);
+  const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
+  const [separatorDirectory, setSeparatorDirectory] = useState<string | null>(null);
   const [analysisManifest, setAnalysisManifest] = useState<AnalysisManifest | null>(null);
   const [analysisDirectory, setAnalysisDirectory] = useState<string | null>(null);
   const [analysisWaveform, setAnalysisWaveform] = useState<WaveformPayload | null>(null);
@@ -198,6 +201,15 @@ function App() {
     invoke<DoctorInfo>("doctor")
       .then(setDoctor)
       .catch((reason) => setNotice(`worker: ${String(reason)}`));
+    void appDataDir()
+      .then((root) => join(root, "separator"))
+      .then(async (directory) => {
+        setSeparatorDirectory(directory);
+        setSeparatorStatus(
+          await invoke<SeparatorComponentStatus>("separator_component_status", { directory }),
+        );
+      })
+      .catch((reason) => setNotice(`separator: ${String(reason)}`));
   }, []);
 
   useEffect(() => {
@@ -473,6 +485,42 @@ function App() {
     setNotice("工程已关闭");
   }
 
+  async function installSeparator() {
+    const archive = await openDialog({
+      multiple: false,
+      directory: false,
+      title: "选择分离组件 ZIP",
+      filters: [{ name: "Separator component", extensions: ["zip"] }],
+    });
+    if (typeof archive !== "string" || !separatorDirectory) return;
+    try {
+      const status = await invoke<SeparatorComponentStatus>("separator_component_install", {
+        archive,
+        target: separatorDirectory,
+        overwrite: true,
+      });
+      setSeparatorStatus(status);
+      setNotice("分离组件已安装");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function uninstallSeparator() {
+    if (!separatorDirectory) return;
+    try {
+      await invoke("separator_component_uninstall", { target: separatorDirectory });
+      setSeparatorStatus(
+        await invoke<SeparatorComponentStatus>("separator_component_status", {
+          directory: separatorDirectory,
+        }),
+      );
+      setNotice("分离组件已卸载");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function playPreview() {
     if (!result || !previewArtifact) return;
     const path = await join(result.result.output_dir, previewArtifact.relative_path);
@@ -635,6 +683,28 @@ function App() {
                 <button onClick={() => void createProject()}>新建</button>
                 <button onClick={() => void openProject()}>打开</button>
               </>
+            )}
+          </div>
+        </div>
+
+        <div className="separator-card">
+          <span>SEPARATOR</span>
+          <strong>
+            {separatorStatus?.installed
+              ? `Demucs ${separatorStatus.component_version}`
+              : "未安装 Demucs 组件"}
+          </strong>
+          <small>
+            {separatorStatus?.installed
+              ? separatorStatus.models.map((model) => model.id).join(" / ")
+              : "基础包不包含 torch；按需安装本地 ZIP"}
+          </small>
+          <div className="project-actions">
+            <button onClick={() => void installSeparator()}>
+              {separatorStatus?.installed ? "升级" : "安装"}
+            </button>
+            {separatorStatus?.installed && (
+              <button onClick={() => void uninstallSeparator()}>卸载</button>
             )}
           </div>
         </div>

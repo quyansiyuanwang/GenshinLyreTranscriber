@@ -39,12 +39,13 @@
     "model": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "quality", "relative_path", "sha256", "size_bytes", "source_url", "license_name"],
+      "required": ["id", "quality", "relative_path", "sha256", "logical_sha256", "size_bytes", "source_url", "license_name"],
       "properties": {
         "id": {"type": "string", "minLength": 1, "maxLength": 128},
         "quality": {"enum": ["fast", "balanced", "high_quality"]},
         "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024},
         "sha256": {"$ref": "#/$defs/sha256"},
+        "logical_sha256": {"$ref": "#/$defs/sha256"},
         "size_bytes": {"type": "integer", "minimum": 1},
         "source_url": {"type": "string", "minLength": 1, "maxLength": 4096},
         "license_name": {"type": "string", "minLength": 1, "maxLength": 256}
