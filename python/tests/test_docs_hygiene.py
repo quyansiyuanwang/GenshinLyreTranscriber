@@ -37,5 +37,8 @@ def test_nightly_workflow_publishes_fixed_prerelease_assets() -> None:
     assert "name: Nightly" in workflow
     assert "prerelease: true" in workflow
     assert "overwrite_files: true" in workflow
-    assert "glt-nightly-windows-x64.zip" in workflow
-    assert "glt-nightly-windows-x64.sha256" in workflow
+    assert "package_release.ps1 -AssetPrefix glt-nightly" in workflow
+    assert "glt-nightly-gui-windows-x64-setup.exe" in workflow
+    assert "glt-nightly-gui-windows-x64.zip" in workflow
+    assert "glt-nightly-cli-tui-windows-x64.zip" in workflow
+    assert "glt-nightly-SHA256SUMS" in workflow
