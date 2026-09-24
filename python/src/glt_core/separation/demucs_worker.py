@@ -127,7 +127,7 @@ def separate_demucs(
             contextlib.redirect_stdout(sys.stderr),
         ):
             try:
-                demucs_main(arguments)  # type: ignore[no-untyped-call]
+                demucs_main(arguments)
             except SystemExit as exc:
                 if exc.code not in (None, 0):
                     raise DemucsError(f"Demucs exited with code {exc.code}") from exc

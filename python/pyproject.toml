@@ -61,5 +61,6 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["basic_pitch.*", "demucs.*", "mido.*", "onnxruntime", "pretty_midi.*", "scipy.*", "soundfile.*", "torch.*", "torchaudio.*"]
+module = ["basic_pitch.*", "demucs.*", "huggingface_hub.*", "mido.*", "onnxruntime", "pretty_midi.*", "scipy.*", "soundfile.*", "torch.*", "torchaudio.*"]
 ignore_missing_imports = true
+follow_imports = "skip"
