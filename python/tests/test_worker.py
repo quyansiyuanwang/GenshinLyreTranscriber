@@ -241,7 +241,12 @@ def test_worker_reports_compatibility_slot_collision(tmp_path: pathlib.Path) -> 
     assert report["counts"]["input_notes"] == 2
     assert report["counts"]["compatibility_collisions"] == 1
     assert "COMPATIBILITY_COLLISIONS" in {warning["code"] for warning in report["warnings"]}
-    assert (staging / "score.compat.txt").read_text(encoding="utf-8").splitlines()[-1] == "/ A/"
+    body = "".join(
+        line
+        for line in (staging / "score.compat.txt").read_text(encoding="utf-8").splitlines()
+        if line.startswith("/")
+    )
+    assert body.replace("/", "").rstrip() == " A"
 
 
 def test_worker_empty_score_does_not_create_fake_preview(tmp_path: pathlib.Path) -> None:

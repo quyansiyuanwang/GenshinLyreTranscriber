@@ -144,7 +144,7 @@ worker 启动、发布或协议逻辑。
 总时长、实际移调、单音/和弦图例，并说明起音间隔和尾部静音限制。
 
 `score.compat.txt` 针对已核验的参考播放器语义生成：`INTERVAL_RATING=0.01`、
-`SPACE_INTERVAL_RATING=1.0`、`LINE_INTERVAL_RATING=0.0`、单逻辑行、首尾斜杠保护。
+`SPACE_INTERVAL_RATING=1.0`、`LINE_INTERVAL_RATING=1.0`、每行 4 个斜杠段、每段 4 个 10ms 槽，并在行首使用斜杠保护前导休止。
 起音按 10ms 取整，5000us 平局向上；同一槽的不同按键合并为和弦，同键重触发无法保留时
 增加 `compatibility_collisions`。空谱没有音符主体，尾部静音只写入注释和报告，不伪造
 旧播放器可等待的结束时间。

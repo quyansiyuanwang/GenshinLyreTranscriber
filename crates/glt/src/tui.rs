@@ -99,6 +99,9 @@ impl Browser {
                     .cmp(&left.is_dir())
                     .then_with(|| left.file_name().cmp(&right.file_name()))
             });
+            if let Some(parent) = self.directory.parent() {
+                paths.insert(0, parent.to_path_buf());
+            }
             self.entries = paths;
         }
         self.entries.truncate(500);
@@ -136,7 +139,8 @@ impl Default for TuiApp {
         let fields = std::array::from_fn(|index| match index {
             FIELD_TIMING => "auto".to_owned(),
             FIELD_TRANSPOSE => "auto".to_owned(),
-            FIELD_PREVIEW | FIELD_OVERWRITE => "false".to_owned(),
+            FIELD_PREVIEW => "true".to_owned(),
+            FIELD_OVERWRITE => "false".to_owned(),
             FIELD_MIN_CONFIDENCE => "0.2".to_owned(),
             FIELD_MIN_DURATION => "50".to_owned(),
             FIELD_RETRIGGER_GAP => "30".to_owned(),
@@ -474,10 +478,28 @@ impl TuiApp {
         }
         if self.focus == FIELD_OUTPUT {
             self.fields[FIELD_OUTPUT] = path;
-        } else {
-            self.fields[FIELD_INPUT] = path;
-            self.focus = FIELD_INPUT;
+            return;
         }
+        if self.fields[FIELD_OUTPUT].trim().is_empty() {
+            let source = PathBuf::from(&path);
+            if let (Some(parent), Some(stem)) = (source.parent(), source.file_stem()) {
+                self.fields[FIELD_OUTPUT] = parent
+                    .join(format!("{}-output", stem.to_string_lossy()))
+                    .display()
+                    .to_string();
+            }
+        }
+        if Path::new(&path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case("mid") || value.eq_ignore_ascii_case("midi")
+            })
+        {
+            self.fields[FIELD_TIMING] = "preserve".to_owned();
+        }
+        self.fields[FIELD_INPUT] = path;
+        self.focus = FIELD_INPUT;
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -1037,6 +1059,7 @@ mod tests {
         let mut app = TuiApp::default();
         app.handle_paste("\"C:\\Music\\song.flac\"\n");
         assert_eq!(app.field(FIELD_INPUT), "C:\\Music\\song.flac");
+        assert_eq!(app.field(FIELD_OUTPUT), "C:\\Music\\song-output");
     }
 
     #[test]

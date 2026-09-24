@@ -13,7 +13,9 @@ from glt_core.processing.mapping import default_mapping_layout
 from glt_core.protocol.validation import validate_events
 
 TICK_US = 10_000
-_VISUAL_SEPARATOR_SLOTS = 100
+_SLOTS_PER_SEGMENT = 4
+_SEGMENTS_PER_LINE = 4
+_SLOTS_PER_LINE = _SLOTS_PER_SEGMENT * _SEGMENTS_PER_LINE
 _PITCH_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 _KEY_TO_PITCH = {entry.key: entry.pitch for entry in default_mapping_layout().keys}
 
@@ -145,12 +147,17 @@ def build_compatibility_score(events_document: dict[str, Any]) -> CompatibilityS
         slots = [" "] * (max(grouped) + 1)
         for slot, keys in grouped.items():
             slots[slot] = keys[0] if len(keys) == 1 else f"({''.join(keys)})"
-        pieces: list[str] = []
-        for index, token in enumerate(slots):
-            if index and index % _VISUAL_SEPARATOR_SLOTS == 0:
-                pieces.append("/")
-            pieces.append(token)
-        body = "/" + "".join(pieces) + "/"
+        while len(slots) % _SLOTS_PER_LINE:
+            slots.append(" ")
+        body_lines: list[str] = []
+        for start in range(0, len(slots), _SLOTS_PER_LINE):
+            line_slots = slots[start : start + _SLOTS_PER_LINE]
+            segments = [
+                "".join(line_slots[offset : offset + _SLOTS_PER_SEGMENT])
+                for offset in range(0, _SLOTS_PER_LINE, _SLOTS_PER_SEGMENT)
+            ]
+            body_lines.append("/" + "/".join(segments) + "/")
+        body = "\n".join(body_lines)
     else:
         body = "/"
 
@@ -165,7 +172,7 @@ def build_compatibility_score(events_document: dict[str, Any]) -> CompatibilityS
         "arpeggio_interval = 0.01",
         "arpeggio_auto = true",
         f"interval_rating = {TICK_US / 1_000_000:.2f}",
-        "line_interval_rating = 0.0",
+        "line_interval_rating = 1.0",
         "space_interval_rating = 1.0",
         "empty_line_interval_rating = 0.0",
         "segment_length = 0",

@@ -166,7 +166,7 @@ def run(
     config = parsed.config
     expected_config = {
         "interval_rating": 0.01,
-        "line_interval_rating": 0.0,
+        "line_interval_rating": 1.0,
         "space_interval_rating": 1.0,
         "empty_line_interval_rating": 0.0,
         "segment_length": 0,

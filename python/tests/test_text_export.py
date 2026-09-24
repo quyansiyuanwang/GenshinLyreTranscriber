@@ -42,9 +42,11 @@ def test_compatibility_score_keeps_leading_rest_and_adjacent_events() -> None:
 
     assert score.max_onset_error_us == 5_000
     assert score.collisions == 0
-    assert score.text.splitlines()[-1] == "/ A (CE)/"
+    body = "\n".join(line for line in score.text.splitlines() if line.startswith("/"))
+    assert body.replace("/", "").rstrip() == " A (CE)"
+    assert body.count("/") == 5
     assert "interval_rating = 0.01" in score.text
-    assert "line_interval_rating = 0.0" in score.text
+    assert "line_interval_rating = 1.0" in score.text
 
 
 def test_compatibility_score_reports_same_slot_key_collision() -> None:
@@ -59,7 +61,8 @@ def test_compatibility_score_reports_same_slot_key_collision() -> None:
 
     assert score.collisions == 1
     assert score.represented_events == 1
-    assert score.text.splitlines()[-1] == "/ (AC)/"
+    body = "\n".join(line for line in score.text.splitlines() if line.startswith("/"))
+    assert body.replace("/", "").rstrip() == " (AC)"
     assert "# 网格碰撞事件：1" in score.text
 
 

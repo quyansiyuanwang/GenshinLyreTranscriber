@@ -33,7 +33,7 @@
 - 提供 -12..12 半音移调候选预览，可在正式映射前查看损失和冲突。
 - 结果目录包含 `source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 和 `report.json`；按需生成 `preview.wav`。
 - 精确事件 JSON 使用整数微秒，冻结 Schema 校验事件顺序与时长；MIDI 起音 round-trip 误差不超过 1ms。
-- `score.readable.txt` 面向人工阅读并明确不是旧播放器执行格式；`score.compat.txt` 使用参考播放器的 10ms 单逻辑行编码并报告网格碰撞与尾部静音限制。
+- `score.readable.txt` 面向人工阅读并明确不是旧播放器执行格式；`score.compat.txt` 使用参考播放器的 10ms 多行分段结构，并按 `.qymusic` 常见的每行 4 段组织；网格碰撞与尾部静音仍会报告。
 - `--preview-wav` 按映射起音生成自合成轻量 WAV，不包含游戏采样；空谱不会伪造可听文件。
 - Ratatui/Crossterm TUI 提供输入/输出路径、文件浏览、参数确认、真实阶段/未知进度和取消；结果页显示损失/产物并控制试听，失败后可返回参数重试；支持拖入或粘贴文件路径。
 - Rust rodio 播放控制已提供播放、暂停、恢复、停止和音量接口，设备不可用时保留可诊断降级状态。
