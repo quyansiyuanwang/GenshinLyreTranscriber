@@ -158,6 +158,19 @@ impl PlaybackService {
         self.store_result(result)
     }
 
+    /// Replace the current source and resume at a shared timeline position.
+    pub fn switch_path(
+        &mut self,
+        path: impl Into<PathBuf>,
+        position: std::time::Duration,
+    ) -> Result<(), PlaybackError> {
+        let mut replacement =
+            Self::with_factory(path.into(), self.volume, Arc::clone(&self.factory));
+        let result = replacement.seek(position).and_then(|()| replacement.play());
+        *self = replacement;
+        result
+    }
+
     pub fn is_paused(&self) -> bool {
         self.backend
             .as_ref()
@@ -272,6 +285,7 @@ mod tests {
         calls: Mutex<Vec<&'static str>>,
         dropped: AtomicBool,
         volume: Mutex<f32>,
+        position: Mutex<std::time::Duration>,
     }
 
     struct FakeBackend {
@@ -302,6 +316,16 @@ mod tests {
 
         fn is_finished(&self) -> bool {
             false
+        }
+
+        fn position(&self) -> std::time::Duration {
+            *self.state.position.lock().unwrap()
+        }
+
+        fn seek(&mut self, position: std::time::Duration) -> Result<(), PlaybackError> {
+            self.state.calls.lock().unwrap().push("seek");
+            *self.state.position.lock().unwrap() = position;
+            Ok(())
         }
     }
 
@@ -397,5 +421,27 @@ mod tests {
         );
         assert_eq!(service.set_volume(1.1), Err(PlaybackError::InvalidVolume));
         assert_eq!(service.volume(), 1.0);
+    }
+
+    #[test]
+    fn switch_path_reopens_and_resumes_without_losing_volume() {
+        let state = Arc::new(FakeState::default());
+        let opens = Arc::new(AtomicUsize::new(0));
+        let mut service = PlaybackService::with_factory(
+            PathBuf::from("source.wav"),
+            0.7,
+            fake_factory(Arc::clone(&state), Arc::clone(&opens)),
+        );
+        service
+            .switch_path(
+                PathBuf::from("preview.wav"),
+                std::time::Duration::from_millis(250),
+            )
+            .unwrap();
+        assert_eq!(service.path(), Path::new("preview.wav"));
+        assert_eq!(service.volume(), 0.7);
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        assert_eq!(*state.calls.lock().unwrap(), ["seek", "play"]);
+        assert_eq!(service.position(), std::time::Duration::from_millis(250));
     }
 }

@@ -171,6 +171,8 @@ function App() {
   const [performance, setPerformance] = useState<PerformanceDocument | null>(null);
   const [candidateNotes, setCandidateNotes] = useState<CandidateNote[]>([]);
   const [editApplying, setEditApplying] = useState(false);
+  const [abSource, setAbSource] = useState("preview");
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
   const [project, setProject] = useState<ProjectDocument | null>(null);
   const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
@@ -194,6 +196,29 @@ function App() {
   );
 
   const counts = useMemo(() => Object.entries(report?.counts ?? {}), [report]);
+  const abOptions = useMemo(() => {
+    const options = [
+      {
+        id: "preview",
+        label: "合成",
+        path: previewArtifact && result
+          ? `${result.result.output_dir}\\${previewArtifact.relative_path}`
+          : null,
+      },
+      { id: "original", label: "原音", path: request.input || null },
+    ];
+    for (const artifact of result?.result.artifacts ?? []) {
+      if (artifact.kind === "instrumental_wav" || artifact.kind === "routed_audio") {
+        options.push({
+          id: artifact.kind,
+          label: artifact.kind === "instrumental_wav" ? "Instrumental" : "路由",
+          path: `${result!.result.output_dir}\\${artifact.relative_path}`,
+        });
+      }
+    }
+    return options;
+  }, [previewArtifact, request.input, result]);
+  const hasActiveAbSource = abOptions.some((option) => option.id === abSource && option.path);
 
   useEffect(() => {
     invoke<ProjectDocument | null>("project_current")
@@ -431,6 +456,31 @@ function App() {
     }
   }
 
+  async function openResult() {
+    const selected = await openDialog({
+      multiple: false,
+      directory: true,
+      title: "打开既有结果目录",
+    });
+    if (typeof selected !== "string") return;
+    try {
+      const opened = await invoke<ReportDocument>("read_report", { resultDir: selected });
+      setReport(opened);
+      setResult({
+        job_id: "opened-result",
+        result: {
+          output_dir: selected,
+          report_path: "report.json",
+          artifacts: opened.artifacts ?? [],
+        },
+      });
+      setNotice("既有结果已打开");
+      setError(null);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function startJob(next = request) {
     setError(null);
     setWarnings([]);
@@ -548,29 +598,36 @@ function App() {
     }
   }
 
-  async function playPreview() {
-    if (!result || !previewArtifact) return;
-    const path = await join(result.result.output_dir, previewArtifact.relative_path);
+  async function switchAbSource(sourceId: string) {
+    const option = abOptions.find((entry) => entry.id === sourceId);
+    if (!option?.path) {
+      setPlaybackError(`没有可播放的${option?.label ?? "音频"}来源`);
+      return;
+    }
     try {
-      await invoke("play_preview", { path, volume });
-      setPlayback("playing");
+      const status = await invoke<PlaybackStatus>("playback_status");
+      const position = status.available ? status.position_us : positionUs;
+      await invoke("play_ab_source", {
+        path: option.path,
+        volume,
+        positionUs: position,
+      });
+      setAbSource(sourceId);
+      setPlayback(sourceId === "original" ? "playing-source" : "playing");
+      setPlaybackError(null);
       setError(null);
     } catch (reason) {
       setPlayback("error");
-      setError(String(reason));
+      setPlaybackError(String(reason));
     }
   }
 
+  async function playPreview() {
+    await switchAbSource("preview");
+  }
+
   async function playSource() {
-    if (!request.input) return;
-    try {
-      await invoke("play_preview", { path: request.input, volume });
-      setPlayback("playing-source");
-      setError(null);
-    } catch (reason) {
-      setPlayback("error");
-      setError(String(reason));
-    }
+    await switchAbSource("original");
   }
 
   async function seekAnalysis(position: number) {
@@ -1167,6 +1224,9 @@ function App() {
                 <h2>结果、筛选与试听</h2>
               </div>
               <div className="button-row">
+                <button className="ghost-button" onClick={() => void openResult()}>
+                  打开已有结果
+                </button>
                 <button
                   className="ghost-button"
                   onClick={() => void openPath(result.result.output_dir)}
@@ -1284,13 +1344,23 @@ function App() {
                   <strong>{previewArtifact ? "preview.wav 已生成" : "没有 preview.wav"}</strong>
                 </div>
                 <div className="playback-controls">
-                  <button className="primary-button" onClick={() => void playPreview()} disabled={!previewArtifact}>
-                    {playback === "playing" ? "重新播放" : "播放"}
+                  {abOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      className={abSource === option.id ? "primary-button" : undefined}
+                      onClick={() => void switchAbSource(option.id)}
+                      disabled={!option.path}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                  <button onClick={() => void playPreview()} disabled={!previewArtifact}>
+                    播放当前
                   </button>
-                  <button onClick={() => void pausePreview()} disabled={!previewArtifact}>
+                  <button onClick={() => void pausePreview()} disabled={!hasActiveAbSource}>
                     暂停
                   </button>
-                  <button onClick={() => void stopPreview()} disabled={!previewArtifact}>
+                  <button onClick={() => void stopPreview()} disabled={!hasActiveAbSource}>
                     停止
                   </button>
                 </div>
@@ -1305,6 +1375,7 @@ function App() {
                     onChange={(event) => void updateVolume(Number(event.target.value))}
                   />
                 </label>
+                {playbackError && <small className="playback-error">{playbackError}</small>}
               </div>
 
               <div className="artifact-list">

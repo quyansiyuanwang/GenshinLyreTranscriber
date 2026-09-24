@@ -693,6 +693,15 @@ select {
   border-color: #566457;
 }
 
+.playback-error {
+  display: block;
+  max-width: 100%;
+  color: #efaaa4;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .alerts {
   display: grid;
   gap: 8px;

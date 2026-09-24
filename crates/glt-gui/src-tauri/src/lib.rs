@@ -373,6 +373,41 @@ fn play_preview(state: State<'_, GuiState>, path: PathBuf, volume: f32) -> Resul
 }
 
 #[tauri::command]
+fn play_ab_source(
+    state: State<'_, GuiState>,
+    path: PathBuf,
+    volume: f32,
+    position_us: u64,
+) -> Result<(), String> {
+    let position = std::time::Duration::from_micros(position_us);
+    let mut playback = state.lock_playback()?;
+    if let Some(service) = playback.as_mut() {
+        service
+            .set_volume(volume)
+            .map_err(|error| error.to_string())?;
+        if service.path() == path {
+            service
+                .seek(position)
+                .and_then(|()| service.play())
+                .map_err(|error| error.to_string())
+        } else {
+            service
+                .switch_path(path, position)
+                .map_err(|error| error.to_string())
+        }
+    } else {
+        let mut service = PlaybackService::open_wav(path);
+        service
+            .set_volume(volume)
+            .and_then(|()| service.seek(position))
+            .and_then(|()| service.play())
+            .map_err(|error| error.to_string())?;
+        *playback = Some(service);
+        Ok(())
+    }
+}
+
+#[tauri::command]
 fn pause_preview(state: State<'_, GuiState>) -> Result<(), String> {
     let mut playback = state.lock_playback()?;
     playback
@@ -463,6 +498,7 @@ pub fn run() {
             next_edit_output,
             edit_export,
             play_preview,
+            play_ab_source,
             pause_preview,
             stop_preview,
             set_preview_volume,
