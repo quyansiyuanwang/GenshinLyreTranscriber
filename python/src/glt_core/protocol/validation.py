@@ -13,6 +13,7 @@ from jsonschema import Draft202012Validator
 
 SAFE_INTEGER_MAX = 9_007_199_254_740_991
 SCHEMA_FILES = {
+    "analysis_manifest": "analysis-manifest-v1.schema.json",
     "events": "events-v1.schema.json",
     "worker": "worker-v2.schema.json",
     "note_sequence": "note-sequence-v1.schema.json",
@@ -218,3 +219,15 @@ def validate_candidate_cache(document: Any) -> None:
     """Validate the internal candidate cache used by worker refiltering."""
     _require_version(document)
     _schema_error(document, SCHEMA_FILES["candidate_cache"])
+
+
+def validate_analysis_manifest(document: Any) -> None:
+    """Validate the canonical PCM and waveform cache manifest."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["analysis_manifest"])
+    assert isinstance(document, dict)
+    for index, artifact in enumerate(document["files"]):
+        _validate_relative_path(
+            str(artifact["relative_path"]),
+            f"/files/{index}/relative_path",
+        )

@@ -1,7 +1,8 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "frozen",
   "files": {
+    "analysis-manifest-v1.schema.json": "d4b5fd8b94e0d94d4a06e913182c48c31a0c71b7760f7379fb519424ceb22021",
     "candidate-cache-v1.schema.json": "8bb2778bbc71066825fbe17559805532617e6cd9b45422028bbb57e619ec3644",
     "events-v1.schema.json": "cd7b1816aa63cb1155ea9ef112d29d953710f40a6abdb8310b191261f5daf065",
     "note-sequence-v1.schema.json": "408a6ea006725ac51e5572c520638e48007a25deb7fbe6cfb53c59acd560ef9d",
