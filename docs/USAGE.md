@@ -1,63 +1,243 @@
 # 命令行使用
 
-当前 Rust 前端已提供命令解析、worker 启动、JSONL 状态处理、取消和退出码。正式
-worker 已支持从本地音频/视频转录或导入 MIDI，并输出 `source.mid`、`cleaned.mid`、
-`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 与
-`report.json`。
+本文档覆盖 TUI、CLI、筛选、试听、输出和退出码。可执行文件名以下统一写作 `glt`；
+源码开发环境中可直接使用 `target\debug\glt.exe`。
+
+## 快速开始
 
 ```powershell
-glt --help
+# 进入交互界面
 glt tui
-glt doctor [--worker PATH] [--json]
-glt transcribe INPUT --output DIR [OPTIONS]
-glt convert-midi INPUT --output DIR [OPTIONS]
-glt preview RESULT_DIR [--volume 0..1]
-glt filter RESULT_DIR --output DIR (--filter-file FILTER_JSON | --auto | --preset PRESET)
+
+# 检查运行环境
+glt doctor
+
+# 转录音频或视频并生成试听
+glt transcribe input.flac --output output --preview-wav
+
+# 导入 MIDI
+glt convert-midi score.mid --output output
+
+# 从候选缓存重新筛选
+glt filter output --output output-filter --auto
+
+# 播放结果中的 preview.wav
+glt preview output --volume 0.8
 ```
 
-## TUI
+## 命令总览
 
-无参数或执行 `glt tui` 会进入 Ratatui 界面。先输入素材路径和输出目录，按 Enter 进入
-参数页；`Tab` 移动字段，`Space` 循环选择或者切换布尔值，`F5` 启动，`Esc` 退出，
-`Ctrl+C` 取消正在运行的作业。`F2` 打开当前目录浏览；选择文件后回到路径输入。也可以把
-文件从资源管理器拖入终端，或使用终端粘贴；bracketed paste 会去除外层引号并自动填入当前
-路径字段。
+| 命令 | 用途 |
+|---|---|
+| `glt` / `glt tui` | 打开终端交互界面 |
+| `glt doctor` | 检查 worker、模型和运行资源 |
+| `glt transcribe INPUT` | 转录音频或视频 |
+| `glt convert-midi INPUT` | 导入并处理 MIDI |
+| `glt filter RESULT_DIR` | 从已有候选缓存生成筛选版本 |
+| `glt preview RESULT_DIR` | 播放结果中的合成试听 |
 
-运行页只显示 worker 实际发送的阶段和进度；没有可信百分比时明确显示未知。完成后结果页
-显示计数、告警和产物，`Space` 播放/暂停、`S` 停止、`+/-` 调整音量，`R` 可带当前参数
-重试；按 `A` 直接执行自动检测并生成新版本，`B` 使用 balanced 预设，`M` 使用 melody
-预设，按 `F` 打开分组筛选编辑器。筛选页使用
-`Up/Down` 选择规则、`Tab` 切换范围字段、
-`Space` 切换规则启用状态、`F5` 应用、`R` 恢复初始规则、`Esc` 返回。每次应用生成新的
-`原目录-filter-NN` 版本，不覆盖原结果。没有 `preview.wav` 时明确提示重新生成。TUI 与
-CLI 共用参数构造和作业控制器，
-终端退出或异常路径通过 guard 恢复 raw mode、光标和主屏幕。
+所有命令都支持 `--help`。例如：
 
-## 常用参数
+```powershell
+glt transcribe --help
+glt filter --help
+```
 
-- `--timing auto|preserve|straight|triplet`
-- `--bpm NUMBER`，仅音频转录使用
-- `--transpose auto|INTEGER`
-- `--audio-track N`
-- `--start-seconds SECONDS`、`--end-seconds SECONDS`
-- `--preview-wav`：按映射起音生成自合成轻量试听 WAV
-- `--cleaning-profile auto|solo|mix|strict`：自动或固定清理档位，默认 `auto`
-- `--min-confidence 0..1`：覆盖所选档位的最低置信度
-- `--min-duration-ms N`：覆盖所选档位的最短音符时长
-- `--retrigger-gap-ms N`：覆盖重触发/重叠合并间隔
-- `--arrangement balanced|off`：可演奏性编排，默认 `balanced`
-- `--onset-window-ms N`：合并近同时起音的时间窗，默认 `150`
-- `--max-voices N`：每个整理后事件保留的最大同时声部数，默认 `2`
-- `--overwrite`
-- `--json`
-- `--worker PATH`，仅开发或高级诊断使用
+## TUI 操作
 
-`glt preview RESULT_DIR` 读取 `report.json` 中的 `preview_wav` artifact 并播放；音量范围为
-`0..=1`。没有预览文件时提示重新执行并加 `--preview-wav`。播放设备不可用只影响预览命令，
-不会影响已有结果。
+无参数运行 `glt` 或执行 `glt tui` 会进入 Ratatui 界面。TUI 与 CLI 共用参数校验和作业
+控制器，相同的输入与参数产生相同配置。
 
-`glt filter` 读取结果目录中的 `score.candidates.json`，不重新执行 Basic Pitch。筛选文件
-使用 `FilterSpec v1`：
+### 通用按键
+
+| 按键 | 行为 |
+|---|---|
+| `Tab` / `Shift+Tab` | 在字段之间移动 |
+| `Enter` | 确认当前输入或进入下一阶段 |
+| `Space` | 循环选项或切换布尔值 |
+| `F2` | 浏览当前路径 |
+| `F5` | 开始任务；筛选页中表示应用规则 |
+| `Esc` | 返回或退出 |
+| `Ctrl+C` | 取消正在运行的作业，或退出 TUI |
+
+### 输入与参数页
+
+- 输入素材路径和输出目录后按 `Enter` 进入参数页。
+- 路径支持终端粘贴和从资源管理器拖入。bracketed paste 会去除外层引号。
+- 音频/视频参数包括音轨、片段、时序、清理、编排、移调和预览。
+- MIDI 输入会忽略媒体专有的音轨与时间片段参数。
+
+### 结果页
+
+| 按键 | 行为 |
+|---|---|
+| `Space` | 播放或暂停试听 |
+| `S` | 停止播放并释放资源 |
+| `+` / `-` | 调整试听音量 |
+| `Up` / `Down` | 滚动结果详情 |
+| `F` | 打开分组筛选编辑器 |
+| `A` | 自动检测并应用筛选规则 |
+| `B` | 应用 balanced 预设 |
+| `M` | 应用 melody 预设 |
+| `R` | 返回参数页，保留输入并重新执行 |
+
+### 筛选页
+
+| 按键 | 行为 |
+|---|---|
+| `Up` / `Down` | 选择规则组 |
+| `Tab` / `Shift+Tab` | 选择范围字段 |
+| `Space` | 启用或禁用规则 |
+| `Delete` / `Backspace` | 清空或删除当前字段字符 |
+| `F5` | 应用规则并异步生成新版本 |
+| `R` | 恢复来源结果中的初始规则 |
+| `Esc` | 返回结果页 |
+
+每次应用生成新的 `原目录-filter-NN` 目录，不覆盖来源结果。无 `preview.wav` 时会提示重新
+生成。终端退出和异常路径由 guard 恢复 raw mode、光标和主屏幕。
+
+## 转录音频或视频
+
+```text
+glt transcribe INPUT --output DIR [OPTIONS]
+```
+
+常用示例：
+
+```powershell
+# 默认自动时序、自动移调
+glt transcribe song.flac --output out --preview-wav
+
+# 指定音轨并只处理 30 到 90 秒
+glt transcribe concert.mp4 `
+  --output out `
+  --audio-track 1 `
+  --start-seconds 30 `
+  --end-seconds 90
+
+# 已知曲速，强制十六分直拍
+glt transcribe song.flac --output out --timing straight --bpm 120
+
+# 保留原始时序，关闭可演奏性编排
+glt transcribe rehearsal.wav --output out --timing preserve --arrangement off
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--output DIR` | 结果目录，必填 |
+| `--audio-track N` | 音轨位置编号，从 0 开始 |
+| `--start-seconds S` | 片段起点，单位秒 |
+| `--end-seconds S` | 片段终点，单位秒 |
+| `--timing MODE` | `auto`、`preserve`、`straight`、`triplet` |
+| `--bpm NUMBER` | 显式 BPM，优先于自动速度分析 |
+| `--transpose VALUE` | `auto` 或 `-48..48` 半音 |
+| `--preview-wav` | 生成自行合成的 `preview.wav` |
+| `--overwrite` | 允许替换工具此前生成的同名输出 |
+| `--json` | stdout 输出机器可读结果 |
+| `--worker PATH` | 覆盖 worker 路径，仅用于开发或诊断 |
+
+多音轨默认选择媒体声明的默认音轨；没有默认时选择第一条。首版不会自动混合多个音轨。
+
+## 转换 MIDI
+
+```text
+glt convert-midi INPUT --output DIR [OPTIONS]
+```
+
+支持 MIDI format 0/1，拒绝 format 2 和 SMPTE division。MIDI 默认使用 `preserve`，保留
+已有 tempo map，不重新估计速度。
+
+```powershell
+glt convert-midi score.mid --output out --transpose auto --preview-wav
+```
+
+`--timing`、`--transpose`、清理和编排参数与音频转换共用。`--bpm`、`--audio-track`、
+`--start-seconds` 和 `--end-seconds` 不适用于 MIDI。
+
+## 清理配置
+
+| 档位 | 默认规则 | 用途 |
+|---|---|---|
+| `auto` | confidence `0.2`、时长 `50ms` | 默认；为后续编排保留候选 |
+| `solo` | confidence `0.2`、时长 `50ms` | 独奏素材 |
+| `mix` | confidence `0.4`、时长 `100ms` | 较嘈杂素材 |
+| `strict` | confidence `0.5`、时长 `150ms` | 更激进地去除弱音和短音 |
+
+单项参数可以覆盖档位：
+
+```powershell
+--min-confidence 0..1
+--min-duration-ms N
+--retrigger-gap-ms N
+```
+
+实际值写入 `CLEANING_CONFIG` 告警。提高阈值可能丢失弱音或和声，建议保留原结果后再重筛。
+
+## 可演奏性编排
+
+默认 `--arrangement balanced` 会将 `150ms` 内的近同时起音视为同一演奏位置，并按力度、
+时值和音程保留最多两个互补声部：
+
+```powershell
+--arrangement balanced|off
+--onset-window-ms 150
+--max-voices 2
+```
+
+关闭编排会保留更多细节，但更容易产生难以演奏的厚和弦。删除统计写入 `ARRANGEMENT_LOSS`。
+
+## 时序与量化
+
+| 模式 | 行为 |
+|---|---|
+| `auto` | 比较直拍与三连音候选；证据不足时保留原始 onset |
+| `preserve` | 不移动起音 |
+| `straight` | 强制使用十六分直拍网格 |
+| `triplet` | 强制使用三连音网格 |
+
+音频 `auto` 会建立局部拍点；低置信时写入 `TIMING_FALLBACK`，不会伪造全曲固定 BPM。
+`--bpm` 是显式覆盖，优先级最高。
+
+## 移调与 21 键映射
+
+默认琴为 C 调，映射范围为 C3-B5。`--transpose auto` 优先保留音高类别，再以最少损失选择
+整体移调；也可以指定 `-48..48` 半音。越界音按八度折返，升降音符按稳定规则选择自然音级。
+
+报告会分别统计：
+
+- 半音替换
+- 八度折返
+- 同刻映射键去重
+- 被丢弃或合并的音符
+- 自动时序回退
+
+映射前的候选预览可通过开发工具执行：
+
+```powershell
+uv run --directory python python -m glt_core.tools.mapping_preview output\cleaned.mid
+```
+
+## 筛选结果
+
+筛选不会重新运行 FFmpeg 或 Basic Pitch，只读取结果目录中的 `score.candidates.json`。
+
+### 自动与预设
+
+```powershell
+glt filter output --output output-auto --auto
+glt filter output --output output-balanced --preset balanced
+glt filter output --output output-melody --preset melody
+glt filter output --output output-clean-only --preset off
+```
+
+- `auto`：根据候选分布的时长、confidence 和音高分位生成规则。
+- `balanced`：保留中长音，并减弱短促鼓型误检。
+- `melody`：偏向较长、较高置信音符。
+- `off`：不按属性筛选，仅执行结构清理。
+
+自动检测的门槛和命中统计会写入 `FILTER_AUTO` 告警及报告。
+
+### 自定义规则
 
 ```json
 {
@@ -69,85 +249,96 @@ CLI 共用参数构造和作业控制器，
       "duration_ms": {"min": 120, "max": 60000},
       "velocity": {"min": 1, "max": 110},
       "pitch": {"min": 36, "max": 96}
+    },
+    {
+      "enabled": true,
+      "duration_ms": {"min": 500, "max": 60000}
     }
   ]
 }
 ```
 
-每条规则内所有填写的范围同时满足，任意一条启用规则满足即可保留。范围包含边界；未填写的
-属性不参与判断。`pitch` 使用原始 MIDI 编号或 `C#4` 音名，不受移调影响。旧 v1 结果没有
-候选缓存，会明确失败并提示重新转录。
-
-也可使用内置配置：
-
-- `--auto`：根据候选音符的时长低分位、confidence 低分位和音高低分位生成可解释规则。
-- `--preset balanced`：保留中长音，并使用多组条件减弱短促鼓型误检。
-- `--preset melody`：进一步偏向较长、高置信音符，适合只要主旋律的试听。
-- `--preset off`：不做属性筛选，只执行结构清理。
-
-自动检测阈值会写入 `FILTER_AUTO` 告警，实际生成的 FilterSpec 仍完整写入报告，可在
-TUI 中继续编辑。
-
-`--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
-静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。
-
-清理档位会写入 `CLEANING_CONFIG` 报告告警。`auto` 使用保留候选音的 `0.2/50ms`
-阈值，并把混音降密交给可演奏性编排；`solo` 使用 `0.2/50ms`，`mix` 使用
-`0.4/100ms`，`strict` 使用 `0.5/150ms`。单项参数可覆盖档位默认值；提高置信度可能
-牺牲弱音。
-
-可演奏性编排会写入 `ARRANGEMENT_CONFIG`，发生删减时写入 `ARRANGEMENT_LOSS`。默认将
-150ms 内的起音视为同一演奏位置，保留最多两个互补声部；关闭编排会保留更多低置信
-细节，但也更容易生成难以演奏的厚和弦。
-
-`--timing auto` 使用稳定节拍追踪建立局部拍点，再比较十六分直拍与三连音候选；
-证据不足时保留原始起音。`preserve` 完全不改时间，`straight`/`triplet` 强制使用
-对应网格。`--bpm` 是显式速度覆盖，优先于自动分析。
-
-没有传入 `--worker` 时，程序读取 `GLT_WORKER_PATH`，然后查找与主程序相邻的
-`glt-worker` 目录。程序不会通过 shell 拼接输入路径。
-
-源码开发时可直接选择 Python 入口：
-
 ```powershell
-glt transcribe input.mp4 --output output --worker python/src/glt_core/worker.py
+glt filter output --output output-custom --filter-file filter.json
 ```
 
-生成的 `cleaned.mid` 可用以下命令预览不同移调档位：
+规则语义：
+
+- 每条规则内所有填写范围使用 AND。
+- 不同启用规则之间使用 OR。
+- 范围包含最小值和最大值。
+- 未填写的属性不参与判断。
+- `confidence` 缺失时，含 confidence 条件的规则不匹配。
+- `pitch` 使用原始 MIDI 编号或 `C#4` 音名，不受移调影响。
+- 每条规则最多四个可选范围；CLI Schema 支持最多八条规则，TUI 提供四组编辑槽。
+
+旧结果没有候选缓存时，`glt filter` 会明确失败并要求重新转录。
+
+## 试听
 
 ```powershell
-uv run --directory python python -m glt_core.tools.mapping_preview output/cleaned.mid
+glt preview output --volume 0.8
 ```
 
-## 输出与退出码
+预览文件是自行合成的 PCM16 WAV，不包含游戏采样。`--preview-wav` 不改变 JSON、MIDI 或
+文本谱；空谱不会生成静音文件，而会写入 `EMPTY_PREVIEW`。没有音频设备只影响播放，不影响
+转换与 WAV 导出。
 
-成功结果的核心文件如下：
+## 输出目录
 
-- `source.mid`：音频转录的原始结果；MIDI 输入时为逐字节来源副本。
-- `score.candidates.json`：清理前的完整候选音符、confidence、velocity、tempo/beat grid 和原始报告上下文，用于快速重筛。
-- `cleaned.mid`：清理和所选用时序策略后的 MIDI。
-- `mapped.mid`：映射到 21 键后的 MIDI。
-- `score.events.json`：按整数微秒记录映射起音和按键，同一时刻只保留一个和弦事件。
-- `score.readable.txt`：带时间戳和图例的人工阅读谱；文件首行明确它不是旧播放器精确执行格式。
-- `score.compat.txt`：按参考播放器 10ms 网格编码的兼容谱；网格碰撞和省略的尾部静音会写入报告。
-- `preview.wav`：仅在 `--preview-wav` 且存在可演奏起音时生成；使用自行合成的短衰减音色，不包含游戏采样。
-- `report.json`：版本、输入哈希、参数、损失统计以及每个产物的 SHA256 和字节数。
+| 文件 | 说明 |
+|---|---|
+| `source.mid` | 模型原始转录；MIDI 输入时为逐字节来源副本 |
+| `score.candidates.json` | 清理前候选音符、confidence、velocity 和 timing 元数据 |
+| `cleaned.mid` | 清理、量化后的中间 MIDI |
+| `mapped.mid` | 21 键映射后的 MIDI |
+| `score.events.json` | 精确映射起音，整数微秒 |
+| `score.readable.txt` | 面向人工阅读的谱面 |
+| `score.compat.txt` | 固定参考播放器的 10ms 近似谱 |
+| `preview.wav` | 启用预览且存在起音时生成 |
+| `report.json` | 参数、统计、告警、产物大小与 SHA256 |
 
-worker 只写输出目录同级的隐藏 staging。Rust 会验证已声明产物存在且大小、SHA256
-完全匹配；首次成功时整目录发布。已有输出默认失败并返回 5，只有显式 `--overwrite`
-才会整目录替换，不会把新旧产物混合。输入文件不会被修改；输入位于待覆盖输出目录
-内时操作会被拒绝。
+worker 先写入输出目录同级的隐藏 staging。Rust 校验所有声明产物的大小和 SHA256 后整体发布。
+已有输出默认失败；只有显式 `--overwrite` 才会替换，不会混合新旧文件。输入文件不会被修改。
 
-进度和警告写入 stderr；`--json` 模式下 stdout 只输出一个 JSON 对象。普通模式
-stdout 输出结果目录与报告摘要。
+## 日志、JSON 与退出码
+
+- 进度和告警写入 stderr。
+- `--json` 模式下 stdout 只输出一个 JSON 对象。
+- 普通模式 stdout 输出结果摘要。
 
 | 退出码 | 含义 |
 |---:|---|
-| 0 | 成功，包括合法空事件结果 |
-| 2 | 参数或输入错误 |
-| 3 | 环境、worker 或功能尚不可用 |
-| 4 | 处理失败或 worker 协议失败 |
-| 5 | 输出失败 |
-| 130 | 用户取消 |
+| `0` | 成功，包括合法空事件结果 |
+| `2` | 参数或输入错误 |
+| `3` | 环境、worker 或功能不可用 |
+| `4` | 处理失败或 worker 协议失败 |
+| `5` | 输出失败 |
+| `130` | 用户取消 |
 
-Ctrl+C 会发送 `cancel`，等待最多 5 秒；worker 未退出时关闭输入并结束其进程树。
+`Ctrl+C` 会发送取消请求，等待最多 5 秒；worker 未退出时会关闭输入并清理其进程树。
+
+## Worker 与工具发现
+
+未指定 `--worker` 时，Rust 按以下顺序查找：
+
+1. `GLT_WORKER_PATH`
+2. 主程序相邻的 `glt-worker/glt-worker.exe`
+3. 主程序相邻的 `glt-worker.exe`
+
+FFmpeg 与 ffprobe 按以下顺序查找：
+
+1. 显式路径
+2. `GLT_FFMPEG_DIR`
+3. `GLT_FFMPEG` 与 `GLT_FFPROBE`
+4. 冻结应用内的资源目录
+5. 开发环境的系统 `PATH`
+
+源码开发可直接使用 Python 入口：
+
+```powershell
+glt transcribe input.mp4 --output output --worker python\src\glt_core\worker.py
+```
+
+下载 Nightly/Debug 制品见 [制品下载](DOWNLOADS.md)，常见问题见
+[故障排查](TROUBLESHOOTING.md)。
