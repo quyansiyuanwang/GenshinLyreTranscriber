@@ -272,3 +272,15 @@ def test_worker_empty_score_does_not_create_fake_preview(tmp_path: pathlib.Path)
     report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
     assert "EMPTY_PREVIEW" in {warning["code"] for warning in report["warnings"]}
     assert "preview_wav" not in {artifact["kind"] for artifact in report["artifacts"]}
+
+
+def test_worker_protocol_output_is_ascii_even_for_non_ascii_errors() -> None:
+    output = io.StringIO()
+    writer = worker_module.ResponseWriter(output)
+    writer.send(
+        kind="error",
+        job_id="local-test",
+        payload={"code": "FAILURE", "message": "中文错误", "retryable": False},
+    )
+    output.getvalue().encode("ascii")
+    assert "\\u4e2d\\u6587\\u9519\\u8bef" in output.getvalue()

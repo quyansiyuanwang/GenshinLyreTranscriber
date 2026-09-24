@@ -87,12 +87,14 @@ def analyze_timing(
     )
     if onset_envelope.size == 0 or float(np.max(onset_envelope)) <= 0:
         return _fallback(sequence, 0.0, "no_onsets", 0)
-    beat_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_envelope,
-        sr=sample_rate,
-        hop_length=selected.hop_length,
-        units="frames",
-        backtrack=False,
+    beat_frames = _peak_pick_greedy(
+        onset_envelope,
+        pre_max=3,
+        post_max=3,
+        pre_avg=3,
+        post_avg=5,
+        delta=0.07,
+        wait=10,
     )
     beat_frames = np.asarray(beat_frames, dtype=int)
     if beat_frames.size > 1:
@@ -196,6 +198,38 @@ def _fallback(
         reason=reason,
         beat_count=beat_count,
     )
+
+
+def _peak_pick_greedy(
+    values: np.ndarray,
+    *,
+    pre_max: int,
+    post_max: int,
+    pre_avg: int,
+    post_avg: int,
+    delta: float,
+    wait: int,
+) -> np.ndarray:
+    """Pure NumPy equivalent of librosa's greedy peak picking without Numba caching."""
+    data = np.asarray(values, dtype=np.float64)
+    if data.ndim != 1:
+        raise ValueError("peak picking expects a one-dimensional envelope")
+    if data.size == 0:
+        return np.empty(0, dtype=np.int64)
+    peaks = np.zeros(data.size, dtype=bool)
+    peaks[0] = data[0] >= np.max(data[: min(post_max, data.size)])
+    peaks[0] &= data[0] >= np.mean(data[: min(post_avg, data.size)]) + delta
+    index = wait + 1 if peaks[0] else 1
+    while index < data.size:
+        local_max = np.max(data[max(0, index - pre_max) : min(index + post_max, data.size)])
+        if data[index] == local_max:
+            local_mean = np.mean(data[max(0, index - pre_avg) : min(index + post_avg, data.size)])
+            if data[index] >= local_mean + delta:
+                peaks[index] = True
+                index += wait + 1
+                continue
+        index += 1
+    return np.flatnonzero(peaks).astype(np.int64)
 
 
 def _normalize_bpm(bpm: float, config: TimingConfig) -> float:

@@ -6,7 +6,7 @@ import numpy as np
 import soundfile
 
 from glt_core.domain.note_sequence import BeatGridPoint, Note, NoteSequence, Provenance, TempoPoint
-from glt_core.processing.timing import TimingConfig, analyze_timing
+from glt_core.processing.timing import TimingConfig, _peak_pick_greedy, analyze_timing
 
 
 def _note_sequence(click_times: list[float], duration_us: int = 8_000_000) -> NoteSequence:
@@ -101,3 +101,17 @@ def test_midi_tempo_map_is_preserved() -> None:
     assert analysis.sequence == sequence
     assert analysis.sequence.tempo_map == sequence.tempo_map
     assert analysis.sequence.beat_grid == sequence.beat_grid
+
+
+def test_pure_numpy_peak_picker_matches_greedy_wait_semantics() -> None:
+    envelope = np.asarray([1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0])
+    peaks = _peak_pick_greedy(
+        envelope,
+        pre_max=1,
+        post_max=2,
+        pre_avg=1,
+        post_avg=2,
+        delta=0.1,
+        wait=1,
+    )
+    assert peaks.tolist() == [0, 3, 6]

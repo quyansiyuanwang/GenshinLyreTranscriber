@@ -89,7 +89,7 @@ class ResponseWriter:
             "type": kind,
             "payload": payload,
         }
-        line = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+        line = json.dumps(document, ensure_ascii=True, separators=(",", ":"))
         with self._lock:
             self._stream.write(line + "\n")
             self._stream.flush()
