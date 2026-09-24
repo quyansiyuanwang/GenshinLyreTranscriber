@@ -60,6 +60,7 @@ class TranscriptionResult:
     peak_working_set_bytes: int | None
     output_bytes: int
     note_sequence: NoteSequence
+    note_events: tuple[NoteEvent, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +226,7 @@ def transcribe_to_midi(
         peak_working_set_bytes=_peak_working_set_bytes(),
         output_bytes=destination.stat().st_size,
         note_sequence=note_sequence,
+        note_events=tuple(fused),
     )
 
 

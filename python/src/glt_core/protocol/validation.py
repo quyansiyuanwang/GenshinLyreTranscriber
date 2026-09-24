@@ -16,6 +16,7 @@ SCHEMA_FILES = {
     "analysis_manifest": "analysis-manifest-v1.schema.json",
     "separator_component": "separator-component-v1.schema.json",
     "routing_plan": "routing-plan-v1.schema.json",
+    "notes": "notes-v1.schema.json",
     "stem_set": "stem-set-v1.schema.json",
     "events": "events-v1.schema.json",
     "worker": "worker-v2.schema.json",
@@ -252,3 +253,25 @@ def validate_routing_plan(document: Any) -> None:
     """Validate a stem and performance routing plan."""
     _require_version(document)
     _schema_error(document, SCHEMA_FILES["routing_plan"])
+
+
+def validate_analysis_notes(document: Any) -> None:
+    """Validate analysis notes, pitch bends and semantic time bounds."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["notes"])
+    assert isinstance(document, dict)
+    duration_us = int(document["duration_us"])
+    previous: tuple[int, int, str] | None = None
+    for index, note in enumerate(document["notes"]):
+        start_us = int(note["start_us"])
+        end_us = int(note["end_us"])
+        if not start_us < end_us <= duration_us:
+            raise ProtocolValidationError(
+                "NOTE_RANGE",
+                "analysis note must satisfy start_us < end_us <= duration_us",
+                f"/notes/{index}",
+            )
+        order = (start_us, int(note["pitch"]), str(note["id"]))
+        if previous is not None and order < previous:
+            raise ProtocolValidationError("NOTE_ORDER", "analysis notes are not sorted")
+        previous = order

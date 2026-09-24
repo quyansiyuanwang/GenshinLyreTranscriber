@@ -7,6 +7,16 @@ from glt_core.analysis.cache import (
     build_analysis_cache,
 )
 from glt_core.analysis.decode import AnalysisCancelled
+from glt_core.analysis.notes import (
+    AnalysisNote,
+    AnalysisNoteSet,
+    PitchBendPoint,
+    analysis_notes_from_basic_pitch,
+    classify_pitch_bend,
+    estimate_velocity,
+    write_analysis_midi,
+    write_analysis_notes,
+)
 from glt_core.analysis.spectrogram import SpectralConfig
 
 __all__ = [
@@ -14,6 +24,14 @@ __all__ = [
     "AnalysisCancelled",
     "AnalysisConfig",
     "AnalysisResult",
+    "AnalysisNote",
+    "AnalysisNoteSet",
+    "PitchBendPoint",
     "SpectralConfig",
+    "analysis_notes_from_basic_pitch",
+    "classify_pitch_bend",
+    "estimate_velocity",
     "build_analysis_cache",
+    "write_analysis_midi",
+    "write_analysis_notes",
 ]
