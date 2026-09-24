@@ -23,7 +23,7 @@ pub enum PlaybackError {
     Backend(String),
 }
 
-pub trait PlaybackBackend {
+pub trait PlaybackBackend: Send {
     fn play(&mut self) -> Result<(), PlaybackError>;
     fn pause(&mut self) -> Result<(), PlaybackError>;
     fn stop(&mut self) -> Result<(), PlaybackError>;

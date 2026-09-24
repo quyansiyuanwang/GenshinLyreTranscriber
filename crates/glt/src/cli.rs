@@ -1067,7 +1067,7 @@ fn sha256_file(path: &std::path::Path) -> Result<String, CliError> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn resolve_worker_spec(override_path: Option<PathBuf>) -> Result<WorkerSpec, CliError> {
+pub(crate) fn resolve_worker_spec(override_path: Option<PathBuf>) -> Result<WorkerSpec, CliError> {
     if let Some(path) = override_path {
         return checked_worker_spec(path);
     }

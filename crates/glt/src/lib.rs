@@ -1,6 +1,7 @@
 //! Core crate surface for the `glt` application.
 
 pub mod cli;
+pub mod desktop;
 pub mod jobs;
 pub mod preview;
 pub mod protocol;

@@ -7,6 +7,7 @@
 # Python environments and caches
 .venv/
 __pycache__/
+node_modules/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
@@ -19,6 +20,14 @@ htmlcov/
 /dist/
 /artifacts/
 *.zip
+*.gltproj
+*.gltproj.*
+crates/glt-gui/dist/
+crates/glt-gui/src-tauri/gen/
+crates/glt-gui/src-tauri/icons/android/
+crates/glt-gui/src-tauri/icons/ios/
+crates/glt-gui/src-tauri/icons/Square*.png
+crates/glt-gui/src-tauri/icons/StoreLogo.png
 
 # Runtime assets and local user data
 /models/

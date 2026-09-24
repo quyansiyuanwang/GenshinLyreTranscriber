@@ -1,0 +1,1007 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { join } from "@tauri-apps/api/path";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
+
+import type {
+  CleaningProfile,
+  DoctorInfo,
+  DraftFilterRule,
+  FilterPreset,
+  FilterRule,
+  FilterSpec,
+  JobEvent,
+  JobRequest,
+  JobResult,
+  Operation,
+  ProjectDocument,
+  ReportDocument,
+  Timing,
+  Transpose,
+} from "./types";
+
+const MEDIA_FILTERS = [
+  {
+    name: "音频与视频",
+    extensions: ["flac", "wav", "mp3", "m4a", "aac", "ogg", "opus", "mp4", "mkv", "mov", "webm"],
+  },
+  { name: "MIDI", extensions: ["mid", "midi"] },
+  { name: "全部文件", extensions: ["*"] },
+];
+
+const EMPTY_RULE: DraftFilterRule = {
+  enabled: true,
+  confidenceMin: "",
+  confidenceMax: "",
+  durationMin: "",
+  durationMax: "",
+  velocityMin: "",
+  velocityMax: "",
+  pitchMin: "",
+  pitchMax: "",
+};
+
+const DEFAULT_REQUEST: JobRequest = {
+  input: "",
+  output: "",
+  operation: "transcribe",
+  timing: "auto",
+  bpm: null,
+  transpose: "auto",
+  audio_track: null,
+  start_seconds: null,
+  end_seconds: null,
+  preview_wav: true,
+  overwrite: false,
+  cleaning_profile: "auto",
+  min_confidence: null,
+  min_duration_ms: null,
+  retrigger_gap_ms: null,
+  arrangement: "balanced",
+  onset_window_ms: 150,
+  max_voices: 2,
+  filter: null,
+  filter_preset: null,
+  worker_path: null,
+};
+
+function parseOptionalNumber(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasRuleValue(rule: DraftFilterRule): boolean {
+  return Object.entries(rule).some(([key, value]) => key !== "enabled" && value !== "");
+}
+
+function range(
+  minimum: string,
+  maximum: string,
+  fallbackMin: number,
+  fallbackMax: number,
+): { min: number; max: number } | undefined {
+  if (!minimum.trim() && !maximum.trim()) return undefined;
+  return {
+    min: parseOptionalNumber(minimum) ?? fallbackMin,
+    max: parseOptionalNumber(maximum) ?? fallbackMax,
+  };
+}
+
+function rulesToFilter(rules: DraftFilterRule[]): FilterSpec | null {
+  const converted: FilterRule[] = [];
+  for (const rule of rules) {
+    if (!rule.enabled || !hasRuleValue(rule)) continue;
+    converted.push({
+      enabled: true,
+      confidence: range(rule.confidenceMin, rule.confidenceMax, 0, 1),
+      duration_ms: range(rule.durationMin, rule.durationMax, 0, 3_600_000),
+      velocity: range(rule.velocityMin, rule.velocityMax, 1, 127),
+      pitch: range(rule.pitchMin, rule.pitchMax, 0, 127),
+    });
+  }
+  return converted.length ? { format_version: 1, rules: converted } : null;
+}
+
+function isMidi(path: string): boolean {
+  return /\.(mid|midi)$/i.test(path);
+}
+
+function operationForPath(path: string): Operation {
+  return isMidi(path) ? "convert_midi" : "transcribe";
+}
+
+async function defaultOutputFor(input: string): Promise<string> {
+  const separator = Math.max(input.lastIndexOf("/"), input.lastIndexOf("\\"));
+  const parent = separator >= 0 ? input.slice(0, separator) : ".";
+  const filename = separator >= 0 ? input.slice(separator + 1) : input;
+  const stem = filename.replace(/\.[^.]+$/, "") || filename;
+  return join(parent, `${stem}-output`);
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function countLabel(key: string): string {
+  const labels: Record<string, string> = {
+    input_notes: "输入音符",
+    output_notes: "输出音符",
+    dropped_notes: "删除音符",
+    mapped_keys: "映射按键",
+    replaced_semitones: "半音替换",
+    octave_folds: "八度折返",
+    duplicate_keys: "同刻去重",
+    compatibility_collisions: "兼容谱碰撞",
+  };
+  return labels[key] ?? key;
+}
+
+function App() {
+  const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterRules, setFilterRules] = useState<DraftFilterRule[]>([{ ...EMPTY_RULE }]);
+  const [running, setRunning] = useState(false);
+  const [stage, setStage] = useState("待机");
+  const [fraction, setFraction] = useState<number | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState("准备就绪");
+  const [result, setResult] = useState<JobResult | null>(null);
+  const [report, setReport] = useState<ReportDocument | null>(null);
+  const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
+  const [project, setProject] = useState<ProjectDocument | null>(null);
+  const [playback, setPlayback] = useState("idle");
+  const [volume, setVolume] = useState(0.8);
+  const jobRequestRef = useRef(request);
+  jobRequestRef.current = request;
+
+  const previewArtifact = result?.result.artifacts.find(
+    (artifact) => artifact.kind === "preview_wav",
+  );
+
+  const counts = useMemo(() => Object.entries(report?.counts ?? {}), [report]);
+
+  useEffect(() => {
+    invoke<ProjectDocument | null>("project_current")
+      .then((document) => {
+        setProject(document);
+        if (document?.source?.path) {
+          setRequest((current) => ({ ...current, input: document.source!.path }));
+        }
+      })
+      .catch((reason) => setNotice(`project: ${String(reason)}`));
+    invoke<DoctorInfo>("doctor")
+      .then(setDoctor)
+      .catch((reason) => setNotice(`worker: ${String(reason)}`));
+  }, []);
+
+  useEffect(() => {
+    const unlisteners: Array<() => void> = [];
+    let disposed = false;
+
+    void listen<JobEvent>("job-event", ({ payload }) => {
+      if (payload.type === "progress") {
+        setStage(payload.stage);
+        setFraction(payload.fraction);
+      } else {
+        setWarnings((current) => [...current, `[${payload.code}] ${payload.message}`]);
+      }
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<JobResult>("job-finished", ({ payload }) => {
+      setRunning(false);
+      setFraction(1);
+      setStage("completed");
+      setResult(payload);
+      setPlayback("idle");
+      setNotice("转换完成");
+      void invoke<ReportDocument>("read_report", { resultDir: payload.result.output_dir })
+        .then(setReport)
+        .catch((reason) => setError(String(reason)));
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<string>("job-failed", ({ payload }) => {
+      setRunning(false);
+      setStage("failed");
+      setNotice("任务失败");
+      setError(payload);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen("job-cancelled", () => {
+      setRunning(false);
+      setStage("cancelled");
+      setNotice("任务已取消");
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    return () => {
+      disposed = true;
+      for (const unlisten of unlisteners) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
+        const path = event.payload.paths[0];
+        void applyInput(path);
+      })
+      .then((handler) => {
+        unlisten = handler;
+      });
+    return () => unlisten?.();
+  }, []);
+
+  async function applyInput(path: string) {
+    const operation = operationForPath(path);
+    const output = request.output || (await defaultOutputFor(path));
+    setRequest((current) => ({
+      ...current,
+      input: path,
+      output,
+      operation,
+      timing: operation === "convert_midi" ? "preserve" : current.timing,
+    }));
+  }
+
+  async function chooseInput() {
+    const selected = await openDialog({ multiple: false, directory: false, filters: MEDIA_FILTERS });
+    if (typeof selected === "string") await applyInput(selected);
+  }
+
+  async function chooseOutput() {
+    const selected = await openDialog({
+      multiple: false,
+      directory: true,
+      title: "选择输出目录",
+    });
+    if (typeof selected === "string") {
+      setRequest((current) => ({ ...current, output: selected }));
+    }
+  }
+
+  async function startJob(next = request) {
+    setError(null);
+    setWarnings([]);
+    setResult(null);
+    setReport(null);
+    setRunning(true);
+    setStage("validating");
+    setFraction(0);
+    setNotice("正在启动 worker");
+    try {
+      await invoke("start_job", { request: next });
+    } catch (reason) {
+      setRunning(false);
+      setStage("failed");
+      setError(String(reason));
+    }
+  }
+
+  async function cancelJob() {
+    await invoke("cancel_job");
+    setNotice("正在取消");
+  }
+
+  async function createProject() {
+    const selected = await saveDialog({
+      title: "创建 GenshinLyreTranscriber 工程",
+      defaultPath: request.input ? `${request.input.split(/[/\\]/).pop()}.gltproj` : "project.gltproj",
+      filters: [{ name: "GLT Project", extensions: ["gltproj"] }],
+    });
+    if (typeof selected !== "string") return;
+    const path = selected.endsWith(".gltproj") ? selected : `${selected}.gltproj`;
+    const name = path.split(/[/\\]/).pop()?.replace(/\.gltproj$/i, "") || "project";
+    try {
+      const document = await invoke<ProjectDocument>("project_create", {
+        path,
+        name,
+        source: request.input || null,
+      });
+      setProject(document);
+      setNotice("工程已创建");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function openProject() {
+    const selected = await openDialog({
+      multiple: false,
+      directory: false,
+      title: "打开 GLT 工程",
+      filters: [{ name: "GLT Project", extensions: ["gltproj"] }],
+    });
+    if (typeof selected !== "string") return;
+    try {
+      const document = await invoke<ProjectDocument>("project_open", { path: selected });
+      setProject(document);
+      if (document.source?.path) {
+        await applyInput(document.source.path);
+      }
+      setNotice("工程已打开");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function saveProject() {
+    try {
+      const document = await invoke<ProjectDocument>("project_save", { name: null });
+      setProject(document);
+      setNotice("工程已保存");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function closeProject() {
+    await invoke("project_close");
+    setProject(null);
+    setNotice("工程已关闭");
+  }
+
+  async function playPreview() {
+    if (!result || !previewArtifact) return;
+    const path = await join(result.result.output_dir, previewArtifact.relative_path);
+    try {
+      await invoke("play_preview", { path, volume });
+      setPlayback("playing");
+      setError(null);
+    } catch (reason) {
+      setPlayback("error");
+      setError(String(reason));
+    }
+  }
+
+  async function pausePreview() {
+    try {
+      await invoke("pause_preview");
+      setPlayback("paused");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function stopPreview() {
+    try {
+      await invoke("stop_preview");
+      setPlayback("idle");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function updateVolume(next: number) {
+    setVolume(next);
+    try {
+      await invoke("set_preview_volume", { volume: next });
+    } catch {
+      // Volume is remembered even when no preview is loaded.
+    }
+  }
+
+  async function applyPreset(preset: FilterPreset) {
+    if (!result) return;
+    const output = await invoke<string>("next_filter_output", {
+      source: result.result.output_dir,
+    });
+    const next: JobRequest = {
+      ...jobRequestRef.current,
+      input: result.result.output_dir,
+      output,
+      operation: "refilter",
+      filter: null,
+      filter_preset: preset,
+      preview_wav: true,
+      overwrite: false,
+    };
+    setRequest(next);
+    await startJob(next);
+  }
+
+  async function applyManualFilter() {
+    if (!result) return;
+    const filter = rulesToFilter(filterRules);
+    if (!filter) {
+      setError("请至少填写一条有效筛选范围");
+      return;
+    }
+    const output = await invoke<string>("next_filter_output", {
+      source: result.result.output_dir,
+    });
+    const next: JobRequest = {
+      ...jobRequestRef.current,
+      input: result.result.output_dir,
+      output,
+      operation: "refilter",
+      filter,
+      filter_preset: null,
+      preview_wav: true,
+      overwrite: false,
+    };
+    setRequest(next);
+    setFilterOpen(false);
+    await startJob(next);
+  }
+
+  function updateRule(index: number, key: keyof DraftFilterRule, value: string | boolean) {
+    setFilterRules((current) =>
+      current.map((rule, ruleIndex) => (ruleIndex === index ? { ...rule, [key]: value } : rule)),
+    );
+  }
+
+  const operationLabel = request.operation === "convert_midi" ? "MIDI" : "音频 / 视频";
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">琴</div>
+          <div>
+            <strong>Genshin Lyre</strong>
+            <span>Transcriber</span>
+          </div>
+        </div>
+
+        <nav>
+          <a href="#source" className="nav-item active">
+            <span>01</span> 输入与输出
+          </a>
+          <a href="#tuning" className="nav-item">
+            <span>02</span> 音质与演奏
+          </a>
+          <a href="#timing" className="nav-item">
+            <span>03</span> 节奏与移调
+          </a>
+          <a href="#result" className="nav-item">
+            <span>04</span> 结果与试听
+          </a>
+        </nav>
+
+        <div className="worker-card">
+          <span className={`status-dot ${doctor ? "online" : "offline"}`} />
+          <div>
+            <strong>{doctor ? "Worker 可用" : "Worker 检查中"}</strong>
+            <small>{doctor ? `模型 ${doctor.model_version}` : notice}</small>
+          </div>
+        </div>
+
+        <div className="project-card">
+          <span>PROJECT</span>
+          <strong>{project?.name ?? "未命名工程"}</strong>
+          <small>{project?.source?.path ?? "尚未绑定源文件"}</small>
+          <div className="project-actions">
+            {project ? (
+              <>
+                <button onClick={() => void saveProject()}>保存</button>
+                <button onClick={() => void closeProject()}>关闭</button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => void createProject()}>新建</button>
+                <button onClick={() => void openProject()}>打开</button>
+              </>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      <main className="workspace">
+        <header className="hero">
+          <div>
+            <p className="eyebrow">DESKTOP WORKSPACE</p>
+            <h1>把音乐调到能弹，而不是只把文件转出来。</h1>
+            <p>本地转录、节奏校正、21 键映射、筛选和试听都在一个窗口中完成。</p>
+          </div>
+          <div className={`run-state ${running ? "running" : ""}`}>
+            <span />
+            {running ? stage : notice}
+          </div>
+        </header>
+
+        <section id="source" className="panel source-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="section-number">01</span>
+              <h2>输入与输出</h2>
+            </div>
+            <button className="ghost-button" onClick={chooseInput}>
+              选择文件
+            </button>
+          </div>
+
+          <button className="dropzone" onClick={chooseInput} onDragOver={(event) => event.preventDefault()}>
+            <span className="drop-icon">↓</span>
+            <strong>{request.input ? request.input.split(/[/\\]/).pop() : "拖入音频、视频或 MIDI"}</strong>
+            <small>{request.input || "支持 FLAC、WAV、MP3、MP4、MKV、MID、MIDI 等"}</small>
+          </button>
+
+          <div className="field-row">
+            <label className="field grow">
+              <span>输入路径</span>
+              <input
+                value={request.input}
+                onChange={(event) => void applyInput(event.target.value)}
+                placeholder="选择或拖入文件"
+              />
+            </label>
+            <label className="field grow">
+              <span>输出目录</span>
+              <div className="joined-input">
+                <input
+                  value={request.output}
+                  onChange={(event) =>
+                    setRequest((current) => ({ ...current, output: event.target.value }))
+                  }
+                  placeholder="结果目录"
+                />
+                <button onClick={chooseOutput}>浏览</button>
+              </div>
+            </label>
+          </div>
+          <div className="hint-row">
+            <span className="pill">{operationLabel}</span>
+            <span>输入 MIDI 会自动切换到 preserve，避免覆盖已有 tempo map。</span>
+          </div>
+        </section>
+
+        <section id="tuning" className="panel">
+          <div className="panel-heading">
+            <div>
+              <span className="section-number">02</span>
+              <h2>音质与演奏</h2>
+            </div>
+          </div>
+
+          <div className="control-grid">
+            <label className="field">
+              <span>清理档位</span>
+              <select
+                value={request.cleaning_profile}
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    cleaning_profile: event.target.value as CleaningProfile,
+                  }))
+                }
+              >
+                <option value="auto">auto · 自动平衡</option>
+                <option value="solo">solo · 独奏优先</option>
+                <option value="mix">mix · 混音降噪</option>
+                <option value="strict">strict · 严格筛选</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span>可演奏性编排</span>
+              <select
+                value={request.arrangement}
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    arrangement: event.target.value as "balanced" | "off",
+                  }))
+                }
+              >
+                <option value="balanced">balanced · 自动二声部</option>
+                <option value="off">off · 保留全部候选</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span>最小置信度</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={request.min_confidence ?? ""}
+                placeholder="跟随档位"
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    min_confidence: parseOptionalNumber(event.target.value),
+                  }))
+                }
+              />
+            </label>
+
+            <label className="field">
+              <span>最短时值 ms</span>
+              <input
+                type="number"
+                min="0"
+                max="60000"
+                value={request.min_duration_ms ?? ""}
+                placeholder="跟随档位"
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    min_duration_ms: parseOptionalNumber(event.target.value),
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <button className="text-button" onClick={() => setAdvancedOpen((value) => !value)}>
+            {advancedOpen ? "收起高级清理" : "展开高级清理"}
+          </button>
+          {advancedOpen && (
+            <div className="control-grid advanced">
+              <label className="field">
+                <span>重触发间隔 ms</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="60000"
+                  value={request.retrigger_gap_ms ?? ""}
+                  placeholder="30"
+                  onChange={(event) =>
+                    setRequest((current) => ({
+                      ...current,
+                      retrigger_gap_ms: parseOptionalNumber(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>近同时窗口 ms</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={request.onset_window_ms}
+                  onChange={(event) =>
+                    setRequest((current) => ({
+                      ...current,
+                      onset_window_ms: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field">
+                <span>最大同时声部</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="21"
+                  value={request.max_voices}
+                  onChange={(event) =>
+                    setRequest((current) => ({
+                      ...current,
+                      max_voices: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+            </div>
+          )}
+        </section>
+
+        <section id="timing" className="panel">
+          <div className="panel-heading">
+            <div>
+              <span className="section-number">03</span>
+              <h2>节奏、移调与片段</h2>
+            </div>
+          </div>
+          <div className="control-grid">
+            <label className="field">
+              <span>时序模式</span>
+              <select
+                value={request.timing}
+                onChange={(event) =>
+                  setRequest((current) => ({ ...current, timing: event.target.value as Timing }))
+                }
+              >
+                <option value="auto">auto · 自动分析</option>
+                <option value="preserve">preserve · 保留原时序</option>
+                <option value="straight">straight · 十六分直拍</option>
+                <option value="triplet">triplet · 三连音</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>BPM 覆盖</span>
+              <input
+                type="number"
+                min="1"
+                max="1000"
+                value={request.bpm ?? ""}
+                placeholder="自动"
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    bpm: parseOptionalNumber(event.target.value),
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>整体移调</span>
+              <input
+                value={String(request.transpose)}
+                onChange={(event) => {
+                  const raw = event.target.value.trim();
+                  const transpose: Transpose = raw === "auto" ? "auto" : Number(raw);
+                  setRequest((current) => ({ ...current, transpose }));
+                }}
+                placeholder="auto 或半音数"
+              />
+            </label>
+            <label className="field">
+              <span>音轨编号</span>
+              <input
+                type="number"
+                min="0"
+                value={request.audio_track ?? ""}
+                placeholder="默认音轨"
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    audio_track: parseOptionalNumber(event.target.value),
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>起点秒</span>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={request.start_seconds ?? ""}
+                placeholder="0"
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    start_seconds: parseOptionalNumber(event.target.value),
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>终点秒</span>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={request.end_seconds ?? ""}
+                placeholder="结束"
+                onChange={(event) =>
+                  setRequest((current) => ({
+                    ...current,
+                    end_seconds: parseOptionalNumber(event.target.value),
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <div className="switch-row">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={request.preview_wav}
+                onChange={(event) =>
+                  setRequest((current) => ({ ...current, preview_wav: event.target.checked }))
+                }
+              />
+              <span>生成预览 WAV</span>
+            </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={request.overwrite}
+                onChange={(event) =>
+                  setRequest((current) => ({ ...current, overwrite: event.target.checked }))
+                }
+              />
+              <span>允许覆盖已有输出</span>
+            </label>
+          </div>
+        </section>
+
+        <div className="run-bar">
+          <div className="progress-copy">
+            <strong>{running ? stage : "准备开始"}</strong>
+            <span>{fraction === null ? "进度未知" : `${Math.round(fraction * 100)}%`}</span>
+          </div>
+          <div className="progress-track">
+            <div
+              className={fraction === null && running ? "indeterminate" : ""}
+              style={{ width: `${fraction === null ? 32 : fraction * 100}%` }}
+            />
+          </div>
+          {running ? (
+            <button className="danger-button" onClick={() => void cancelJob()}>
+              取消任务
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              disabled={!request.input || !request.output}
+              onClick={() => void startJob()}
+            >
+              开始转换
+            </button>
+          )}
+        </div>
+
+        {(error || warnings.length > 0) && (
+          <section className="alerts">
+            {error && <div className="alert error">{error}</div>}
+            {warnings.map((warning, index) => (
+              <div className="alert warning" key={`${warning}-${index}`}>
+                {warning}
+              </div>
+            ))}
+          </section>
+        )}
+
+        {result && (
+          <section id="result" className="panel result-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="section-number">04</span>
+                <h2>结果、筛选与试听</h2>
+              </div>
+              <div className="button-row">
+                <button
+                  className="ghost-button"
+                  onClick={() => void openPath(result.result.output_dir)}
+                >
+                  打开结果目录
+                </button>
+              </div>
+            </div>
+
+            <div className="result-summary">
+              <div className="result-path">
+                <span>结果目录</span>
+                <strong>{result.result.output_dir}</strong>
+              </div>
+              <div className="filter-actions">
+                <button onClick={() => void applyPreset("auto")}>自动检测</button>
+                <button onClick={() => void applyPreset("balanced")}>balanced</button>
+                <button onClick={() => void applyPreset("melody")}>melody</button>
+                <button onClick={() => setFilterOpen((value) => !value)}>手动筛选</button>
+              </div>
+            </div>
+
+            {filterOpen && (
+              <div className="filter-editor">
+                {filterRules.map((rule, index) => (
+                  <div className="filter-rule" key={index}>
+                    <div className="filter-rule-title">
+                      <label className="switch">
+                        <input
+                          type="checkbox"
+                          checked={rule.enabled}
+                          onChange={(event) => updateRule(index, "enabled", event.target.checked)}
+                        />
+                        <span>规则 {index + 1}</span>
+                      </label>
+                      {filterRules.length > 1 && (
+                        <button
+                          className="text-button danger"
+                          onClick={() =>
+                            setFilterRules((current) =>
+                              current.filter((_, ruleIndex) => ruleIndex !== index),
+                            )
+                          }
+                        >
+                          删除
+                        </button>
+                      )}
+                    </div>
+                    {(
+                      [
+                        ["confidenceMin", "confidenceMax", "confidence"],
+                        ["durationMin", "durationMax", "duration ms"],
+                        ["velocityMin", "velocityMax", "velocity"],
+                        ["pitchMin", "pitchMax", "MIDI pitch"],
+                      ] as const
+                    ).map(([minimumKey, maximumKey, label]) => (
+                      <div className="range-row" key={label}>
+                        <span>{label}</span>
+                        <input
+                          value={rule[minimumKey]}
+                          placeholder="min"
+                          onChange={(event) => updateRule(index, minimumKey, event.target.value)}
+                        />
+                        <span>—</span>
+                        <input
+                          value={rule[maximumKey]}
+                          placeholder="max"
+                          onChange={(event) => updateRule(index, maximumKey, event.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div className="button-row">
+                  {filterRules.length < 4 && (
+                    <button
+                      className="ghost-button"
+                      onClick={() => setFilterRules((current) => [...current, { ...EMPTY_RULE }])}
+                    >
+                      添加规则组
+                    </button>
+                  )}
+                  <button className="primary-button" onClick={() => void applyManualFilter()}>
+                    应用筛选
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="stats-grid">
+              {counts.map(([key, value]) => (
+                <div className="stat" key={key}>
+                  <span>{countLabel(key)}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="result-grid">
+              <div className="preview-card">
+                <div>
+                  <span>合成试听</span>
+                  <strong>{previewArtifact ? "preview.wav 已生成" : "没有 preview.wav"}</strong>
+                </div>
+                <div className="playback-controls">
+                  <button className="primary-button" onClick={() => void playPreview()} disabled={!previewArtifact}>
+                    {playback === "playing" ? "重新播放" : "播放"}
+                  </button>
+                  <button onClick={() => void pausePreview()} disabled={!previewArtifact}>
+                    暂停
+                  </button>
+                  <button onClick={() => void stopPreview()} disabled={!previewArtifact}>
+                    停止
+                  </button>
+                </div>
+                <label className="volume-control">
+                  <span>音量 {Math.round(volume * 100)}%</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={volume}
+                    onChange={(event) => void updateVolume(Number(event.target.value))}
+                  />
+                </label>
+              </div>
+
+              <div className="artifact-list">
+                <h3>产物</h3>
+                {result.result.artifacts.map((artifact) => (
+                  <button
+                    key={`${artifact.kind}-${artifact.relative_path}`}
+                    onClick={() => void openPath(`${result.result.output_dir}\\${artifact.relative_path}`)}
+                  >
+                    <span>{artifact.kind}</span>
+                    <strong>{artifact.relative_path}</strong>
+                    <small>{formatBytes(artifact.size_bytes)}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;
