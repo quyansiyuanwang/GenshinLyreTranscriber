@@ -5,8 +5,10 @@
 - Git tag：`nightly`
 - GitHub Release：`Nightly`
 - Release 类型：Pre-release
-- Windows 资产：`glt-nightly-windows-x64.zip`
-- 校验资产：`glt-nightly-windows-x64.sha256`
+- GUI 安装器：`glt-nightly-gui-windows-x64-setup.exe`
+- GUI 便携包：`glt-nightly-gui-windows-x64.zip`
+- CLI/TUI 便携包：`glt-nightly-cli-tui-windows-x64.zip`
+- 校验清单：`glt-nightly-SHA256SUMS`
 
 每天定时构建或手动触发成功后，workflow 会创建 `nightly` tag（如果尚不存在）并更新同名
 Pre-release 的资产。稳定版本仍使用独立的 `v*` tag，不会自动创建。
@@ -16,8 +18,10 @@ Pre-release 的资产。稳定版本仍使用独立的 `v*` tag，不会自动�
 打开 [Nightly Pre-release](https://github.com/quyansiyuanwang/GenshinLyreTranscriber/releases/tag/nightly)，
 在 **Assets** 中下载：
 
-- `glt-nightly-windows-x64.zip`
-- `glt-nightly-windows-x64.sha256`
+- `glt-nightly-gui-windows-x64-setup.exe`
+- `glt-nightly-gui-windows-x64.zip`
+- `glt-nightly-cli-tui-windows-x64.zip`
+- `glt-nightly-SHA256SUMS`
 
 也可以从仓库首页右侧 Releases 区域进入 `Nightly`。
 
@@ -36,7 +40,7 @@ gh release download nightly `
 ```powershell
 gh release download nightly `
   --repo quyansiyuanwang/GenshinLyreTranscriber `
-  --pattern "glt-nightly-windows-x64.zip" `
+  --pattern "glt-nightly-gui-windows-x64.zip" `
   --dir .\nightly
 ```
 
@@ -45,10 +49,12 @@ gh release download nightly `
 先在 PowerShell 中计算 ZIP 哈希：
 
 ```powershell
-Get-FileHash .\nightly\glt-nightly-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\nightly\glt-nightly-gui-windows-x64.zip -Algorithm SHA256
 ```
 
-输出应与 `glt-nightly-windows-x64.sha256` 中的值一致，然后解压并运行 `glt.exe`。
+输出应与 `glt-nightly-SHA256SUMS` 中对应文件的值一致。安装器可直接运行；便携 GUI ZIP
+解压后启动 `GenshinLyreTranscriber.exe`；安装版从开始菜单启动，CLI/TUI ZIP 解压后运行
+`glt.exe`。
 
 ## 手动触发
 
@@ -65,12 +71,23 @@ gh run list --workflow nightly.yml --limit 5
 
 ## 包内容与边界
 
-Nightly ZIP 当前包含：
+Nightly 当前提供三个 Windows x64 资产：NSIS 安装器、GUI 便携 ZIP 和 CLI/TUI 便携 ZIP。
+每个包都包含匹配的 `glt-worker/`、`README.md`、`docs/` 和 `LICENSE`。统一
+`glt-nightly-SHA256SUMS` 校验最终压缩包/安装器。
 
-- `glt.exe`
-- `glt-worker/`
-- `README.md`、`docs/` 和 `LICENSE`
-- `SHA256SUMS`
+可选 Demucs 分离运行时体积较大，不进入基础包，由独立组件工作流构建并记录模型、运行时和
+许可证校验信息。
+
+需要分离组件时，维护者可手动触发 `Separator component` 工作流：
+
+```powershell
+gh workflow run separator-component.yml `
+  -f ref=main `
+  -f publish_to_nightly=true
+```
+
+组件 ZIP 与独立 SHA256 文件会附加到 `nightly` Pre-release。首次安装时，在桌面端
+“分离与路由”区域选择该 ZIP；程序只读取本地包，不会静默下载模型。
 
 Nightly 用于测试最新 `main`，不是正式离线发行包。音频/视频转录仍可能要求可用的
 FFmpeg/ffprobe；稳定发布包会额外完成媒体工具、模型、许可证、断网和干净 Windows 验收。

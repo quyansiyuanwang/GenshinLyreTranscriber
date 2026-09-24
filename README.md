@@ -3,8 +3,8 @@
 把本地视频、音频或 MIDI 转换为原神风物之诗琴 21 键琴谱的 Windows 离线工具。项目以
 独奏素材为优先目标，同时保留多音与和弦能力。
 
-> 当前状态：CLI、音频/MIDI 处理链、三类琴谱导出、TUI 结果与试听闭环均已可运行。
-> 项目尚未正式发布；离线便携包、真实设备试听和音乐质量人工确认仍待完成。
+> 当前状态：CLI、TUI 与 Tauri 桌面工作站均已可构建；完整分析、可选源分离、路由、钢琴卷帘
+> 编辑和导出链路已经接通。项目尚未正式发布；干净环境离线验收和音乐质量人工确认仍待完成。
 
 ## 主要能力
 
@@ -14,6 +14,8 @@
 - MIDI 直转：支持 format 0/1，保留已有 tempo map。
 - 结果重筛：从候选缓存按 confidence、时长、力度和原始 MIDI 音高重新筛选，不重复运行模型。
 - 可试听预览：自行合成轻量 WAV，并通过 TUI 或 CLI 播放，不包含游戏采样。
+- Tauri 桌面工作站：波形/频谱/瀑布图、即点即播、A/B、可选 Demucs 分离、演奏路由、
+  Performance 派生导出和 WebGL2 钢琴卷帘编辑。
 - 完整离线目标：最终发布包不要求用户预装 Python、FFmpeg 或下载模型。
 
 ## 快速开始
@@ -51,6 +53,24 @@ target\debug\glt.exe tui
 
 TUI 支持路径粘贴、文件拖入、目录浏览、参数调整、任务取消、结果查看、试听和失败后重试。
 完整按键说明见 [命令行使用](docs/USAGE.md#tui-操作)。
+
+### 使用桌面工作站
+
+开发环境启动：
+
+```powershell
+pnpm --dir crates/glt-gui install
+pnpm --dir crates/glt-gui tauri dev
+```
+
+发布构建会生成 `target\release\glt-gui.exe`。构建完整 GUI 安装器与便携 ZIP：
+
+```powershell
+./scripts/package_release.ps1 -AssetPrefix glt-local
+```
+
+桌面端可拖入音频、查看分析、分离四轨、切换路由试听、转录、编辑钢琴卷帘并导出新的
+`edit-NN` 版本。源码构建和发布包均不包含可选 Demucs 运行时。
 
 ### 使用 CLI
 
@@ -139,7 +159,7 @@ uv run --directory python pytest
   不承诺完整混音歌曲的理想效果。
 - `score.compat.txt` 使用 10ms 近似网格，无法表达同键重触发和完整尾部静音；
   `score.events.json` 才是精确时间依据。
-- 当前正式目标为 Windows x64；跨平台与 GUI 尚未实现。
+- 当前正式目标为 Windows x64；其他平台尚未提供。
 - 项目的正式离线包和发布验收尚未完成。
 
 ## 许可证

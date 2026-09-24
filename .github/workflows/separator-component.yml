@@ -1,0 +1,75 @@
+name: Separator component
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Repository ref to build
+        required: true
+        default: main
+      publish_to_nightly:
+        description: Attach the component to the fixed nightly pre-release
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: separator-component
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: 0.9.21
+      - name: Sync separator environment
+        run: uv sync --project python --locked --group separator
+      - name: Build frozen separator worker
+        run: |
+          uv run --project python pyinstaller --clean --noconfirm --distpath artifacts/separator-worker --workpath build/separator-pyinstaller python/glt-separator.spec
+      - name: Build component package
+        run: |
+          uv run --project python python scripts/build_separator_component.py --worker-dir artifacts/separator-worker/glt-separator-worker --output artifacts/separator-component --models htdemucs --overwrite
+      - name: Archive component
+        shell: pwsh
+        run: |
+          $release = Join-Path (Resolve-Path 'artifacts').Path 'separator-release'
+          New-Item -ItemType Directory -Path $release -Force | Out-Null
+          $zip = Join-Path $release 'glt-separator-component-windows-x64.zip'
+          Compress-Archive -Path 'artifacts/separator-component/*' -DestinationPath $zip -Force
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  glt-separator-component-windows-x64.zip" | Set-Content (Join-Path $release 'glt-separator-component-windows-x64.sha256') -Encoding ascii
+      - name: Upload component artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: glt-separator-component-windows-x64
+          path: artifacts/separator-release
+          retention-days: 30
+          if-no-files-found: error
+      - name: Attach to nightly
+        if: ${{ inputs.publish_to_nightly }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: nightly
+          name: Nightly
+          prerelease: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/separator-release/glt-separator-component-windows-x64.zip
+            artifacts/separator-release/glt-separator-component-windows-x64.sha256

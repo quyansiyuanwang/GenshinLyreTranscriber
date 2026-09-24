@@ -38,6 +38,12 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: 0.9.21
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.0
+      - name: Install frontend dependencies
+        run: pnpm --dir crates/glt-gui install --frozen-lockfile
       - name: Sync locked Python environment
         run: uv sync --project python --locked
       - name: Fetch pinned model
@@ -55,5 +61,29 @@ jobs:
           uv run --directory python mypy .
       - name: Python tests
         run: uv run --directory python pytest -q
+      - name: Frontend checks
+        run: |
+          pnpm --dir crates/glt-gui check
+          pnpm --dir crates/glt-gui test
+          pnpm --dir crates/glt-gui build
+      - name: Build Windows packages
+        run: ./scripts/package_release.ps1 -AssetPrefix glt-ci
+      - name: Clean Windows GUI smoke
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem artifacts/release -Filter 'glt-ci-gui-windows-x64-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not generated' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'glt-installed'
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$installDir" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "installer exited with $($install.ExitCode)" }
+          $gui = Get-ChildItem $installDir -Recurse -Filter 'glt-gui.exe' | Select-Object -First 1
+          if (-not $gui) { $gui = Get-ChildItem $installDir -Recurse -Filter 'GenshinLyreTranscriber.exe' | Select-Object -First 1 }
+          $worker = Get-ChildItem $installDir -Recurse -Filter 'glt-worker.exe' | Select-Object -First 1
+          if (-not $gui) { throw 'installed GUI executable is missing' }
+          if (-not $worker) { throw 'installed worker executable is missing' }
+          $process = Start-Process -FilePath $gui.FullName -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "installed GUI exited early with $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
       - name: Reference player contract
         run: uv run --project python python scripts/verify_reference_player_contract.py --player-root reference-player

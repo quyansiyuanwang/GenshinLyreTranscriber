@@ -224,7 +224,7 @@ FFmpeg 或 Basic Pitch。新结果复制 `source.mid` 与候选缓存，因此�
 
 ## Worker 协议与结果发布
 
-Worker 使用 JSONL v2。worker 启动后先发送 `ready`，Rust 随后发送 `start` 或 `cancel`，并
+Worker 使用 JSONL v3。worker 启动后先发送 `ready`，Rust 随后发送 `start` 或 `cancel`，并
 接收 `progress`、`warning`、`result`、`error`、`cancelled`。消息必须匹配当前 `job_id`，
 且有行长和结构限制。
 
@@ -256,12 +256,24 @@ uv run --project python python scripts/fetch_resources.py basic-pitch
 - 断网运行
 - FFmpeg、模型与所有第三方许可证和 NOTICE
 
+构建完整 Windows 发布资产：
+
+```powershell
+pnpm --dir crates/glt-gui install --frozen-lockfile
+./scripts/package_release.ps1 -AssetPrefix glt-local
+```
+
+脚本会生成 CLI/TUI ZIP、GUI 便携 ZIP、NSIS 安装器和 SHA256 清单。Tauri 安装包把 worker
+作为资源目录内容发布，GUI 启动时自动定位 `glt-worker`。基础 worker 明确排除
+`torch`、`torchaudio` 和 `demucs`。
+
 当前宿主没有可用的管理员级网络隔离环境，因此只能在发布候选包上完成真正的断网门禁。
 
 ## 自动化制品
 
 Nightly workflow 使用固定 `nightly` tag 和同名 Pre-release。每次成功构建都会覆盖
-`glt-nightly-windows-x64.zip` 与对应的 SHA256 资产，同时保留一份 14 天的 Actions artifact
+`glt-nightly-gui-windows-x64-setup.exe`、`glt-nightly-gui-windows-x64.zip`、
+`glt-nightly-cli-tui-windows-x64.zip` 与 `glt-nightly-SHA256SUMS`，同时保留一份 14 天的 Actions artifact
 用于构建诊断。该机制不会创建稳定 `v*` tag。下载与手动触发步骤见
 [Nightly 下载](DOWNLOADS.md)。
 

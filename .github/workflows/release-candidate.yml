@@ -49,6 +49,12 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: 0.9.21
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.0
+      - name: Install frontend dependencies
+        run: pnpm --dir crates/glt-gui install --frozen-lockfile
       - name: Sync and fetch resources
         run: |
           uv sync --project python --locked
@@ -62,22 +68,14 @@ jobs:
           uv run --directory python ruff format --check .
           uv run --directory python mypy .
           uv run --directory python pytest -q
-          cargo build --release --locked
-          ./scripts/build_worker.ps1
-      - name: Stage diagnostic candidate
-        shell: pwsh
-        run: |
-          $stage = Join-Path (Resolve-Path 'artifacts').Path 'candidate-diagnostic'
-          New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item target/release/glt.exe $stage
-          Copy-Item artifacts/worker/glt-worker $stage -Recurse -Force
-          Copy-Item LICENSE, README.md $stage
-          Copy-Item docs $stage -Recurse -Force
-          Get-ChildItem $stage -Recurse -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path.Substring($stage.Length + 1))" } | Set-Content (Join-Path $stage 'SHA256SUMS')
+          pnpm --dir crates/glt-gui check
+          pnpm --dir crates/glt-gui test
+          pnpm --dir crates/glt-gui build
+          ./scripts/package_release.ps1 -AssetPrefix glt-candidate-${{ inputs.version }}
       - name: Upload diagnostic candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: glt-candidate-diagnostic-${{ inputs.version }}-${{ steps.revision.outputs.sha }}
-          path: artifacts/candidate-diagnostic
+          path: artifacts/release
           retention-days: 14
           if-no-files-found: error

@@ -21,6 +21,7 @@ struct GuiState {
     cancellation: Mutex<Option<Arc<AtomicBool>>>,
     playback: Mutex<Option<PlaybackService>>,
     project: Mutex<Option<project::OpenProject>>,
+    worker_path: Mutex<Option<PathBuf>>,
 }
 
 impl GuiState {
@@ -44,6 +45,12 @@ impl GuiState {
         self.project
             .lock()
             .map_err(|_| "project state is unavailable".to_owned())
+    }
+
+    fn lock_worker_path(&self) -> Result<std::sync::MutexGuard<'_, Option<PathBuf>>, String> {
+        self.worker_path
+            .lock()
+            .map_err(|_| "worker path state is unavailable".to_owned())
     }
 }
 
@@ -148,16 +155,22 @@ fn project_close(state: State<'_, GuiState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn doctor(worker_path: Option<PathBuf>) -> Result<desktop::DesktopDoctorInfo, String> {
-    desktop::doctor(worker_path)
+fn doctor(
+    state: State<'_, GuiState>,
+    worker_path: Option<PathBuf>,
+) -> Result<desktop::DesktopDoctorInfo, String> {
+    desktop::doctor(worker_path.or(state.lock_worker_path()?.clone()))
 }
 
 #[tauri::command]
 fn start_job(
     app: AppHandle,
     state: State<'_, GuiState>,
-    request: DesktopJobRequest,
+    mut request: DesktopJobRequest,
 ) -> Result<(), String> {
+    if request.worker_path.is_none() {
+        request.worker_path = state.lock_worker_path()?.clone();
+    }
     spawn_desktop_job(app, &state, request, None)
 }
 
@@ -367,7 +380,7 @@ fn edit_export(
         revision_id: Some(revision_id),
         parent_revision_id: Some(parent_revision_id),
         title,
-        worker_path,
+        worker_path: worker_path.or(state.lock_worker_path()?.clone()),
     };
     if let Err(error) = spawn_desktop_job(app, &state, request, Some(payload.clone())) {
         let _ = fs::remove_file(payload);
@@ -494,6 +507,19 @@ pub fn run() {
         .manage(GuiState::default())
         .manage(analysis::AnalysisState::default())
         .manage(separation::SeparationState::default())
+        .setup(|app| {
+            let resource = app.path().resource_dir()?;
+            let worker = if cfg!(windows) {
+                resource.join("glt-worker").join("glt-worker.exe")
+            } else {
+                resource.join("glt-worker").join("glt-worker")
+            };
+            if worker.is_file() {
+                let state = app.state::<GuiState>();
+                *state.lock_worker_path().map_err(std::io::Error::other)? = Some(worker);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             separation::separator_component_status,
             separation::separator_component_install,
