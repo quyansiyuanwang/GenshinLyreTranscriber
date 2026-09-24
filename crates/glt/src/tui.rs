@@ -8,7 +8,10 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crossterm::cursor::Show;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -451,7 +454,36 @@ impl TuiApp {
         }
     }
 
+    fn handle_paste(&mut self, text: &str) {
+        if self.screen == Screen::Running || self.browser.is_some() {
+            return;
+        }
+        let Some(mut path) = text
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(|line| line.trim_matches(['"', '\'']).to_owned())
+        else {
+            return;
+        };
+        if let Some(uri_path) = path.strip_prefix("file:///") {
+            path = uri_path.replace('/', "\\");
+            if let Some(first) = path.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+        }
+        if self.focus == FIELD_OUTPUT {
+            self.fields[FIELD_OUTPUT] = path;
+        } else {
+            self.fields[FIELD_INPUT] = path;
+            self.focus = FIELD_INPUT;
+        }
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> bool {
+        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            return false;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.request_cancel();
             return true;
@@ -888,7 +920,12 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> Result<Self, CliError> {
         enable_raw_mode()?;
-        if let Err(error) = execute!(std::io::stdout(), EnterAlternateScreen) {
+        if let Err(error) = execute!(
+            std::io::stdout(),
+            EnterAlternateScreen,
+            EnableBracketedPaste
+        ) {
+            let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
             let _ = disable_raw_mode();
             return Err(CliError::Output(error));
         }
@@ -899,7 +936,12 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
+        let _ = execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            LeaveAlternateScreen,
+            Show
+        );
     }
 }
 
@@ -913,11 +955,14 @@ pub(crate) fn run() -> Result<(), CliError> {
         terminal.draw(|frame| app.render(frame))?;
         app.poll_job();
         if event::poll(Duration::from_millis(50))? {
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            if app.handle_key(key) {
-                break;
+            match event::read()? {
+                Event::Key(key) => {
+                    if app.handle_key(key) {
+                        break;
+                    }
+                }
+                Event::Paste(text) => app.handle_paste(&text),
+                _ => {}
             }
         }
     }
@@ -969,6 +1014,29 @@ mod tests {
         assert_eq!(app.operation(), Operation::ConvertMidi);
         assert_eq!(options.bpm, None);
         assert_eq!(options.audio_track, None);
+    }
+
+    #[test]
+    fn release_events_do_not_duplicate_typed_text() {
+        let mut app = TuiApp::default();
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        ));
+        app.handle_key(KeyEvent::new_with_kind(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert_eq!(app.field(FIELD_INPUT), "a");
+    }
+
+    #[test]
+    fn paste_fills_focused_path_and_strips_quotes() {
+        let mut app = TuiApp::default();
+        app.handle_paste("\"C:\\Music\\song.flac\"\n");
+        assert_eq!(app.field(FIELD_INPUT), "C:\\Music\\song.flac");
     }
 
     #[test]
