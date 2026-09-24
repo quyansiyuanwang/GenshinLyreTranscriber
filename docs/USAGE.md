@@ -36,6 +36,12 @@ glt convert-midi INPUT --output DIR [OPTIONS]
 glt transcribe input.mp4 --output output --worker python/src/glt_core/worker.py
 ```
 
+生成的 `cleaned.mid` 可用以下命令预览不同移调档位：
+
+```powershell
+uv run --directory python python -m glt_core.tools.mapping_preview output/cleaned.mid
+```
+
 ## 输出与退出码
 
 进度和警告写入 stderr；`--json` 模式下 stdout 只输出一个 JSON 对象。普通模式

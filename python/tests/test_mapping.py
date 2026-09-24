@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from glt_core.domain.note_sequence import Note, NoteSequence, Provenance
-from glt_core.processing.mapping import MappingConfig, default_mapping_layout, map_note_sequence
+from glt_core.processing.mapping import (
+    MappingConfig,
+    default_mapping_layout,
+    map_note_sequence,
+    preview_transpositions,
+)
 
 
 def _sequence(pitches: list[int], *, same_time: bool = False) -> NoteSequence:
@@ -85,3 +90,16 @@ def test_manual_transpose_is_respected() -> None:
     )
     assert result.stats.transpose_semitones == 2
     assert result.mapped.notes[0].pitch == 62
+
+
+def test_transpose_preview_is_complete_and_deterministic() -> None:
+    sequence = _sequence([61, 63, 65, 66, 68, 70, 72])
+    first = preview_transpositions(sequence)
+    second = preview_transpositions(sequence)
+    assert first == second
+    assert len(first) == 25
+    selected = [item for item in first if item.selected]
+    assert len(selected) == 1
+    assert selected[0].transpose == -1
+    assert selected[0].stats.replaced_semitones == 0
+    assert [item.score for item in first] == sorted(item.score for item in first)

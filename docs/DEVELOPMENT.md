@@ -85,6 +85,16 @@ uv run --directory python python -m glt_core.tools.mapping_check artifacts/mappi
 
 输出 WAV 每个音之间留有空隙，JSON manifest 同时记录按键顺序和 MIDI 音高。
 
+已清理 MIDI 可在正式映射前比较全部移位候选：
+
+```powershell
+uv run --directory python python -m glt_core.tools.mapping_preview cleaned.mid
+uv run --directory python python -m glt_core.tools.mapping_preview cleaned.mid --json
+```
+
+预览包含评分、移调、音符数、半音替换、八度折返、同刻冲突和唯一键数；
+`auto` 选择项带 `selected` 标记。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：

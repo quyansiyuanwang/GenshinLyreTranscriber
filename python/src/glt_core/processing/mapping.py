@@ -89,6 +89,14 @@ class MappingResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TransposePreview:
+    transpose: int
+    score: tuple[float, int, int]
+    selected: bool
+    stats: MappingStats
+
+
+@dataclass(frozen=True, slots=True)
 class _Candidate:
     mapped_pitches: tuple[int, ...]
     replaced_semitones: int
@@ -189,6 +197,56 @@ def map_note_sequence(
         unique_keys_used=len({key for event in events for key in event.keys}),
     )
     return MappingResult(original=sequence, mapped=mapped, events=tuple(events), stats=stats)
+
+
+def preview_transpositions(
+    sequence: NoteSequence,
+    layout: MappingLayout | None = None,
+    *,
+    transposes: tuple[int, ...] | None = None,
+) -> tuple[TransposePreview, ...]:
+    """Return all deterministic transpose candidates ordered by mapping score."""
+    sequence.validate()
+    selected_layout = layout or default_mapping_layout()
+    selected_layout.validate()
+    candidates = transposes or tuple(range(-12, 13))
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in candidates):
+        raise ValueError("transpose candidates must be integers")
+    config = MappingConfig(layout=selected_layout)
+    evaluated = [(transpose, _evaluate(sequence, config, transpose)) for transpose in candidates]
+    if not evaluated:
+        return ()
+    best_transpose = min(evaluated, key=lambda item: item[1].score(item[0]))[0]
+    ordered = sorted(
+        evaluated,
+        key=lambda item: (item[1].score(item[0]), item[0]),
+    )
+    return tuple(
+        TransposePreview(
+            transpose=transpose,
+            score=candidate.score(transpose),
+            selected=transpose == best_transpose,
+            stats=_candidate_stats(sequence, candidate, transpose),
+        )
+        for transpose, candidate in ordered
+    )
+
+
+def _candidate_stats(
+    sequence: NoteSequence,
+    candidate: _Candidate,
+    transpose: int,
+) -> MappingStats:
+    return MappingStats(
+        input_notes=len(sequence.notes),
+        mapped_notes=len(sequence.notes) - candidate.collision_notes_removed,
+        output_events=len({note.start_us for note in sequence.notes}),
+        transpose_semitones=transpose,
+        replaced_semitones=candidate.replaced_semitones,
+        octave_folds=candidate.octave_folds,
+        collision_notes_removed=candidate.collision_notes_removed,
+        unique_keys_used=len(set(candidate.mapped_pitches)),
+    )
 
 
 def _select_transpose(sequence: NoteSequence, config: MappingConfig) -> tuple[int, _Candidate]:

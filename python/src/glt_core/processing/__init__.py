@@ -17,8 +17,10 @@ from glt_core.processing.mapping import (
     MappingLayout,
     MappingResult,
     MappingStats,
+    TransposePreview,
     default_mapping_layout,
     map_note_sequence,
+    preview_transpositions,
 )
 from glt_core.processing.quantize import (
     FallbackRegion,
@@ -54,6 +56,7 @@ __all__ = [
     "MappingLayout",
     "MappingResult",
     "MappingStats",
+    "TransposePreview",
     "TimingAnalysis",
     "TimingConfig",
     "TimingError",
@@ -61,5 +64,6 @@ __all__ = [
     "clean_note_sequence",
     "default_mapping_layout",
     "map_note_sequence",
+    "preview_transpositions",
     "quantize_note_sequence",
 ]
