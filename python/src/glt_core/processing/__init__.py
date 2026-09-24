@@ -55,6 +55,16 @@ from glt_core.processing.quantize import (
     QuantizationStats,
     quantize_note_sequence,
 )
+from glt_core.processing.routing import (
+    PerformanceMode,
+    RoutingPlan,
+    StemRoute,
+    load_routing_plan,
+    merge_routed_sequences,
+    route_stem_audio,
+    routing_plan_from_template,
+    write_routing_plan,
+)
 from glt_core.processing.timing import (
     TimingAnalysis,
     TimingConfig,
@@ -84,6 +94,9 @@ __all__ = [
     "QuantizationChange",
     "QuantizationConfig",
     "QuantizationResult",
+    "PerformanceMode",
+    "RoutingPlan",
+    "StemRoute",
     "QuantizationStats",
     "DEFAULT_HIGH_PITCH",
     "DEFAULT_LOW_PITCH",
@@ -110,4 +123,9 @@ __all__ = [
     "map_note_sequence",
     "preview_transpositions",
     "quantize_note_sequence",
+    "load_routing_plan",
+    "merge_routed_sequences",
+    "route_stem_audio",
+    "routing_plan_from_template",
+    "write_routing_plan",
 ]

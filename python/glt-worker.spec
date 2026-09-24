@@ -10,8 +10,8 @@ if not model_path.is_file():
 
 schema_dir = project_dir.parent / "schemas"
 schema_files = sorted(schema_dir.glob("*.schema.json"))
-if len(schema_files) != 10:
-    raise SystemExit(f"Expected 10 protocol schemas, found {len(schema_files)}")
+if len(schema_files) != 11:
+    raise SystemExit(f"Expected 11 protocol schemas, found {len(schema_files)}")
 
 datas = [
     (str(model_path), "glt_core/resources/models/basic_pitch"),

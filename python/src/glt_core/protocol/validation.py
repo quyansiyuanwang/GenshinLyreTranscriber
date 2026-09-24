@@ -15,6 +15,7 @@ SAFE_INTEGER_MAX = 9_007_199_254_740_991
 SCHEMA_FILES = {
     "analysis_manifest": "analysis-manifest-v1.schema.json",
     "separator_component": "separator-component-v1.schema.json",
+    "routing_plan": "routing-plan-v1.schema.json",
     "stem_set": "stem-set-v1.schema.json",
     "events": "events-v1.schema.json",
     "worker": "worker-v2.schema.json",
@@ -245,3 +246,9 @@ def validate_stem_set(document: Any) -> None:
     """Validate a separated stem set document."""
     _require_version(document)
     _schema_error(document, SCHEMA_FILES["stem_set"])
+
+
+def validate_routing_plan(document: Any) -> None:
+    """Validate a stem and performance routing plan."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["routing_plan"])

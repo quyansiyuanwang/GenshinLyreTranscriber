@@ -12,5 +12,6 @@
     "worker-v2.schema.json": "aaea00b4a2d0706e4bf450193c7127987fb828be821be291afde2e5500f64630",
     "separator-component-v1.schema.json": "225080837284fafbe8db0e4f5c0037646a72282713138abc71f1b39fef42eec9",
     "stem-set-v1.schema.json": "c2b7caa696044f89e630e0403a57534f56e75251ef30e3a60d69143be6b10568"
+    ,"routing-plan-v1.schema.json": "f6683afd40f8e5e17670c961bac617ac63717ca813b644e358155f69fe379d0c"
   }
 }
