@@ -187,7 +187,56 @@ def test_worker_converts_midi_to_source_copy(tmp_path: pathlib.Path) -> None:
     assert (staging / "cleaned.mid").is_file()
     assert (staging / "mapped.mid").is_file()
     assert (staging / "score.events.json").is_file()
+    assert (staging / "score.readable.txt").is_file()
+    assert (staging / "score.compat.txt").is_file()
     report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
     assert report["input"]["source_type"] == "midi"
     assert report["counts"]["input_notes"] == 1
     assert report["counts"]["mapped_keys"] == 1
+    assert report["counts"]["compatibility_collisions"] == 0
+    assert {artifact["kind"] for artifact in report["artifacts"]} >= {
+        "events",
+        "readable_text",
+        "compat_text",
+    }
+    assert "COMPATIBILITY_TAIL_OMITTED" in {warning["code"] for warning in report["warnings"]}
+
+
+def test_worker_reports_compatibility_slot_collision(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "collision.mid"
+    midi = mido.MidiFile(type=1, ticks_per_beat=1000)
+    track = mido.MidiTrack()
+    track.extend(
+        [
+            mido.Message("note_on", note=60, velocity=100, time=20),
+            mido.Message("note_on", note=61, velocity=100, time=8),
+            mido.Message("note_off", note=60, velocity=0, time=1972),
+            mido.Message("note_off", note=61, velocity=0, time=1000),
+        ]
+    )
+    midi.tracks.append(track)
+    midi.save(str(source))
+    staging = tmp_path / "output"
+    message = _message(
+        "start",
+        operation="convert_midi",
+        input_path=str(source),
+        staging_dir=str(staging),
+        options={"timing": "preserve", "transpose": 0},
+    )
+    output = io.StringIO()
+    controlled = ControlledInput([message])
+    thread = threading.Thread(target=WorkerServer(controlled, output).run)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while '"type":"result"' not in output.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controlled.release()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+
+    report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
+    assert report["counts"]["input_notes"] == 2
+    assert report["counts"]["compatibility_collisions"] == 1
+    assert "COMPATIBILITY_COLLISIONS" in {warning["code"] for warning in report["warnings"]}
+    assert (staging / "score.compat.txt").read_text(encoding="utf-8").splitlines()[-1] == "/ A/"

@@ -2,8 +2,8 @@
 
 当前 Rust 前端已提供命令解析、worker 启动、JSONL 状态处理、取消和退出码。正式
 worker 已支持从本地音频/视频转录或导入 MIDI，并输出 `source.mid`、`cleaned.mid`、
-`mapped.mid`、`score.events.json` 与 `report.json`。可读谱和旧播放器兼容谱仍在后续
-模块中实现。
+`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 与
+`report.json`。
 
 ```powershell
 glt --help
@@ -51,6 +51,8 @@ uv run --directory python python -m glt_core.tools.mapping_preview output/cleane
 - `cleaned.mid`：清理和所选用时序策略后的 MIDI。
 - `mapped.mid`：映射到 21 键后的 MIDI。
 - `score.events.json`：按整数微秒记录映射起音和按键，同一时刻只保留一个和弦事件。
+- `score.readable.txt`：带时间戳和图例的人工阅读谱；文件首行明确它不是旧播放器精确执行格式。
+- `score.compat.txt`：按参考播放器 10ms 网格编码的兼容谱；网格碰撞和省略的尾部静音会写入报告。
 - `report.json`：版本、输入哈希、参数、损失统计以及每个产物的 SHA256 和字节数。
 
 worker 只写输出目录同级的隐藏 staging。Rust 会验证已声明产物存在且大小、SHA256

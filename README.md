@@ -2,8 +2,8 @@
 
 把本地视频或音频转换为原神风物之诗琴 21 键琴谱的 Windows 离线工具。
 
-> 当前状态：项目骨架开发中，尚不可用于实际转谱。已实现能力以仓库代码、测试和
-> 发布说明为准。
+> 当前状态：核心处理与导出链已可运行，但 TUI、试听和质量验收尚未完成，暂未达到
+> 可发布标准。已实现能力以仓库代码、测试和发布说明为准。
 
 ## 目标
 
@@ -18,7 +18,7 @@
 
 ## 当前可用功能
 
-目前尚未提供完整的用户转谱命令或 TUI，但已经具备可验证的 ONNX 处理基础：
+当前已提供 `transcribe` 与 `convert-midi` CLI，完整 TUI 和试听闭环尚未完成：
 
 - `glt` Rust 二进制可以构建并输出版本号。
 - `glt doctor` 可以启动协议 worker 并显示 worker、应用和模型版本。
@@ -31,10 +31,10 @@
 - 支持 auto/preserve/straight/triplet 可控量化，显式 BPM 具有更高优先级。
 - 支持全曲自动/手动移调、C3-B5 自然音映射、半音替换、八度折返和同刻冲突统计。
 - 提供 -12..12 半音移调候选预览，可在正式映射前查看损失和冲突。
-- 结果目录包含 `source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json` 和 `report.json`。
+- 结果目录包含 `source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 和 `report.json`。
 - 精确事件 JSON 使用整数微秒，冻结 Schema 校验事件顺序与时长；MIDI 起音 round-trip 误差不超过 1ms。
+- `score.readable.txt` 面向人工阅读并明确不是旧播放器执行格式；`score.compat.txt` 使用参考播放器的 10ms 单逻辑行编码并报告网格碰撞与尾部静音限制。
 - worker 先写隐藏 staging，Rust 校验产物大小和 SHA256 后再发布；已有结果必须显式 `--overwrite`。
-- 可读文本谱和旧播放器兼容谱仍待实现。
 
 CLI 命令行为、worker 发现规则和退出码见 [docs/USAGE.md](docs/USAGE.md)。
 

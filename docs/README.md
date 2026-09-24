@@ -6,3 +6,4 @@
 
 - [命令行使用](USAGE.md)
 - [开发与构建](DEVELOPMENT.md)
+- [参考播放器兼容契约](REFERENCE_PLAYER_CONTRACT.md)

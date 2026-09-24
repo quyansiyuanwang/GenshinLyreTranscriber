@@ -30,7 +30,7 @@ Basic Pitch 的元数据在 Windows 和 Python 3.11 以上会尝试安装旧版 
 | 热进程模型加载 | 1.61 秒 |
 | 单文件推理 | 1.96-2.14 秒 |
 | 峰值工作集 | 191.73-192.99 MiB |
-| worker onedir 大小 | 293.74 MiB |
+| worker onedir 大小 | 293.75 MiB |
 | FFmpeg `bin` 目录大小 | 175.20 MiB |
 
 模型加载时间包含 ONNX Runtime 初始化；不同机器的 CPU 和磁盘速度会影响结果。
@@ -106,6 +106,31 @@ worker 的所有产物先写入输出目录同级的隐藏 staging。`result` �
 校验每个文件的存在性、字节数和 SHA256。首次发布使用目录重命名；覆盖已有结果时先把
 旧目录移到隐藏备份，再发布完整 staging，失败会尝试恢复旧目录。源输入哈希在回归测试
 和真实 worker 端到端中检查，覆盖路径包含源输入时直接拒绝。
+
+## 文本谱导出
+
+`score.readable.txt` 只用于人工阅读，首行明确声明它不是旧播放器精确执行格式。拍点
+可靠时按拍点分组但不推断拍号；没有可靠拍点时显示绝对时间轴。文件显示来源片段起点、
+总时长、实际移调、单音/和弦图例，并说明起音间隔和尾部静音限制。
+
+`score.compat.txt` 针对已核验的参考播放器语义生成：`INTERVAL_RATING=0.01`、
+`SPACE_INTERVAL_RATING=1.0`、`LINE_INTERVAL_RATING=0.0`、单逻辑行、首尾斜杠保护。
+起音按 10ms 取整，5000us 平局向上；同一槽的不同按键合并为和弦，同键重触发无法保留时
+增加 `compatibility_collisions`。空谱没有音符主体，尾部静音只写入注释和报告，不伪造
+旧播放器可等待的结束时间。
+
+固定参考播放器为
+`https://github.com/quyansiyuanwang/GenshinImpactPianoPlayer.git` 的提交
+`7aaddad21b71e91fd36b6ce7687dfb546076f602`。适配验证只读取该提交的解析器和
+播放器代码，并在虚拟时钟/键盘上执行，不发送真实按键：
+
+```powershell
+uv run --project python python scripts/verify_reference_player_contract.py `
+  --player-root PATH_TO_GIPIOPLAYER
+```
+
+验证脚本会检查远端、提交和干净工作树，拒绝解析告警，并逐槽比较期望与虚拟调度结果。
+详见 [参考播放器契约](REFERENCE_PLAYER_CONTRACT.md)。
 
 ## 模型资源
 

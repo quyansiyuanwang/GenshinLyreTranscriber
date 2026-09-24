@@ -10,6 +10,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from glt_core import __version__
@@ -18,10 +19,15 @@ from glt_core.domain.midi_import import (
     copy_source_midi,
     import_midi,
 )
+from glt_core.domain.note_sequence import NoteSequence
 from glt_core.export import (
+    CompatibilityScore,
+    build_compatibility_score,
     build_events_document,
+    build_readable_score,
     write_events_document,
     write_note_sequence_midi,
+    write_text_score,
 )
 from glt_core.media import (
     MediaError,
@@ -57,6 +63,8 @@ SOURCE_MIDI_NAME = "source.mid"
 CLEANED_MIDI_NAME = "cleaned.mid"
 MAPPED_MIDI_NAME = "mapped.mid"
 EVENTS_NAME = "score.events.json"
+READABLE_NAME = "score.readable.txt"
+COMPAT_NAME = "score.compat.txt"
 REPORT_NAME = "report.json"
 DECODED_AUDIO_NAME = "source.decoded.wav"
 
@@ -366,11 +374,12 @@ class WorkerServer:
                 overwrite=True,
             )
             mapped_hash = sha256_file(mapped_midi)
+            mapping_profile = str(mapping.mapped.provenance.parameters["mapping"]["profile"])
             events_document = build_events_document(
                 mapping.mapped,
                 mapping.events,
                 generator=f"GenshinLyreTranscriber {__version__}",
-                mapping_profile=str(mapping.mapped.provenance.parameters["mapping"]["profile"]),
+                mapping_profile=mapping_profile,
             )
             events_path = write_events_document(
                 events_document,
@@ -378,6 +387,16 @@ class WorkerServer:
                 overwrite=True,
             )
             events_hash = sha256_file(events_path)
+            text_exports = _write_text_scores(
+                staging_dir,
+                mapping.mapped,
+                events_document,
+                title=input_path.name,
+                timing_mode=str(options.get("timing", "auto")),
+                transpose_semitones=mapping.stats.transpose_semitones,
+                mapping_profile=mapping_profile,
+                source_offset_us=start_us or 0,
+            )
             cleaning_removed = (
                 cleaning.stats.dropped_low_confidence
                 + cleaning.stats.dropped_short
@@ -410,13 +429,14 @@ class WorkerServer:
                     "replaced_semitones": mapping.stats.replaced_semitones,
                     "octave_folds": mapping.stats.octave_folds,
                     "duplicate_keys": mapping.stats.collision_notes_removed,
-                    "compatibility_collisions": 0,
+                    "compatibility_collisions": text_exports.compatibility.collisions,
                 },
                 "warnings": _report_warnings(
                     cleaning_removed,
                     timing.fallback,
                     len(quantization.fallback_regions),
-                ),
+                )
+                + _compatibility_warnings(text_exports.compatibility),
                 "artifacts": [
                     {
                         "kind": "source_midi",
@@ -441,6 +461,18 @@ class WorkerServer:
                         "relative_path": EVENTS_NAME,
                         "sha256": events_hash,
                         "size_bytes": events_path.stat().st_size,
+                    },
+                    {
+                        "kind": "readable_text",
+                        "relative_path": READABLE_NAME,
+                        "sha256": text_exports.readable_hash,
+                        "size_bytes": text_exports.readable_path.stat().st_size,
+                    },
+                    {
+                        "kind": "compat_text",
+                        "relative_path": COMPAT_NAME,
+                        "sha256": text_exports.compatibility_hash,
+                        "size_bytes": text_exports.compatibility_path.stat().st_size,
                     },
                 ],
             }
@@ -474,6 +506,18 @@ class WorkerServer:
                     "relative_path": EVENTS_NAME,
                     "sha256": events_hash,
                     "size_bytes": events_path.stat().st_size,
+                },
+                {
+                    "kind": "readable_text",
+                    "relative_path": READABLE_NAME,
+                    "sha256": text_exports.readable_hash,
+                    "size_bytes": text_exports.readable_path.stat().st_size,
+                },
+                {
+                    "kind": "compat_text",
+                    "relative_path": COMPAT_NAME,
+                    "sha256": text_exports.compatibility_hash,
+                    "size_bytes": text_exports.compatibility_path.stat().st_size,
                 },
                 {
                     "kind": "report",
@@ -537,11 +581,12 @@ class WorkerServer:
             overwrite=True,
         )
         mapped_hash = sha256_file(mapped_midi)
+        mapping_profile = str(mapping.mapped.provenance.parameters["mapping"]["profile"])
         events_document = build_events_document(
             mapping.mapped,
             mapping.events,
             generator=f"GenshinLyreTranscriber {__version__}",
-            mapping_profile=str(mapping.mapped.provenance.parameters["mapping"]["profile"]),
+            mapping_profile=mapping_profile,
         )
         events_path = write_events_document(
             events_document,
@@ -549,6 +594,16 @@ class WorkerServer:
             overwrite=True,
         )
         events_hash = sha256_file(events_path)
+        text_exports = _write_text_scores(
+            staging_dir,
+            mapping.mapped,
+            events_document,
+            title=input_path.name,
+            timing_mode=str(options.get("timing", "preserve")),
+            transpose_semitones=mapping.stats.transpose_semitones,
+            mapping_profile=mapping_profile,
+            source_offset_us=0,
+        )
         cleaning_removed = (
             cleaning.stats.dropped_low_confidence
             + cleaning.stats.dropped_short
@@ -590,7 +645,7 @@ class WorkerServer:
                 "replaced_semitones": mapping.stats.replaced_semitones,
                 "octave_folds": mapping.stats.octave_folds,
                 "duplicate_keys": mapping.stats.collision_notes_removed,
-                "compatibility_collisions": 0,
+                "compatibility_collisions": text_exports.compatibility.collisions,
             },
             "warnings": [
                 {"code": warning.code, "message": warning.message} for warning in imported.warnings
@@ -601,7 +656,8 @@ class WorkerServer:
                     timing.fallback,
                     len(quantization.fallback_regions),
                 )
-            ),
+            )
+            + _compatibility_warnings(text_exports.compatibility),
             "artifacts": [
                 {
                     "kind": "source_midi",
@@ -626,6 +682,18 @@ class WorkerServer:
                     "relative_path": EVENTS_NAME,
                     "sha256": events_hash,
                     "size_bytes": events_path.stat().st_size,
+                },
+                {
+                    "kind": "readable_text",
+                    "relative_path": READABLE_NAME,
+                    "sha256": text_exports.readable_hash,
+                    "size_bytes": text_exports.readable_path.stat().st_size,
+                },
+                {
+                    "kind": "compat_text",
+                    "relative_path": COMPAT_NAME,
+                    "sha256": text_exports.compatibility_hash,
+                    "size_bytes": text_exports.compatibility_path.stat().st_size,
                 },
             ],
         }
@@ -661,6 +729,18 @@ class WorkerServer:
                 "size_bytes": events_path.stat().st_size,
             },
             {
+                "kind": "readable_text",
+                "relative_path": READABLE_NAME,
+                "sha256": text_exports.readable_hash,
+                "size_bytes": text_exports.readable_path.stat().st_size,
+            },
+            {
+                "kind": "compat_text",
+                "relative_path": COMPAT_NAME,
+                "sha256": text_exports.compatibility_hash,
+                "size_bytes": text_exports.compatibility_path.stat().st_size,
+            },
+            {
                 "kind": "report",
                 "relative_path": REPORT_NAME,
                 "sha256": sha256_file(report_path),
@@ -684,6 +764,79 @@ class WorkerServer:
             job_id=job_id,
             payload={"code": code, "message": message, "retryable": False},
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _TextExports:
+    readable_path: pathlib.Path
+    readable_hash: str
+    compatibility_path: pathlib.Path
+    compatibility_hash: str
+    compatibility: CompatibilityScore
+
+
+def _write_text_scores(
+    staging_dir: pathlib.Path,
+    sequence: NoteSequence,
+    events_document: dict[str, Any],
+    *,
+    title: str,
+    timing_mode: str,
+    transpose_semitones: int,
+    mapping_profile: str,
+    source_offset_us: int,
+) -> _TextExports:
+    readable_text = build_readable_score(
+        sequence,
+        events_document,
+        title=title,
+        timing_mode=timing_mode,
+        transpose_semitones=transpose_semitones,
+        mapping_profile=mapping_profile,
+        source_offset_us=source_offset_us,
+    )
+    readable_path = write_text_score(
+        readable_text,
+        staging_dir / READABLE_NAME,
+        overwrite=True,
+    )
+    compatibility = build_compatibility_score(events_document)
+    compatibility_path = write_text_score(
+        compatibility.text,
+        staging_dir / COMPAT_NAME,
+        overwrite=True,
+    )
+    return _TextExports(
+        readable_path=readable_path,
+        readable_hash=sha256_file(readable_path),
+        compatibility_path=compatibility_path,
+        compatibility_hash=sha256_file(compatibility_path),
+        compatibility=compatibility,
+    )
+
+
+def _compatibility_warnings(compatibility: CompatibilityScore) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    if compatibility.collisions:
+        warnings.append(
+            {
+                "code": "COMPATIBILITY_COLLISIONS",
+                "message": (
+                    "legacy 10ms grid could not preserve "
+                    f"{compatibility.collisions} retrigger event(s)"
+                ),
+            }
+        )
+    if compatibility.omitted_tail_us:
+        warnings.append(
+            {
+                "code": "COMPATIBILITY_TAIL_OMITTED",
+                "message": (
+                    f"legacy score omits {compatibility.omitted_tail_us} us of trailing silence"
+                ),
+            }
+        )
+    return warnings
 
 
 class WorkerJobError(RuntimeError):
