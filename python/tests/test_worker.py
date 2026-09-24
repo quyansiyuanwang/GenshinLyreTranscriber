@@ -6,7 +6,6 @@ import pathlib
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import replace
 from typing import Any
 
 import mido
@@ -316,15 +315,25 @@ def test_worker_reads_cleaning_thresholds_from_environment(
     assert config.retrigger_gap_us == 40_000
 
 
-def test_auto_cleaning_profile_selects_mix_for_dense_low_confidence_notes(
+def test_worker_reads_arrangement_options_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GLT_ARRANGEMENT", "balanced")
+    monkeypatch.setenv("GLT_ONSET_WINDOW_US", "175000")
+    monkeypatch.setenv("GLT_MAX_VOICES", "3")
+    config = worker_module._arrangement_config()
+    assert config.enabled
+    assert config.onset_window_us == 175_000
+    assert config.max_voices == 3
+
+
+def test_auto_cleaning_profile_preserves_candidates_for_arrangement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GLT_CLEANING_PROFILE", "auto")
-    note = Note(60, 0, 200_000, 80, 0.3, 0, 0)
-    sequence = _note_sequence((note, replace(note, pitch=62), replace(note, pitch=64)))
-    config = worker_module._cleaning_config(sequence)
-    assert config.min_confidence == 0.4
-    assert config.min_duration_us == 100_000
+    config = worker_module._cleaning_config()
+    assert config.min_confidence == 0.2
+    assert config.min_duration_us == 50_000
 
 
 def test_explicit_strict_profile_selects_strict_thresholds(

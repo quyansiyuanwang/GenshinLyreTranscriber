@@ -19,8 +19,8 @@ class QuantizationConfig:
     mode: TimingMode = "auto"
     bpm: float | None = None
     manual_beat_times_us: tuple[int, ...] = ()
-    max_shift_us: int = 80_000
-    confidence_threshold: float = 0.2
+    max_shift_us: int = 100_000
+    confidence_threshold: float = 0.05
 
     def validate(self) -> None:
         if self.mode not in {"auto", "preserve", "straight", "triplet"}:
@@ -154,7 +154,11 @@ def quantize_note_sequence(
         )
         point = grid[nearest_index]
         shift = point.at_us - note.start_us
-        if point.confidence < selected.confidence_threshold or abs(shift) > selected.max_shift_us:
+        if (
+            point.confidence < selected.confidence_threshold
+            or abs(shift) > selected.max_shift_us
+            or point.at_us >= sequence.duration_us
+        ):
             quantized_notes.append(note)
             fallback_regions.append(
                 FallbackRegion(
@@ -170,7 +174,18 @@ def quantize_note_sequence(
             )
             continue
         new_start = point.at_us
-        new_end = max(new_start + 1, note.end_us + shift)
+        new_end = min(sequence.duration_us, max(new_start + 1, note.end_us + shift))
+        if new_end <= new_start:
+            quantized_notes.append(note)
+            fallback_regions.append(
+                FallbackRegion(
+                    start_us=note.start_us,
+                    end_us=note.end_us,
+                    reason="grid_at_end",
+                    confidence=point.confidence,
+                )
+            )
+            continue
         quantized_notes.append(replace(note, start_us=new_start, end_us=new_end))
         shifts.append(shift)
         if shift:
@@ -227,6 +242,7 @@ def _build_grid(
         return tuple(
             _GridPoint(at_us=round(index * interval), confidence=1.0)
             for index in range(_grid_count(sequence.duration_us, interval))
+            if round(index * interval) < sequence.duration_us
         )
     if len(sequence.beat_grid) >= 2:
         beat_grid_points: list[int] = []
@@ -240,13 +256,10 @@ def _build_grid(
             local_confidence = beat.confidence if beat.confidence is not None else 0.5
             for step in range(subdivisions):
                 at_us = round(beat.at_us + step * interval)
-                if at_us > sequence.duration_us:
+                if at_us >= sequence.duration_us:
                     break
                 beat_grid_points.append(at_us)
                 confidences.append(local_confidence)
-        if beat_grid_points:
-            beat_grid_points.append(sequence.duration_us)
-            confidences.append(confidences[-1])
         return tuple(
             _GridPoint(at_us=at_us, confidence=confidence)
             for at_us, confidence in zip(beat_grid_points, confidences, strict=True)
@@ -258,11 +271,9 @@ def _build_grid(
             next_time = tempos[index + 1].at_us if index + 1 < len(tempos) else sequence.duration_us
             interval = 60_000_000.0 / tempo.bpm / subdivisions
             cursor = float(tempo.at_us)
-            while cursor < next_time and cursor <= sequence.duration_us:
+            while cursor < next_time and cursor < sequence.duration_us:
                 tempo_grid_points.append(round(cursor))
                 cursor += interval
-        if tempo_grid_points and tempo_grid_points[-1] != sequence.duration_us:
-            tempo_grid_points.append(sequence.duration_us)
         return tuple(
             _GridPoint(at_us=value, confidence=0.5) for value in sorted(set(tempo_grid_points))
         )
@@ -278,12 +289,10 @@ def _grid_from_beats(beats: list[int], subdivisions: int, duration_us: int) -> l
             continue
         for step in range(subdivisions):
             value = round(beat + step * interval)
-            if value <= duration_us:
+            if value < duration_us:
                 points.append(value)
-    if beats and beats[-1] <= duration_us:
+    if beats and beats[-1] < duration_us:
         points.append(beats[-1])
-    if not points or points[-1] != duration_us:
-        points.append(duration_us)
     return sorted(set(points))
 
 

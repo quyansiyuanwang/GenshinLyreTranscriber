@@ -106,10 +106,10 @@ class _Candidate:
 
     def score(self, transpose: int) -> tuple[float, int, int]:
         return (
-            2.0 * self.replaced_semitones
-            + 3.0 * self.octave_folds
+            4.0 * self.replaced_semitones
+            + 1.0 * self.octave_folds
             + 4.0 * self.collision_notes_removed
-            + 0.1 * self.interval_distortion,
+            + 0.01 * self.interval_distortion,
             abs(transpose),
             transpose,
         )

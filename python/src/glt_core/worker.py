@@ -10,7 +10,6 @@ import sys
 import threading
 import time
 import traceback
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +30,7 @@ from glt_core.export import (
     write_note_sequence_midi,
     write_text_score,
 )
+from glt_core.frozen_compat import install_frozen_replace_fallback
 from glt_core.media import (
     MediaError,
     build_extraction_plan,
@@ -40,10 +40,12 @@ from glt_core.media import (
     sha256_file,
 )
 from glt_core.processing import (
+    ArrangementConfig,
     CleanConfig,
     MappingConfig,
     QuantizationConfig,
     analyze_timing,
+    arrange_note_sequence,
     clean_note_sequence,
     default_mapping_layout,
     map_note_sequence,
@@ -59,6 +61,8 @@ from glt_core.transcription import (
     transcribe_to_midi,
 )
 from glt_core.transcription.onnx_probe import ModelResourceError
+
+install_frozen_replace_fallback()
 
 PROTOCOL_VERSION = 1
 MAX_LINE_BYTES = 1024 * 1024
@@ -341,7 +345,7 @@ class WorkerServer:
                 cancelled=cancelled,
             )
             source_hash = sha256_file(source_midi)
-            cleaning_config = _cleaning_config(transcription.note_sequence)
+            cleaning_config = _cleaning_config()
             cleaning = clean_note_sequence(transcription.note_sequence, cleaning_config)
             timing = analyze_timing(decoded_path, cleaning.cleaned)
             if timing.fallback:
@@ -364,8 +368,10 @@ class WorkerServer:
                 timing.sequence,
                 _quantization_config(options, default_mode="auto"),
             )
+            arrangement_config = _arrangement_config()
+            arrangement = arrange_note_sequence(quantization.quantized, arrangement_config)
             mapping = map_note_sequence(
-                quantization.quantized,
+                arrangement.arranged,
                 _mapping_config(options),
             )
             cleaned_midi = write_note_sequence_midi(
@@ -433,7 +439,11 @@ class WorkerServer:
                 "counts": {
                     "input_notes": cleaning.stats.input_notes,
                     "output_notes": mapping.stats.mapped_notes,
-                    "dropped_notes": cleaning_removed + mapping.stats.collision_notes_removed,
+                    "dropped_notes": (
+                        cleaning_removed
+                        + arrangement.stats.dropped_notes
+                        + mapping.stats.collision_notes_removed
+                    ),
                     "mapped_keys": mapping.stats.unique_keys_used,
                     "replaced_semitones": mapping.stats.replaced_semitones,
                     "octave_folds": mapping.stats.octave_folds,
@@ -445,6 +455,8 @@ class WorkerServer:
                     timing.fallback,
                     len(quantization.fallback_regions),
                     cleaning_config,
+                    arrangement_config,
+                    arrangement.stats.dropped_notes,
                 )
                 + _compatibility_warnings(text_exports.compatibility)
                 + _preview_warnings(
@@ -579,14 +591,16 @@ class WorkerServer:
         _raise_if_cancelled(cancelled)
         imported = import_midi(input_path)
         _raise_if_cancelled(cancelled)
-        cleaning_config = _cleaning_config(imported.sequence)
+        cleaning_config = _cleaning_config()
         cleaning = clean_note_sequence(imported.sequence, cleaning_config)
         timing = analyze_timing(None, cleaning.cleaned)
         quantization = quantize_note_sequence(
             timing.sequence,
             _quantization_config(options, default_mode="preserve"),
         )
-        mapping = map_note_sequence(quantization.quantized, _mapping_config(options))
+        arrangement_config = _arrangement_config()
+        arrangement = arrange_note_sequence(quantization.quantized, arrangement_config)
+        mapping = map_note_sequence(arrangement.arranged, _mapping_config(options))
         cleaned_midi = write_note_sequence_midi(
             quantization.quantized,
             staging_dir / CLEANED_MIDI_NAME,
@@ -661,7 +675,11 @@ class WorkerServer:
             "counts": {
                 "input_notes": cleaning.stats.input_notes,
                 "output_notes": mapping.stats.mapped_notes,
-                "dropped_notes": cleaning_removed + mapping.stats.collision_notes_removed,
+                "dropped_notes": (
+                    cleaning_removed
+                    + arrangement.stats.dropped_notes
+                    + mapping.stats.collision_notes_removed
+                ),
                 "mapped_keys": mapping.stats.unique_keys_used,
                 "replaced_semitones": mapping.stats.replaced_semitones,
                 "octave_folds": mapping.stats.octave_folds,
@@ -677,6 +695,8 @@ class WorkerServer:
                     timing.fallback,
                     len(quantization.fallback_regions),
                     cleaning_config,
+                    arrangement_config,
+                    arrangement.stats.dropped_notes,
                 )
             )
             + _compatibility_warnings(text_exports.compatibility)
@@ -917,7 +937,7 @@ def _compatibility_warnings(compatibility: CompatibilityScore) -> list[dict[str,
     return warnings
 
 
-def _cleaning_config(sequence: NoteSequence | None = None) -> CleanConfig:
+def _cleaning_config() -> CleanConfig:
     profile = os.environ.get("GLT_CLEANING_PROFILE", "auto").strip().lower()
     presets = {
         "solo": (0.2, 50_000, 30_000),
@@ -925,11 +945,7 @@ def _cleaning_config(sequence: NoteSequence | None = None) -> CleanConfig:
         "strict": (0.5, 150_000, 30_000),
     }
     if profile == "auto":
-        min_confidence, min_duration_us, retrigger_gap_us = (
-            (0.4, 100_000, 30_000)
-            if sequence is not None and _looks_like_mix(sequence)
-            else (0.2, 50_000, 30_000)
-        )
+        min_confidence, min_duration_us, retrigger_gap_us = (0.2, 50_000, 30_000)
     elif profile in presets:
         min_confidence, min_duration_us, retrigger_gap_us = presets[profile]
     else:
@@ -958,18 +974,31 @@ def _cleaning_config(sequence: NoteSequence | None = None) -> CleanConfig:
     return config
 
 
-def _looks_like_mix(sequence: NoteSequence) -> bool:
-    if not sequence.notes:
-        return False
-    duration_seconds = max(sequence.duration_us / 1_000_000, 1.0)
-    density = len(sequence.notes) / duration_seconds
-    low_confidence = sum(
-        note.confidence is not None and note.confidence < 0.4 for note in sequence.notes
+def _arrangement_config() -> ArrangementConfig:
+    profile = os.environ.get("GLT_ARRANGEMENT", "off").strip().lower()
+    if profile not in {"balanced", "off"}:
+        raise WorkerJobError(
+            "INVALID_ARRANGEMENT_OPTIONS",
+            "arrangement profile must be balanced or off",
+        )
+    try:
+        onset_window_us = int(os.environ.get("GLT_ONSET_WINDOW_US", "150000"))
+        max_voices = int(os.environ.get("GLT_MAX_VOICES", "2"))
+    except ValueError as exc:
+        raise WorkerJobError(
+            "INVALID_ARRANGEMENT_OPTIONS",
+            "arrangement options are invalid",
+        ) from exc
+    config = ArrangementConfig(
+        enabled=profile == "balanced",
+        onset_window_us=onset_window_us,
+        max_voices=max_voices,
     )
-    low_confidence_ratio = low_confidence / len(sequence.notes)
-    polyphony = Counter(note.start_us for note in sequence.notes)
-    max_polyphony = max(polyphony.values(), default=0)
-    return density >= 3.0 or low_confidence_ratio >= 0.2 or max_polyphony >= 4
+    try:
+        config.validate()
+    except ValueError as exc:
+        raise WorkerJobError("INVALID_ARRANGEMENT_OPTIONS", str(exc)) from exc
+    return config
 
 
 class WorkerJobError(RuntimeError):
@@ -1014,6 +1043,8 @@ def _report_warnings(
     timing_fallback: bool,
     quantization_fallbacks: int,
     cleaning_config: CleanConfig,
+    arrangement_config: ArrangementConfig,
+    arrangement_removed: int,
 ) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = [
         {
@@ -1025,13 +1056,29 @@ def _report_warnings(
                 f"min_duration_us={cleaning_config.min_duration_us}, "
                 f"retrigger_gap_us={cleaning_config.retrigger_gap_us}"
             ),
-        }
+        },
+        {
+            "code": "ARRANGEMENT_CONFIG",
+            "message": (
+                "arrangement: "
+                f"profile={'balanced' if arrangement_config.enabled else 'off'}, "
+                f"onset_window_us={arrangement_config.onset_window_us}, "
+                f"max_voices={arrangement_config.max_voices}"
+            ),
+        },
     ]
     if cleaning_removed:
         warnings.append(
             {
                 "code": "CLEANING_LOSS",
                 "message": f"cleaning removed {cleaning_removed} notes",
+            }
+        )
+    if arrangement_removed:
+        warnings.append(
+            {
+                "code": "ARRANGEMENT_LOSS",
+                "message": f"playability arrangement removed {arrangement_removed} notes",
             }
         )
     if timing_fallback:

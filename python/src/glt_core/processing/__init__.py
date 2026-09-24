@@ -1,5 +1,11 @@
 """Note cleaning, timing analysis and mapping stages."""
 
+from glt_core.processing.arrangement import (
+    ArrangementConfig,
+    ArrangementResult,
+    ArrangementStats,
+    arrange_note_sequence,
+)
 from glt_core.processing.clean import (
     CleanConfig,
     CleanResult,
@@ -41,6 +47,9 @@ __all__ = [
     "CleanConfig",
     "CleanResult",
     "CleanStats",
+    "ArrangementConfig",
+    "ArrangementResult",
+    "ArrangementStats",
     "NoteChange",
     "FallbackRegion",
     "QuantizationChange",
@@ -62,6 +71,7 @@ __all__ = [
     "TimingError",
     "analyze_timing",
     "clean_note_sequence",
+    "arrange_note_sequence",
     "default_mapping_layout",
     "map_note_sequence",
     "preview_transpositions",

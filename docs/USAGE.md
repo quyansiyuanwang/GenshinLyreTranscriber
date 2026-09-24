@@ -39,6 +39,9 @@ glt preview RESULT_DIR [--volume 0..1]
 - `--min-confidence 0..1`：覆盖所选档位的最低置信度
 - `--min-duration-ms N`：覆盖所选档位的最短音符时长
 - `--retrigger-gap-ms N`：覆盖重触发/重叠合并间隔
+- `--arrangement balanced|off`：可演奏性编排，默认 `balanced`
+- `--onset-window-ms N`：合并近同时起音的时间窗，默认 `150`
+- `--max-voices N`：每个整理后事件保留的最大同时声部数，默认 `2`
 - `--overwrite`
 - `--json`
 - `--worker PATH`，仅开发或高级诊断使用
@@ -50,13 +53,18 @@ glt preview RESULT_DIR [--volume 0..1]
 `--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
 静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。
 
-清理档位会写入 `CLEANING_CONFIG` 报告告警。`auto` 根据音符密度、低置信比例和最大同时
-发声音数选择 Solo 或 Mix；`solo` 使用 `0.2/50ms`，`mix` 使用 `0.4/100ms`，`strict`
-使用 `0.5/150ms`。显示设置的单项参数可覆盖档位默认值；提高置信度可能牺牲独奏中的弱音。
+清理档位会写入 `CLEANING_CONFIG` 报告告警。`auto` 使用保留候选音的 `0.2/50ms`
+阈值，并把混音降密交给可演奏性编排；`solo` 使用 `0.2/50ms`，`mix` 使用
+`0.4/100ms`，`strict` 使用 `0.5/150ms`。单项参数可覆盖档位默认值；提高置信度可能
+牺牲弱音。
 
-`--timing auto` 比较直拍与三连音候选；证据不足时保留原始起音。`preserve`
-完全不改时间，`straight`/`triplet` 强制使用对应网格。`--bpm` 是显式速度
-覆盖，优先于自动分析。
+可演奏性编排会写入 `ARRANGEMENT_CONFIG`，发生删减时写入 `ARRANGEMENT_LOSS`。默认将
+150ms 内的起音视为同一演奏位置，保留最多两个互补声部；关闭编排会保留更多低置信
+细节，但也更容易生成难以演奏的厚和弦。
+
+`--timing auto` 使用稳定节拍追踪建立局部拍点，再比较十六分直拍与三连音候选；
+证据不足时保留原始起音。`preserve` 完全不改时间，`straight`/`triplet` 强制使用
+对应网格。`--bpm` 是显式速度覆盖，优先于自动分析。
 
 没有传入 `--worker` 时，程序读取 `GLT_WORKER_PATH`，然后查找与主程序相邻的
 `glt-worker` 目录。程序不会通过 shell 拼接输入路径。

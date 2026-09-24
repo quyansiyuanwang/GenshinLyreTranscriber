@@ -47,7 +47,7 @@ def test_preserve_does_not_change_onsets() -> None:
 
 
 def test_low_confidence_and_large_shift_fall_back_per_region() -> None:
-    low_confidence = _sequence((_note(123_000),), confidence=0.1)
+    low_confidence = _sequence((_note(123_000),), confidence=0.01)
     result = quantize_note_sequence(low_confidence)
     assert result.quantized.notes[0].start_us == 123_000
     assert result.fallback_regions[0].reason == "low_confidence"
@@ -87,3 +87,19 @@ def test_quantisation_never_creates_invalid_duration_or_order() -> None:
     assert [note.start_us for note in result.quantized.notes] == sorted(
         note.start_us for note in result.quantized.notes
     )
+
+
+def test_note_near_sequence_end_is_not_snapped_past_duration() -> None:
+    sequence = NoteSequence(
+        duration_us=2_000_000,
+        notes=(Note(60, 1_990_000, 1_999_999, 100, None, 0, 0),),
+        tempo_map=(),
+        beat_grid=(),
+        provenance=Provenance("audio", 0, "test", {}),
+    )
+    sequence.validate()
+    result = quantize_note_sequence(sequence, QuantizationConfig(mode="straight", bpm=400.0))
+    note = result.quantized.notes[0]
+    assert note.start_us == 1_987_500
+    assert note.end_us == 1_997_499
+    assert not result.fallback_regions

@@ -55,8 +55,8 @@ velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复
 清理档位和参数由 Rust CLI/TUI 验证后，通过 worker 子进程环境传给 Python，包括
 `GLT_CLEANING_PROFILE`、`GLT_MIN_CONFIDENCE`、`GLT_MIN_DURATION_US` 和
 `GLT_RETRIGGER_GAP_US`。这些值不改变已冻结的 worker JSONL v1 Schema；worker 会再次校验
-并把实际值写入 `CLEANING_CONFIG` 报告告警。`auto` 在音符密度 >=3/s、低置信比例 >=20%
-或最大同时发声音数 >=4 时选择 Mix，否则选择 Solo。
+并把实际值写入 `CLEANING_CONFIG` 报告告警。`auto` 当前保留 Solo 的候选阈值
+`0.2/50ms`，避免在可演奏性编排之前丢失弱音或和声。
 
 ## 音符清理
 
@@ -66,24 +66,34 @@ velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复
 
 ## 拍点与局部速度
 
-音频使用逐 onset 间隔估计候选拍点和局部 BPM，而不是假定整曲恒定速度。拍点
-写入 `beat_grid`，局部速度写入 `tempo_map`；少于最小拍点数、BPM 越界或置信度
-不足时不伪造 BPM，保留原始时序并发送 `TIMING_FALLBACK` 告警。MIDI 输入保留已有
-tempo map。
+音频使用 `librosa.beat.beat_track` 获取稳定节拍序列，再由相邻拍间隔计算局部 BPM，
+避免把每个密集 onset 误当成拍点。拍点写入 `beat_grid`，局部速度写入 `tempo_map`；
+少于最小拍点数、BPM 越界或置信度不足时不伪造 BPM，保留原始时序并发送
+`TIMING_FALLBACK` 告警。MIDI 输入保留已有 tempo map。
 
 ## 量化
 
-量化在局部拍点上比较直拍四分细分与三连音三分细分。`auto` 只有在候选误差明显
+量化在局部拍点上比较直拍四分细分（十六分音符）与三连音三分细分。`auto` 只有在候选误差明显
 更优时才选择，模糊网格保留原时序；`preserve` 不移动 onset；`straight`/`triplet`
 强制执行指定网格。显式 BPM 和手动拍点优先于自动分析，超过最大位移或低置信
-的单个音符单独回退并记录原因。
+的单个音符单独回退并记录原因。默认最大位移为 100ms，单拍置信阈值 0.05；曲尾附近
+量化会限制结束时间，不能把有效音符起点推到 `duration_us` 之外。
+
+## 可演奏性编排
+
+量化后使用 `GLT_ARRANGEMENT`、`GLT_ONSET_WINDOW_US` 和 `GLT_MAX_VOICES` 配置编排。
+默认 `balanced` 会把 150ms 内的近同时起音归为同一事件，按力度和时值选出首个锚点，
+再优先选择避免同音类与八度重复、音程接近八度的互补声部，最多保留两个音。输出事件
+统一对齐到窗口起点；`cleaned.mid` 仍保留量化候选，`mapped.mid` 与文本谱使用整理后的
+可演奏结果。配置和删减数量分别写入 `ARRANGEMENT_CONFIG`、`ARRANGEMENT_LOSS`。
 
 ## 21 键映射
 
 默认键位顺序为 `ZXCVBNMASDFGHJQWERTYU`，音高显式对应 C3-B5 的 21 个自然音。
-自动移调在 -12..12 半音内评估半音替换、八度折返、同刻键冲突和旋律间隔失真，
-按稳定评分选择；手动移调跳过搜索。半音等距时默认向低音自然音取整，越界按八度
-折返。同一时刻映射到同键的音符会确定性去重并计数。
+自动移调在 -12..12 半音内优先减少半音替换，再评估八度折返、同刻键冲突和旋律
+间隔失真；手动移调跳过搜索。半音等距时默认向低音自然音取整，越界按八度折返。
+这使歌曲的原始调性与参考人工谱更接近，而不是为了少折返整体移动十一个半音。
+同一时刻映射到同键的音符会确定性去重并计数。
 
 人工音高核对可生成顺序听音文件：
 

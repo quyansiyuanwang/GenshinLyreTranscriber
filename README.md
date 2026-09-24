@@ -27,9 +27,10 @@
 - Python 媒体模块可以通过 ffprobe 选择音轨，并用参数数组调用 FFmpeg 提取模型音频。
 - Python JSONL worker 可以完成媒体探测、音频提取、Basic Pitch ONNX 分段转录与 MIDI 导入。
 - 清理阶段可以过滤低置信/短音、稳定去重与重叠合并，并输出 `cleaned.mid` 和损失计数；提供 `auto/solo/mix/strict` 清理档位，并可覆盖置信度、最短时长和重触发间隔。
-- 自动拍点与局部速度分析支持低置信回退，保留原始 onset 时序。
-- 支持 auto/preserve/straight/triplet 可控量化，显式 BPM 具有更高优先级。
-- 支持全曲自动/手动移调、C3-B5 自然音映射、半音替换、八度折返和同刻冲突统计。
+- 使用稳定节拍追踪分析整曲与局部速度；低置信时退回原始 onset，不伪造 BPM。
+- 支持 auto/preserve/straight/triplet 可控量化，直拍网格按十六分音符细分，显式 BPM 具有更高优先级。
+- 默认启用可演奏性编排：合并 150ms 内的近同时起音，并按力度、时值和音程关系保留最多两个互补声部；可通过 `--arrangement off`、`--onset-window-ms` 和 `--max-voices` 调整。
+- 自动移调优先保留音高类别，再使用八度折返进入 C3-B5，避免为了减少折返而整体错移调；仍支持手动移调、半音替换和同刻冲突统计。
 - 提供 -12..12 半音移调候选预览，可在正式映射前查看损失和冲突。
 - 结果目录包含 `source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 和 `report.json`；按需生成 `preview.wav`。
 - 精确事件 JSON 使用整数微秒，冻结 Schema 校验事件顺序与时长；MIDI 起音 round-trip 误差不超过 1ms。

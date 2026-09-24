@@ -6,7 +6,7 @@ import numpy as np
 import soundfile
 
 from glt_core.domain.note_sequence import BeatGridPoint, Note, NoteSequence, Provenance, TempoPoint
-from glt_core.processing.timing import TimingConfig, _peak_pick_greedy, analyze_timing
+from glt_core.processing.timing import TimingConfig, analyze_timing
 
 
 def _note_sequence(click_times: list[float], duration_us: int = 8_000_000) -> NoteSequence:
@@ -68,13 +68,12 @@ def test_silence_falls_back_without_inventing_tempo(tmp_path: pathlib.Path) -> N
     assert analysis.sequence.tempo_map == ()
 
 
-def test_variable_click_track_keeps_local_tempo_changes(tmp_path: pathlib.Path) -> None:
-    click_times: list[float] = []
+def test_tempo_ramp_keeps_local_speed_changes(tmp_path: pathlib.Path) -> None:
+    click_times: list[float] = [0.0]
     time_value = 0.0
-    for bpm in (60.0, 60.0, 120.0, 120.0, 60.0, 60.0):
+    for bpm in np.linspace(70.0, 110.0, 60):
+        time_value += 60.0 / float(bpm)
         click_times.append(time_value)
-        time_value += 60.0 / bpm
-    click_times.append(time_value)
     audio = tmp_path / "variable.wav"
     _write_click_track(audio, click_times, duration=time_value + 1.0)
     analysis = analyze_timing(
@@ -84,7 +83,7 @@ def test_variable_click_track_keeps_local_tempo_changes(tmp_path: pathlib.Path) 
     local_bpms = [point.bpm for point in analysis.sequence.tempo_map]
     assert not analysis.fallback
     assert max(local_bpms) > 100
-    assert min(local_bpms) < 70
+    assert min(local_bpms) < 90
 
 
 def test_midi_tempo_map_is_preserved() -> None:
@@ -101,17 +100,3 @@ def test_midi_tempo_map_is_preserved() -> None:
     assert analysis.sequence == sequence
     assert analysis.sequence.tempo_map == sequence.tempo_map
     assert analysis.sequence.beat_grid == sequence.beat_grid
-
-
-def test_pure_numpy_peak_picker_matches_greedy_wait_semantics() -> None:
-    envelope = np.asarray([1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0])
-    peaks = _peak_pick_greedy(
-        envelope,
-        pre_max=1,
-        post_max=2,
-        pre_avg=1,
-        post_avg=2,
-        delta=0.1,
-        wait=1,
-    )
-    assert peaks.tolist() == [0, 3, 6]

@@ -192,6 +192,68 @@ impl CleaningOptions {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum ArrangementProfile {
+    Balanced,
+    Off,
+}
+
+impl ArrangementProfile {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Balanced => "balanced",
+            Self::Off => "off",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ArrangementOptions {
+    pub profile: ArrangementProfile,
+    pub onset_window_us: u64,
+    pub max_voices: u8,
+}
+
+impl Default for ArrangementOptions {
+    fn default() -> Self {
+        Self {
+            profile: ArrangementProfile::Balanced,
+            onset_window_us: 150_000,
+            max_voices: 2,
+        }
+    }
+}
+
+impl ArrangementOptions {
+    pub(crate) fn validate(self) -> Result<Self, CliError> {
+        if !(1_000..=1_000_000).contains(&self.onset_window_us) {
+            return Err(CliError::InvalidArgument(
+                "onset-window-ms must be in range 1..=1000".to_owned(),
+            ));
+        }
+        if !(1..=21).contains(&self.max_voices) {
+            return Err(CliError::InvalidArgument(
+                "max-voices must be in range 1..=21".to_owned(),
+            ));
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn worker_env(self) -> Vec<(String, String)> {
+        vec![
+            (
+                "GLT_ARRANGEMENT".to_owned(),
+                self.profile.as_str().to_owned(),
+            ),
+            (
+                "GLT_ONSET_WINDOW_US".to_owned(),
+                self.onset_window_us.to_string(),
+            ),
+            ("GLT_MAX_VOICES".to_owned(), self.max_voices.to_string()),
+        ]
+    }
+}
+
 #[derive(Debug, clap::Args)]
 struct TranscribeArgs {
     /// Local audio or video path.
@@ -232,6 +294,15 @@ struct TranscribeArgs {
     /// Cleaning profile: auto, solo, mix or strict.
     #[arg(long, value_enum, default_value = "auto")]
     cleaning_profile: CleaningProfile,
+    /// Playability arrangement: balanced or off.
+    #[arg(long, value_enum, default_value = "balanced")]
+    arrangement: ArrangementProfile,
+    /// Merge onsets separated by at most this many milliseconds.
+    #[arg(long, default_value_t = 150)]
+    onset_window_ms: u64,
+    /// Maximum simultaneous voices kept in one arranged event.
+    #[arg(long, default_value_t = 2)]
+    max_voices: u8,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -271,6 +342,15 @@ struct ConvertMidiArgs {
     /// Cleaning profile: auto, solo, mix or strict.
     #[arg(long, value_enum, default_value = "auto")]
     cleaning_profile: CleaningProfile,
+    /// Playability arrangement: balanced or off.
+    #[arg(long, value_enum, default_value = "balanced")]
+    arrangement: ArrangementProfile,
+    /// Merge onsets separated by at most this many milliseconds.
+    #[arg(long, default_value_t = 150)]
+    onset_window_ms: u64,
+    /// Maximum simultaneous voices kept in one arranged event.
+    #[arg(long, default_value_t = 2)]
+    max_voices: u8,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -452,6 +532,8 @@ fn run_transcribe(args: TranscribeArgs) -> Result<(), CliError> {
         args.min_duration_ms,
         args.retrigger_gap_ms,
     )?;
+    let arrangement =
+        build_arrangement_options(args.arrangement, args.onset_window_ms, args.max_voices)?;
     run_job(
         args.worker,
         args.input,
@@ -459,6 +541,7 @@ fn run_transcribe(args: TranscribeArgs) -> Result<(), CliError> {
         Operation::Transcribe,
         options,
         cleaning,
+        arrangement,
         args.json,
     )
 }
@@ -480,6 +563,8 @@ fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
         args.min_duration_ms,
         args.retrigger_gap_ms,
     )?;
+    let arrangement =
+        build_arrangement_options(args.arrangement, args.onset_window_ms, args.max_voices)?;
     run_job(
         args.worker,
         args.input,
@@ -487,6 +572,7 @@ fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
         Operation::ConvertMidi,
         options,
         cleaning,
+        arrangement,
         args.json,
     )
 }
@@ -568,6 +654,22 @@ pub(crate) fn build_cleaning_options(
     .validate()
 }
 
+pub(crate) fn build_arrangement_options(
+    profile: ArrangementProfile,
+    onset_window_ms: u64,
+    max_voices: u8,
+) -> Result<ArrangementOptions, CliError> {
+    let onset_window_us = onset_window_ms
+        .checked_mul(1_000)
+        .ok_or_else(|| CliError::InvalidArgument("onset-window-ms is out of range".to_owned()))?;
+    ArrangementOptions {
+        profile,
+        onset_window_us,
+        max_voices,
+    }
+    .validate()
+}
+
 fn seconds_to_microseconds(value: Option<f64>, name: &str) -> Result<Option<u64>, CliError> {
     let Some(value) = value else {
         return Ok(None);
@@ -602,6 +704,7 @@ pub(crate) enum JobUpdate {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_job(
     worker_override: Option<PathBuf>,
     input: PathBuf,
@@ -609,6 +712,7 @@ fn run_job(
     operation: Operation,
     options: StartOptions,
     cleaning: CleaningOptions,
+    arrangement: ArrangementOptions,
     json_output: bool,
 ) -> Result<(), CliError> {
     let cancellation = cancellation_flag()?;
@@ -619,6 +723,7 @@ fn run_job(
         operation,
         options,
         cleaning,
+        arrangement,
         cancellation,
         |update| match update {
             JobUpdate::Progress { stage, fraction } => match fraction {
@@ -655,6 +760,7 @@ pub(crate) fn run_job_with_cancel<F>(
     operation: Operation,
     options: StartOptions,
     cleaning: CleaningOptions,
+    arrangement: ArrangementOptions,
     cancellation: Arc<AtomicBool>,
     mut on_update: F,
 ) -> Result<JobOutcome, CliError>
@@ -694,7 +800,9 @@ where
         staging_dir: staging_dir.clone(),
         options,
     };
-    let spec = resolve_worker_spec(worker_override)?.with_env(cleaning.worker_env());
+    let spec = resolve_worker_spec(worker_override)?
+        .with_env(cleaning.worker_env())
+        .with_env(arrangement.worker_env());
     let mut client = WorkerClient::launch(spec, DEFAULT_READY_TIMEOUT)?;
     client.start(job_id.clone(), &request)?;
     let started = Instant::now();

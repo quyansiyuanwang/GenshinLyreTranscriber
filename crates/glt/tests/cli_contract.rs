@@ -230,6 +230,28 @@ fn invalid_cleaning_threshold_is_usage_error() {
 }
 
 #[test]
+fn invalid_arrangement_options_are_usage_errors() {
+    for (argument, value, expected) in [
+        ("--onset-window-ms", "0", "onset-window-ms"),
+        ("--max-voices", "22", "max-voices"),
+    ] {
+        let unique = format!("glt-cli-arrangement-{}", std::process::id());
+        let input = std::env::temp_dir().join(format!("{unique}.wav"));
+        std::fs::write(&input, b"test").unwrap();
+        let output = Command::new(binary())
+            .args(["transcribe"])
+            .arg(&input)
+            .arg("--output")
+            .arg(std::env::temp_dir().join(unique))
+            .args([argument, value])
+            .output()
+            .expect("run invalid arrangement options");
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
+    }
+}
+
+#[test]
 fn preview_reports_missing_audio_without_opening_device() {
     let root = unique_test_dir("preview-missing");
     let _ = std::fs::remove_dir_all(&root);

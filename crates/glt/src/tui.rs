@@ -24,8 +24,9 @@ use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::cli::{
-    CleaningOptions, CleaningProfile, CliError, JobOutcome, JobUpdate, build_cleaning_options,
-    build_job_options, run_job_with_cancel,
+    ArrangementOptions, ArrangementProfile, CleaningOptions, CleaningProfile, CliError, JobOutcome,
+    JobUpdate, build_arrangement_options, build_cleaning_options, build_job_options,
+    run_job_with_cancel,
 };
 use crate::jobs::{Operation, StartOptions, Timing, Transpose};
 use crate::preview::PlaybackService;
@@ -44,7 +45,10 @@ const FIELD_CLEANING_PROFILE: usize = 10;
 const FIELD_MIN_CONFIDENCE: usize = 11;
 const FIELD_MIN_DURATION: usize = 12;
 const FIELD_RETRIGGER_GAP: usize = 13;
-const FIELD_COUNT: usize = 14;
+const FIELD_ARRANGEMENT: usize = 14;
+const FIELD_ONSET_WINDOW: usize = 15;
+const FIELD_MAX_VOICES: usize = 16;
+const FIELD_COUNT: usize = 17;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -144,6 +148,9 @@ impl Default for TuiApp {
             FIELD_OVERWRITE => "false".to_owned(),
             FIELD_CLEANING_PROFILE => "auto".to_owned(),
             FIELD_MIN_CONFIDENCE | FIELD_MIN_DURATION | FIELD_RETRIGGER_GAP => String::new(),
+            FIELD_ARRANGEMENT => "balanced".to_owned(),
+            FIELD_ONSET_WINDOW => "150".to_owned(),
+            FIELD_MAX_VOICES => "2".to_owned(),
             _ => String::new(),
         });
         Self {
@@ -236,6 +243,14 @@ impl TuiApp {
         )
     }
 
+    fn build_arrangement_options(&self) -> Result<ArrangementOptions, CliError> {
+        build_arrangement_options(
+            parse_arrangement_profile(self.field(FIELD_ARRANGEMENT))?,
+            parse_required_u64(self.field(FIELD_ONSET_WINDOW), "onset-window-ms")?,
+            parse_required_u8(self.field(FIELD_MAX_VOICES), "max-voices")?,
+        )
+    }
+
     fn start_job(&mut self) {
         let input = PathBuf::from(self.field(FIELD_INPUT));
         let output = PathBuf::from(self.field(FIELD_OUTPUT));
@@ -251,6 +266,13 @@ impl TuiApp {
             }
         };
         let cleaning = match self.build_clean_options() {
+            Ok(options) => options,
+            Err(error) => {
+                self.message = error.to_string();
+                return;
+            }
+        };
+        let arrangement = match self.build_arrangement_options() {
             Ok(options) => options,
             Err(error) => {
                 self.message = error.to_string();
@@ -276,6 +298,7 @@ impl TuiApp {
                 operation,
                 options,
                 cleaning,
+                arrangement,
                 thread_cancel,
                 |update| {
                     let _ = sender.send(UiJobEvent::Update(update));
@@ -581,6 +604,9 @@ impl TuiApp {
                     || self.focus == FIELD_MIN_CONFIDENCE
                     || self.focus == FIELD_MIN_DURATION
                     || self.focus == FIELD_RETRIGGER_GAP
+                    || self.focus == FIELD_ARRANGEMENT
+                    || self.focus == FIELD_ONSET_WINDOW
+                    || self.focus == FIELD_MAX_VOICES
                 {
                     self.fields[self.focus].pop();
                 }
@@ -592,6 +618,9 @@ impl TuiApp {
                 } else if self.focus == FIELD_CLEANING_PROFILE && character == ' ' {
                     self.fields[self.focus] =
                         next_cleaning_profile(self.field(self.focus)).to_owned();
+                } else if self.focus == FIELD_ARRANGEMENT && character == ' ' {
+                    self.fields[self.focus] =
+                        next_arrangement_profile(self.field(self.focus)).to_owned();
                 } else if self.focus == FIELD_PREVIEW || self.focus == FIELD_OVERWRITE {
                     if character == ' ' {
                         let value = !parse_bool(self.field(self.focus)).unwrap_or(false);
@@ -737,6 +766,9 @@ impl TuiApp {
                     ("min_confidence", FIELD_MIN_CONFIDENCE),
                     ("min_duration_ms", FIELD_MIN_DURATION),
                     ("retrigger_gap_ms", FIELD_RETRIGGER_GAP),
+                    ("arrangement", FIELD_ARRANGEMENT),
+                    ("onset_window_ms", FIELD_ONSET_WINDOW),
+                    ("max_voices", FIELD_MAX_VOICES),
                 ];
                 let lines = labels
                     .iter()
@@ -865,6 +897,23 @@ fn next_cleaning_profile(value: &str) -> &'static str {
     }
 }
 
+fn parse_arrangement_profile(value: &str) -> Result<ArrangementProfile, CliError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "balanced" => Ok(ArrangementProfile::Balanced),
+        "off" => Ok(ArrangementProfile::Off),
+        _ => Err(CliError::InvalidArgument(
+            "arrangement must be balanced or off".to_owned(),
+        )),
+    }
+}
+
+fn next_arrangement_profile(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "balanced" => "off",
+        _ => "balanced",
+    }
+}
+
 fn parse_bool(value: &str) -> Result<bool, CliError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
@@ -905,6 +954,20 @@ fn parse_optional_u64(value: &str, name: &str) -> Result<Option<u64>, CliError> 
         .trim()
         .parse::<u64>()
         .map(Some)
+        .map_err(|_| CliError::InvalidArgument(format!("{name} must be a non-negative integer")))
+}
+
+fn parse_required_u64(value: &str, name: &str) -> Result<u64, CliError> {
+    value
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| CliError::InvalidArgument(format!("{name} must be a non-negative integer")))
+}
+
+fn parse_required_u8(value: &str, name: &str) -> Result<u8, CliError> {
+    value
+        .trim()
+        .parse::<u8>()
         .map_err(|_| CliError::InvalidArgument(format!("{name} must be a non-negative integer")))
 }
 
@@ -1039,11 +1102,18 @@ mod tests {
         app.set_field(FIELD_MIN_CONFIDENCE, "0.55".to_owned());
         app.set_field(FIELD_MIN_DURATION, "125".to_owned());
         app.set_field(FIELD_RETRIGGER_GAP, "40".to_owned());
+        app.set_field(FIELD_ARRANGEMENT, "off".to_owned());
+        app.set_field(FIELD_ONSET_WINDOW, "175".to_owned());
+        app.set_field(FIELD_MAX_VOICES, "3".to_owned());
         let cleaning = app.build_clean_options().unwrap();
         assert_eq!(cleaning.profile, CleaningProfile::Mix);
         assert_eq!(cleaning.min_confidence, Some(0.55));
         assert_eq!(cleaning.min_duration_us, Some(125_000));
         assert_eq!(cleaning.retrigger_gap_us, Some(40_000));
+        let arrangement = app.build_arrangement_options().unwrap();
+        assert_eq!(arrangement.profile, ArrangementProfile::Off);
+        assert_eq!(arrangement.onset_window_us, 175_000);
+        assert_eq!(arrangement.max_voices, 3);
         let options = app.build_options().unwrap();
         assert_eq!(options.timing, Some(Timing::Straight));
         assert_eq!(options.bpm, Some(120.0));
