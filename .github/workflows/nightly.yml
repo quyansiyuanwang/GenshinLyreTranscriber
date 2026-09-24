@@ -76,6 +76,30 @@ jobs:
       - name: Build nightly packages
         run: ./scripts/package_release.ps1 -AssetPrefix glt-nightly
 
+      - name: Move fixed nightly tag
+        shell: pwsh
+        run: |
+          $sha = "${{ steps.revision.outputs.sha }}"
+          git tag -f nightly $sha
+          $remote = git ls-remote --tags origin refs/tags/nightly
+          if ($LASTEXITCODE -ne 0) { throw 'cannot inspect remote nightly tag' }
+          if ($remote) {
+            $old = $remote.Split()[0]
+            git push --force-with-lease="refs/tags/nightly:$old" origin refs/tags/nightly
+          } else {
+            git push origin refs/tags/nightly
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'cannot update remote nightly tag' }
+
+      - name: Remove legacy nightly assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          foreach ($name in @('glt-nightly-windows-x64.zip', 'glt-nightly-windows-x64.sha256')) {
+            gh release delete-asset nightly $name --yes 2>$null
+          }
+
       - name: Upload nightly diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -108,3 +132,25 @@ jobs:
             artifacts/release/glt-nightly-gui-windows-x64.zip
             artifacts/release/glt-nightly-cli-tui-windows-x64.zip
             artifacts/release/glt-nightly-SHA256SUMS
+
+      - name: Verify nightly release contract
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $release = gh release view nightly --json tagName,isPrerelease,targetCommitish,assets | ConvertFrom-Json
+          if ($release.tagName -ne 'nightly') { throw 'nightly tag name mismatch' }
+          if (-not $release.isPrerelease) { throw 'nightly release must be a pre-release' }
+          if ($release.targetCommitish -ne '${{ steps.revision.outputs.sha }}') { throw 'nightly target commit mismatch' }
+          $expected = @(
+            'glt-nightly-gui-windows-x64-setup.exe',
+            'glt-nightly-gui-windows-x64.zip',
+            'glt-nightly-cli-tui-windows-x64.zip',
+            'glt-nightly-SHA256SUMS'
+          )
+          $actual = @($release.assets | ForEach-Object { $_.name })
+          foreach ($name in $expected) {
+            if ($actual -notcontains $name) { throw "nightly asset is missing: $name" }
+          }
+          $tagSha = (git ls-remote --tags origin refs/tags/nightly).Split()[0]
+          if ($tagSha -ne '${{ steps.revision.outputs.sha }}') { throw "nightly tag points to $tagSha" }

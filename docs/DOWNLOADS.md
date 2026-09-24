@@ -11,7 +11,8 @@
 - 校验清单：`glt-nightly-SHA256SUMS`
 
 每天定时构建或手动触发成功后，workflow 会创建 `nightly` tag（如果尚不存在）并更新同名
-Pre-release 的资产。稳定版本仍使用独立的 `v*` tag，不会自动创建。
+Pre-release 的资产；固定 `nightly` tag 会以 lease 保护的强制更新移动到对应成功构建的提交。
+稳定版本仍使用独立的 `v*` tag，不会自动创建。
 
 ## 从 Releases 下载
 
