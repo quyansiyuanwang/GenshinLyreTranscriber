@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../artifacts/worker/glt-worker": "glt-worker"
+    }
+  }
+}

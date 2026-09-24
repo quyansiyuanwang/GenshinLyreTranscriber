@@ -36,7 +36,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Rust release build failed with exit code $LASTEXITCODE"
     }
-    pnpm --dir crates/glt-gui tauri build
+    pnpm --dir crates/glt-gui tauri build --config src-tauri/tauri.bundle.conf.json
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri bundle build failed with exit code $LASTEXITCODE"
     }
