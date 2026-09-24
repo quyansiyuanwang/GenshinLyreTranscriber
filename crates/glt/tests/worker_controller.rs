@@ -46,6 +46,12 @@ fn launch(mode: &str) -> WorkerClient {
     WorkerClient::launch(mock_worker(mode), Duration::from_secs(2)).expect("worker ready")
 }
 
+fn test_staging(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("glt-controller-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    path
+}
+
 #[test]
 fn receives_progress_warning_and_result() {
     let staging = std::env::temp_dir().join("glt controller normal");
@@ -64,14 +70,14 @@ fn receives_progress_warning_and_result() {
         panic!("expected result");
     };
     assert_eq!(result.output_dir, staging);
-    assert_eq!(result.artifacts.len(), 1);
+    assert_eq!(result.artifacts.len(), 2);
 }
 
 #[test]
 fn rejects_wrong_job() {
     let mut client = launch("wrong-job");
     client
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("wrong-job")))
         .unwrap();
     let error = client.recv_event(Duration::from_secs(2)).unwrap_err();
     assert!(matches!(
@@ -87,7 +93,7 @@ fn rejects_wrong_job() {
 fn rejects_long_line_and_invalid_json() {
     let mut long_line = launch("long-line");
     long_line
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("long-line")))
         .unwrap();
     assert!(matches!(
         long_line.recv_event(Duration::from_secs(2)).unwrap_err(),
@@ -99,7 +105,7 @@ fn rejects_long_line_and_invalid_json() {
 
     let mut invalid_json = launch("invalid-json");
     invalid_json
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("invalid-json")))
         .unwrap();
     assert!(matches!(
         invalid_json.recv_event(Duration::from_secs(2)).unwrap_err(),
@@ -111,7 +117,10 @@ fn rejects_long_line_and_invalid_json() {
 fn rejects_duplicate_terminal_and_crash() {
     let mut duplicate = launch("duplicate-terminal");
     duplicate
-        .start("local-test-job", &request(Path::new("staging")))
+        .start(
+            "local-test-job",
+            &request(&test_staging("duplicate-terminal")),
+        )
         .unwrap();
     assert!(matches!(
         duplicate.recv_event(Duration::from_secs(2)).unwrap(),
@@ -127,7 +136,7 @@ fn rejects_duplicate_terminal_and_crash() {
 
     let mut crash = launch("crash");
     crash
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("crash")))
         .unwrap();
     assert!(matches!(
         crash.recv_event(Duration::from_secs(2)).unwrap_err(),
@@ -136,7 +145,7 @@ fn rejects_duplicate_terminal_and_crash() {
 
     let mut stderr_flood = launch("stderr-flood");
     stderr_flood
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("stderr-flood")))
         .unwrap();
     assert!(matches!(
         stderr_flood.recv_event(Duration::from_secs(2)).unwrap_err(),
@@ -149,7 +158,10 @@ fn rejects_duplicate_terminal_and_crash() {
 fn rejects_invalid_progress_and_unsafe_path() {
     let mut progress = launch("invalid-progress");
     progress
-        .start("local-test-job", &request(Path::new("staging")))
+        .start(
+            "local-test-job",
+            &request(&test_staging("invalid-progress")),
+        )
         .unwrap();
     assert!(matches!(
         progress.recv_event(Duration::from_secs(2)).unwrap_err(),
@@ -160,7 +172,7 @@ fn rejects_invalid_progress_and_unsafe_path() {
     ));
 
     let mut path = launch("unsafe-path");
-    path.start("local-test-job", &request(Path::new("staging")))
+    path.start("local-test-job", &request(&test_staging("unsafe-path")))
         .unwrap();
     assert!(matches!(
         path.recv_event(Duration::from_secs(2)).unwrap_err(),
@@ -175,7 +187,7 @@ fn rejects_invalid_progress_and_unsafe_path() {
 fn cancels_worker_and_forced_cleanup() {
     let mut cooperative = launch("cancel");
     cooperative
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("cancel")))
         .unwrap();
     assert!(matches!(
         cooperative.recv_event(Duration::from_secs(2)).unwrap(),
@@ -189,7 +201,7 @@ fn cancels_worker_and_forced_cleanup() {
 
     let mut stubborn = launch("cancel-ignore");
     stubborn
-        .start("local-test-job", &request(Path::new("staging")))
+        .start("local-test-job", &request(&test_staging("cancel-ignore")))
         .unwrap();
     assert!(matches!(
         stubborn.recv_event(Duration::from_secs(2)).unwrap(),
@@ -208,7 +220,7 @@ fn cancels_worker_and_forced_cleanup() {
         Duration::from_secs(2),
     )
     .unwrap();
-    tree.start("local-test-job", &request(Path::new("staging")))
+    tree.start("local-test-job", &request(&test_staging("cancel-tree")))
         .unwrap();
     assert!(matches!(
         tree.recv_event(Duration::from_secs(2)).unwrap(),

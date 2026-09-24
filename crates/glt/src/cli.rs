@@ -1,6 +1,7 @@
 //! Command-line parsing and worker job lifecycle.
 
 use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,11 +9,13 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::jobs::{
-    DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, Operation, StartOptions,
-    StartRequest, Timing, Transpose, WorkerClient, WorkerError, WorkerEvent, WorkerSpec,
+    DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, Operation,
+    ResultPayload, StartOptions, StartRequest, Timing, Transpose, WorkerClient, WorkerError,
+    WorkerEvent, WorkerSpec,
 };
 
 const EXIT_USAGE: i32 = 2;
@@ -366,6 +369,7 @@ fn run_job(
     options: StartOptions,
     json_output: bool,
 ) -> Result<(), CliError> {
+    let input = absolute_path(&input)?;
     if !input.is_file() {
         return Err(CliError::InvalidArgument(format!(
             "input file does not exist: {}",
@@ -373,12 +377,29 @@ fn run_job(
         )));
     }
     let job_id = generate_job_id();
-    let staging_dir = output.join(format!(".glt-job-{job_id}"));
-    std::fs::create_dir_all(&staging_dir)?;
+    let output = absolute_path(&output)?;
+    let overwrite = options.overwrite.unwrap_or(false);
+    if output.exists() && !overwrite {
+        return Err(CliError::Output(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("output already exists: {}", output.display()),
+        )));
+    }
+    let output_parent = output.parent().ok_or_else(|| {
+        CliError::InvalidArgument("output must have a parent directory".to_owned())
+    })?;
+    fs::create_dir_all(output_parent)?;
+    if output.exists() && overwrite && input.starts_with(&output) {
+        return Err(CliError::InvalidArgument(
+            "input file must not be inside an output directory being overwritten".to_owned(),
+        ));
+    }
+    let staging_dir = output_parent.join(format!(".glt-job-{job_id}"));
+    fs::create_dir(&staging_dir)?;
     let request = StartRequest {
         operation,
         input_path: input,
-        staging_dir,
+        staging_dir: staging_dir.clone(),
         options,
     };
     let spec = resolve_worker_spec(worker_override)?;
@@ -405,6 +426,7 @@ fn run_job(
                 eprintln!("warning [{code}]: {message}");
             }
             Ok(WorkerEvent::Result(result)) => {
+                let result = publish_result(&staging_dir, &output, overwrite, result)?;
                 if json_output {
                     println!(
                         "{}",
@@ -431,6 +453,133 @@ fn run_job(
             Err(error) => return Err(error.into()),
         }
     }
+}
+
+fn absolute_path(path: &std::path::Path) -> Result<PathBuf, CliError> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn publish_result(
+    staging: &std::path::Path,
+    output: &std::path::Path,
+    overwrite: bool,
+    mut result: ResultPayload,
+) -> Result<ResultPayload, CliError> {
+    if !staging.is_dir() {
+        return Err(CliError::Output(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("worker staging directory is missing: {}", staging.display()),
+        )));
+    }
+    let report_relative = result.report_path.to_str().ok_or_else(|| {
+        CliError::InvalidArgument("worker report path must be valid UTF-8".to_owned())
+    })?;
+    let report_source = crate::jobs::safe_join(staging, report_relative)?;
+    if !report_source.is_file()
+        || !result
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "report" && artifact.relative_path == report_relative)
+    {
+        return Err(CliError::Output(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "worker report artifact is missing: {}",
+                report_source.display()
+            ),
+        )));
+    }
+    for artifact in &result.artifacts {
+        let source = crate::jobs::safe_join(staging, &artifact.relative_path)?;
+        if !source.is_file() {
+            return Err(CliError::Output(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("worker artifact is missing: {}", source.display()),
+            )));
+        }
+        let metadata = source.metadata()?;
+        if metadata.len() != artifact.size_bytes {
+            return Err(CliError::Output(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("worker artifact size mismatch: {}", source.display()),
+            )));
+        }
+        if sha256_file(&source)? != artifact.sha256 {
+            return Err(CliError::Output(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("worker artifact hash mismatch: {}", source.display()),
+            )));
+        }
+    }
+
+    if !output.exists() {
+        fs::rename(staging, output)?;
+        result.output_dir = output.to_path_buf();
+        return Ok(result);
+    }
+    if !overwrite {
+        return Err(CliError::Output(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("output already exists: {}", output.display()),
+        )));
+    }
+
+    replace_directory(staging, output)?;
+    result.output_dir = output.to_path_buf();
+    Ok(result)
+}
+
+fn replace_directory(staging: &std::path::Path, output: &std::path::Path) -> Result<(), CliError> {
+    if !output.is_dir() {
+        return Err(CliError::Output(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("output path is not a directory: {}", output.display()),
+        )));
+    }
+    let parent = output.parent().ok_or_else(|| {
+        CliError::InvalidArgument("output must have a parent directory".to_owned())
+    })?;
+    let backup = parent.join(format!(
+        ".glt-backup-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    if backup.exists() {
+        return Err(CliError::Output(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("backup path already exists: {}", backup.display()),
+        )));
+    }
+    fs::rename(output, &backup)?;
+    if let Err(error) = fs::rename(staging, output) {
+        if let Err(restore_error) = fs::rename(&backup, output) {
+            return Err(CliError::Output(std::io::Error::other(format!(
+                "failed to publish output ({error}) and failed to restore previous output ({restore_error})"
+            ))));
+        }
+        return Err(CliError::Output(error));
+    }
+    if let Err(error) = fs::remove_dir_all(&backup) {
+        eprintln!(
+            "warning: published output but could not remove backup {}: {error}",
+            backup.display()
+        );
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &std::path::Path) -> Result<String, CliError> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn resolve_worker_spec(override_path: Option<PathBuf>) -> Result<WorkerSpec, CliError> {

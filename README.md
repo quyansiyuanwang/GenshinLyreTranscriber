@@ -25,13 +25,16 @@
 - CLI 已定义 `transcribe`、`convert-midi`、`preview` 与 `tui` 命令及退出码。
 - `glt_core` Python 包可以安装并运行最小测试。
 - Python 媒体模块可以通过 ffprobe 选择音轨，并用参数数组调用 FFmpeg 提取模型音频。
-- Python JSONL worker 可以完成媒体探测、音频提取、Basic Pitch ONNX 分段转录、MIDI 导入和 source MIDI 导出。
+- Python JSONL worker 可以完成媒体探测、音频提取、Basic Pitch ONNX 分段转录与 MIDI 导入。
 - 清理阶段可以过滤低置信/短音、稳定去重与重叠合并，并输出 `cleaned.mid` 和损失计数。
 - 自动拍点与局部速度分析支持低置信回退，保留原始 onset 时序。
 - 支持 auto/preserve/straight/triplet 可控量化，显式 BPM 具有更高优先级。
 - 支持全曲自动/手动移调、C3-B5 自然音映射、半音替换、八度折返和同刻冲突统计。
 - 提供 -12..12 半音移调候选预览，可在正式映射前查看损失和冲突。
-- 精确事件 JSON、可读谱和兼容谱导出仍待实现。
+- 结果目录包含 `source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json` 和 `report.json`。
+- 精确事件 JSON 使用整数微秒，冻结 Schema 校验事件顺序与时长；MIDI 起音 round-trip 误差不超过 1ms。
+- worker 先写隐藏 staging，Rust 校验产物大小和 SHA256 后再发布；已有结果必须显式 `--overwrite`。
+- 可读文本谱和旧播放器兼容谱仍待实现。
 
 CLI 命令行为、worker 发现规则和退出码见 [docs/USAGE.md](docs/USAGE.md)。
 
@@ -62,8 +65,9 @@ cargo run --locked -p glt
 
 ## 文档
 
-用户使用、架构、格式与发布文档将在对应功能通过验收后加入 `docs/`。本 README
-不会把计划能力描述为已经实现的功能。
+命令、参数、输出和退出码见 [docs/USAGE.md](docs/USAGE.md)，构建与协议约束见
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) 和 [schemas/README.md](schemas/README.md)。
+本 README 不会把计划能力描述为已经实现的功能。
 
 ## 许可证
 

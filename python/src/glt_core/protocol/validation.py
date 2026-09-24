@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import sys
 from functools import cache
 from typing import Any
 
@@ -61,6 +62,8 @@ def _schema_directory() -> pathlib.Path:
     configured = os.environ.get("GLT_SCHEMA_DIR")
     if configured:
         return pathlib.Path(configured).expanduser().resolve()
+    if getattr(sys, "frozen", False):
+        return pathlib.Path(getattr(sys, "_MEIPASS", "")) / "glt_core" / "schemas"
     return pathlib.Path(__file__).resolve().parents[4] / "schemas"
 
 

@@ -18,7 +18,11 @@ from glt_core.domain.midi_import import (
     copy_source_midi,
     import_midi,
 )
-from glt_core.export import write_note_sequence_midi
+from glt_core.export import (
+    build_events_document,
+    write_events_document,
+    write_note_sequence_midi,
+)
 from glt_core.media import (
     MediaError,
     build_extraction_plan,
@@ -36,6 +40,7 @@ from glt_core.processing import (
     map_note_sequence,
     quantize_note_sequence,
 )
+from glt_core.protocol import validate_report
 from glt_core.transcription import (
     BasicPitchRuntime,
     TranscriptionCancelled,
@@ -51,6 +56,7 @@ MODEL_VERSION = "basic-pitch-0.4.0/nmp.onnx"
 SOURCE_MIDI_NAME = "source.mid"
 CLEANED_MIDI_NAME = "cleaned.mid"
 MAPPED_MIDI_NAME = "mapped.mid"
+EVENTS_NAME = "score.events.json"
 REPORT_NAME = "report.json"
 DECODED_AUDIO_NAME = "source.decoded.wav"
 
@@ -360,6 +366,18 @@ class WorkerServer:
                 overwrite=True,
             )
             mapped_hash = sha256_file(mapped_midi)
+            events_document = build_events_document(
+                mapping.mapped,
+                mapping.events,
+                generator=f"GenshinLyreTranscriber {__version__}",
+                mapping_profile=str(mapping.mapped.provenance.parameters["mapping"]["profile"]),
+            )
+            events_path = write_events_document(
+                events_document,
+                staging_dir / EVENTS_NAME,
+                overwrite=True,
+            )
+            events_hash = sha256_file(events_path)
             cleaning_removed = (
                 cleaning.stats.dropped_low_confidence
                 + cleaning.stats.dropped_short
@@ -418,8 +436,15 @@ class WorkerServer:
                         "sha256": mapped_hash,
                         "size_bytes": mapped_midi.stat().st_size,
                     },
+                    {
+                        "kind": "events",
+                        "relative_path": EVENTS_NAME,
+                        "sha256": events_hash,
+                        "size_bytes": events_path.stat().st_size,
+                    },
                 ],
             }
+            validate_report(report)
             report_path = staging_dir / REPORT_NAME
             report_path.write_text(
                 json.dumps(report, ensure_ascii=False, separators=(",", ":")) + "\n",
@@ -443,6 +468,12 @@ class WorkerServer:
                     "relative_path": MAPPED_MIDI_NAME,
                     "sha256": mapped_hash,
                     "size_bytes": mapped_midi.stat().st_size,
+                },
+                {
+                    "kind": "events",
+                    "relative_path": EVENTS_NAME,
+                    "sha256": events_hash,
+                    "size_bytes": events_path.stat().st_size,
                 },
                 {
                     "kind": "report",
@@ -506,6 +537,18 @@ class WorkerServer:
             overwrite=True,
         )
         mapped_hash = sha256_file(mapped_midi)
+        events_document = build_events_document(
+            mapping.mapped,
+            mapping.events,
+            generator=f"GenshinLyreTranscriber {__version__}",
+            mapping_profile=str(mapping.mapped.provenance.parameters["mapping"]["profile"]),
+        )
+        events_path = write_events_document(
+            events_document,
+            staging_dir / EVENTS_NAME,
+            overwrite=True,
+        )
+        events_hash = sha256_file(events_path)
         cleaning_removed = (
             cleaning.stats.dropped_low_confidence
             + cleaning.stats.dropped_short
@@ -578,8 +621,15 @@ class WorkerServer:
                     "sha256": mapped_hash,
                     "size_bytes": mapped_midi.stat().st_size,
                 },
+                {
+                    "kind": "events",
+                    "relative_path": EVENTS_NAME,
+                    "sha256": events_hash,
+                    "size_bytes": events_path.stat().st_size,
+                },
             ],
         }
+        validate_report(report)
         report_path = staging_dir / REPORT_NAME
         report_path.write_text(
             json.dumps(report, ensure_ascii=False, separators=(",", ":")) + "\n",
@@ -603,6 +653,12 @@ class WorkerServer:
                 "relative_path": MAPPED_MIDI_NAME,
                 "sha256": mapped_hash,
                 "size_bytes": mapped_midi.stat().st_size,
+            },
+            {
+                "kind": "events",
+                "relative_path": EVENTS_NAME,
+                "sha256": events_hash,
+                "size_bytes": events_path.stat().st_size,
             },
             {
                 "kind": "report",

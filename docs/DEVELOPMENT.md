@@ -30,7 +30,7 @@ Basic Pitch 的元数据在 Windows 和 Python 3.11 以上会尝试安装旧版 
 | 热进程模型加载 | 1.61 秒 |
 | 单文件推理 | 1.96-2.14 秒 |
 | 峰值工作集 | 191.73-192.99 MiB |
-| worker onedir 大小 | 292.77 MiB |
+| worker onedir 大小 | 293.74 MiB |
 | FFmpeg `bin` 目录大小 | 175.20 MiB |
 
 模型加载时间包含 ONNX Runtime 初始化；不同机器的 CPU 和磁盘速度会影响结果。
@@ -95,6 +95,18 @@ uv run --directory python python -m glt_core.tools.mapping_preview cleaned.mid -
 预览包含评分、移调、音符数、半音替换、八度折返、同刻冲突和唯一键数；
 `auto` 选择项带 `selected` 标记。
 
+## 精确导出与原子发布
+
+`score.events.json` 由同一组 `MappedEvent` 生成，同刻按键在写出前确定性合并并按整数
+微秒排序；写出和重新读取都执行冻结的 events Schema 与语义校验。`cleaned.mid` 和
+`mapped.mid` 使用 1000 ticks/四分音符的导出分辨率，回归测试要求起音 round-trip
+误差不超过 1ms。报告生成后执行 report Schema 和相对路径校验。
+
+worker 的所有产物先写入输出目录同级的隐藏 staging。`result` 到达后，Rust 根据报告
+校验每个文件的存在性、字节数和 SHA256。首次发布使用目录重命名；覆盖已有结果时先把
+旧目录移到隐藏备份，再发布完整 staging，失败会尝试恢复旧目录。源输入哈希在回归测试
+和真实 worker 端到端中检查，覆盖路径包含源输入时直接拒绝。
+
 ## 模型资源
 
 模型从固定的 Basic Pitch 提交下载，构建前必须运行：
@@ -103,8 +115,9 @@ uv run --directory python python -m glt_core.tools.mapping_preview cleaned.mid -
 uv run --project python python scripts/fetch_resources.py basic-pitch
 ```
 
-脚本会校验文件大小与 SHA256，模型不会提交到 Git。PyInstaller 只将
-`nmp.onnx` 放入 worker 资源目录，不携带 TensorFlow 或 CoreML 模型。
+脚本会校验文件大小与 SHA256，模型不会提交到 Git。PyInstaller 将 `nmp.onnx` 与
+`schemas/*.schema.json` 放入 worker 资源目录，运行时不依赖开发仓库路径，也不携带
+TensorFlow 或 CoreML 模型。
 
 ## 本地检查
 

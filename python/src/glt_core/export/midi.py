@@ -23,7 +23,7 @@ def write_note_sequence_midi(
     output.parent.mkdir(parents=True, exist_ok=True)
     partial = output.with_name(f".{output.name}.partial")
     partial.unlink(missing_ok=True)
-    midi = pretty_midi.PrettyMIDI(initial_tempo=120.0)
+    midi = pretty_midi.PrettyMIDI(initial_tempo=120.0, resolution=1000)
     instrument = pretty_midi.Instrument(program=0, name="GenshinLyreTranscriber")
     midi.instruments.append(instrument)
     for note in sequence.notes:

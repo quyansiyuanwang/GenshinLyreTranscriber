@@ -8,7 +8,15 @@ if not model_path.is_file():
         "Missing pinned model. Run scripts/fetch_resources.py basic-pitch before building."
     )
 
-datas = [(str(model_path), "glt_core/resources/models/basic_pitch")]
+schema_dir = project_dir.parent / "schemas"
+schema_files = sorted(schema_dir.glob("*.schema.json"))
+if len(schema_files) != 4:
+    raise SystemExit(f"Expected 4 protocol schemas, found {len(schema_files)}")
+
+datas = [
+    (str(model_path), "glt_core/resources/models/basic_pitch"),
+    *[(str(schema), "glt_core/schemas") for schema in schema_files],
+]
 
 a = Analysis(
     [str(source_dir / "glt_core/worker.py")],

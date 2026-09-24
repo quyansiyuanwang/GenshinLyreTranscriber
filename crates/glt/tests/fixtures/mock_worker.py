@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import pathlib
 import subprocess
 import sys
 import time
@@ -24,16 +26,40 @@ def envelope(kind: str, payload: dict[str, object], *, ready: bool = False) -> d
 
 
 def result_payload(staging_dir: str) -> dict[str, object]:
+    relative_path = "missing.events.json" if mode == "missing-artifact" else "score.events.json"
+    artifact = pathlib.Path(staging_dir) / relative_path
+    if mode != "missing-artifact":
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            '{"events":[],"format_version":1,"time_unit":"us","duration_us":0}\n',
+            encoding="utf-8",
+        )
+    data = artifact.read_bytes() if artifact.is_file() else b""
+    sha256 = hashlib.sha256(data).hexdigest()
+    size_bytes = len(data)
+    if mode == "bad-hash":
+        sha256 = "0" * 64
+    if mode == "bad-size":
+        size_bytes += 1
+    report = pathlib.Path(staging_dir) / "report.json"
+    report.write_text('{"schema_version":1}\n', encoding="utf-8")
+    report_data = report.read_bytes()
     return {
         "output_dir": staging_dir,
         "report_path": "report.json",
         "artifacts": [
             {
                 "kind": "events",
-                "relative_path": "score.events.json",
-                "sha256": "a" * 64,
-                "size_bytes": 123,
-            }
+                "relative_path": relative_path,
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+            },
+            {
+                "kind": "report",
+                "relative_path": "report.json",
+                "sha256": hashlib.sha256(report_data).hexdigest(),
+                "size_bytes": len(report_data),
+            },
         ],
     }
 

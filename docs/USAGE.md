@@ -1,8 +1,9 @@
 # 命令行使用
 
 当前 Rust 前端已提供命令解析、worker 启动、JSONL 状态处理、取消和退出码。正式
-worker 已支持从本地音频/视频转录，或导入 MIDI，并生成 `source.mid` 与基础 `report.json`；
-清理、节奏分析、琴键映射、完整报告和三类谱导出仍在后续模块中实现。
+worker 已支持从本地音频/视频转录或导入 MIDI，并输出 `source.mid`、`cleaned.mid`、
+`mapped.mid`、`score.events.json` 与 `report.json`。可读谱和旧播放器兼容谱仍在后续
+模块中实现。
 
 ```powershell
 glt --help
@@ -44,6 +45,19 @@ uv run --directory python python -m glt_core.tools.mapping_preview output/cleane
 
 ## 输出与退出码
 
+成功结果的核心文件如下：
+
+- `source.mid`：音频转录的原始结果；MIDI 输入时为逐字节来源副本。
+- `cleaned.mid`：清理和所选用时序策略后的 MIDI。
+- `mapped.mid`：映射到 21 键后的 MIDI。
+- `score.events.json`：按整数微秒记录映射起音和按键，同一时刻只保留一个和弦事件。
+- `report.json`：版本、输入哈希、参数、损失统计以及每个产物的 SHA256 和字节数。
+
+worker 只写输出目录同级的隐藏 staging。Rust 会验证已声明产物存在且大小、SHA256
+完全匹配；首次成功时整目录发布。已有输出默认失败并返回 5，只有显式 `--overwrite`
+才会整目录替换，不会把新旧产物混合。输入文件不会被修改；输入位于待覆盖输出目录
+内时操作会被拒绝。
+
 进度和警告写入 stderr；`--json` 模式下 stdout 只输出一个 JSON 对象。普通模式
 stdout 输出结果目录与报告摘要。
 
@@ -57,4 +71,3 @@ stdout 输出结果目录与报告摘要。
 | 130 | 用户取消 |
 
 Ctrl+C 会发送 `cancel`，等待最多 5 秒；worker 未退出时关闭输入并结束其进程树。
-实际转谱输入、质量与输出说明将在对应处理模块完成后补充。
