@@ -35,9 +35,10 @@ glt preview RESULT_DIR [--volume 0..1]
 - `--audio-track N`
 - `--start-seconds SECONDS`、`--end-seconds SECONDS`
 - `--preview-wav`：按映射起音生成自合成轻量试听 WAV
-- `--min-confidence 0..1`：最低 Basic Pitch 音符置信度，默认 `0.2`
-- `--min-duration-ms N`：最短音符时长，默认 `50`
-- `--retrigger-gap-ms N`：重触发/重叠合并间隔，默认 `30`
+- `--cleaning-profile auto|solo|mix|strict`：自动或固定清理档位，默认 `auto`
+- `--min-confidence 0..1`：覆盖所选档位的最低置信度
+- `--min-duration-ms N`：覆盖所选档位的最短音符时长
+- `--retrigger-gap-ms N`：覆盖重触发/重叠合并间隔
 - `--overwrite`
 - `--json`
 - `--worker PATH`，仅开发或高级诊断使用
@@ -49,9 +50,9 @@ glt preview RESULT_DIR [--volume 0..1]
 `--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
 静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。
 
-清理阈值可由用户显式调整，并会写入 `CLEANING_CONFIG` 警告记录。完整混音建议先尝试
-`--min-confidence 0.4 --min-duration-ms 100`，再用 `--min-confidence 0.5 --min-duration-ms 150`
-评估更严格的结果；提高阈值可能牺牲独奏中的弱音和装饰音。
+清理档位会写入 `CLEANING_CONFIG` 报告告警。`auto` 根据音符密度、低置信比例和最大同时
+发声音数选择 Solo 或 Mix；`solo` 使用 `0.2/50ms`，`mix` 使用 `0.4/100ms`，`strict`
+使用 `0.5/150ms`。显示设置的单项参数可覆盖档位默认值；提高置信度可能牺牲独奏中的弱音。
 
 `--timing auto` 比较直拍与三连音候选；证据不足时保留原始起音。`preserve`
 完全不改时间，`straight`/`triplet` 强制使用对应网格。`--bpm` 是显式速度

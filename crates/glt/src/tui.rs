@@ -24,8 +24,8 @@ use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::cli::{
-    CleaningOptions, CliError, JobOutcome, JobUpdate, build_cleaning_options, build_job_options,
-    run_job_with_cancel,
+    CleaningOptions, CleaningProfile, CliError, JobOutcome, JobUpdate, build_cleaning_options,
+    build_job_options, run_job_with_cancel,
 };
 use crate::jobs::{Operation, StartOptions, Timing, Transpose};
 use crate::preview::PlaybackService;
@@ -40,10 +40,11 @@ const FIELD_START: usize = 6;
 const FIELD_END: usize = 7;
 const FIELD_PREVIEW: usize = 8;
 const FIELD_OVERWRITE: usize = 9;
-const FIELD_MIN_CONFIDENCE: usize = 10;
-const FIELD_MIN_DURATION: usize = 11;
-const FIELD_RETRIGGER_GAP: usize = 12;
-const FIELD_COUNT: usize = 13;
+const FIELD_CLEANING_PROFILE: usize = 10;
+const FIELD_MIN_CONFIDENCE: usize = 11;
+const FIELD_MIN_DURATION: usize = 12;
+const FIELD_RETRIGGER_GAP: usize = 13;
+const FIELD_COUNT: usize = 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
@@ -141,9 +142,8 @@ impl Default for TuiApp {
             FIELD_TRANSPOSE => "auto".to_owned(),
             FIELD_PREVIEW => "true".to_owned(),
             FIELD_OVERWRITE => "false".to_owned(),
-            FIELD_MIN_CONFIDENCE => "0.2".to_owned(),
-            FIELD_MIN_DURATION => "50".to_owned(),
-            FIELD_RETRIGGER_GAP => "30".to_owned(),
+            FIELD_CLEANING_PROFILE => "auto".to_owned(),
+            FIELD_MIN_CONFIDENCE | FIELD_MIN_DURATION | FIELD_RETRIGGER_GAP => String::new(),
             _ => String::new(),
         });
         Self {
@@ -229,6 +229,7 @@ impl TuiApp {
 
     fn build_clean_options(&self) -> Result<CleaningOptions, CliError> {
         build_cleaning_options(
+            parse_cleaning_profile(self.field(FIELD_CLEANING_PROFILE))?,
             parse_optional_f64(self.field(FIELD_MIN_CONFIDENCE), "min-confidence")?,
             parse_optional_u64(self.field(FIELD_MIN_DURATION), "min-duration-ms")?,
             parse_optional_u64(self.field(FIELD_RETRIGGER_GAP), "retrigger-gap-ms")?,
@@ -576,6 +577,7 @@ impl TuiApp {
                     || self.focus == FIELD_TRACK
                     || self.focus == FIELD_START
                     || self.focus == FIELD_END
+                    || self.focus == FIELD_CLEANING_PROFILE
                     || self.focus == FIELD_MIN_CONFIDENCE
                     || self.focus == FIELD_MIN_DURATION
                     || self.focus == FIELD_RETRIGGER_GAP
@@ -587,6 +589,9 @@ impl TuiApp {
                 if self.focus == FIELD_TIMING {
                     self.fields[self.focus] =
                         next_timing(self.field(self.focus), character).to_owned();
+                } else if self.focus == FIELD_CLEANING_PROFILE && character == ' ' {
+                    self.fields[self.focus] =
+                        next_cleaning_profile(self.field(self.focus)).to_owned();
                 } else if self.focus == FIELD_PREVIEW || self.focus == FIELD_OVERWRITE {
                     if character == ' ' {
                         let value = !parse_bool(self.field(self.focus)).unwrap_or(false);
@@ -728,6 +733,7 @@ impl TuiApp {
                     ("end_seconds", FIELD_END),
                     ("preview_wav", FIELD_PREVIEW),
                     ("overwrite", FIELD_OVERWRITE),
+                    ("cleaning_profile", FIELD_CLEANING_PROFILE),
                     ("min_confidence", FIELD_MIN_CONFIDENCE),
                     ("min_duration_ms", FIELD_MIN_DURATION),
                     ("retrigger_gap_ms", FIELD_RETRIGGER_GAP),
@@ -836,6 +842,27 @@ impl TuiApp {
 
 fn focus_marker(active: bool) -> &'static str {
     if active { ">" } else { " " }
+}
+
+fn parse_cleaning_profile(value: &str) -> Result<CleaningProfile, CliError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Ok(CleaningProfile::Auto),
+        "solo" => Ok(CleaningProfile::Solo),
+        "mix" => Ok(CleaningProfile::Mix),
+        "strict" => Ok(CleaningProfile::Strict),
+        _ => Err(CliError::InvalidArgument(
+            "cleaning profile must be auto, solo, mix or strict".to_owned(),
+        )),
+    }
+}
+
+fn next_cleaning_profile(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => "solo",
+        "solo" => "mix",
+        "mix" => "strict",
+        _ => "auto",
+    }
 }
 
 fn parse_bool(value: &str) -> Result<bool, CliError> {
@@ -1008,13 +1035,15 @@ mod tests {
         app.set_field(FIELD_TRACK, "1".to_owned());
         app.set_field(FIELD_PREVIEW, "true".to_owned());
         app.set_field(FIELD_OVERWRITE, "true".to_owned());
+        app.set_field(FIELD_CLEANING_PROFILE, "mix".to_owned());
         app.set_field(FIELD_MIN_CONFIDENCE, "0.55".to_owned());
         app.set_field(FIELD_MIN_DURATION, "125".to_owned());
         app.set_field(FIELD_RETRIGGER_GAP, "40".to_owned());
         let cleaning = app.build_clean_options().unwrap();
-        assert_eq!(cleaning.min_confidence, 0.55);
-        assert_eq!(cleaning.min_duration_us, 125_000);
-        assert_eq!(cleaning.retrigger_gap_us, 40_000);
+        assert_eq!(cleaning.profile, CleaningProfile::Mix);
+        assert_eq!(cleaning.min_confidence, Some(0.55));
+        assert_eq!(cleaning.min_duration_us, Some(125_000));
+        assert_eq!(cleaning.retrigger_gap_us, Some(40_000));
         let options = app.build_options().unwrap();
         assert_eq!(options.timing, Some(Timing::Straight));
         assert_eq!(options.bpm, Some(120.0));

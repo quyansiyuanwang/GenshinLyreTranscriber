@@ -26,7 +26,7 @@
 - `glt_core` Python 包可以安装并运行最小测试。
 - Python 媒体模块可以通过 ffprobe 选择音轨，并用参数数组调用 FFmpeg 提取模型音频。
 - Python JSONL worker 可以完成媒体探测、音频提取、Basic Pitch ONNX 分段转录与 MIDI 导入。
-- 清理阶段可以过滤低置信/短音、稳定去重与重叠合并，并输出 `cleaned.mid` 和损失计数；置信度、最短时长和重触发间隔均可配置。
+- 清理阶段可以过滤低置信/短音、稳定去重与重叠合并，并输出 `cleaned.mid` 和损失计数；提供 `auto/solo/mix/strict` 清理档位，并可覆盖置信度、最短时长和重触发间隔。
 - 自动拍点与局部速度分析支持低置信回退，保留原始 onset 时序。
 - 支持 auto/preserve/straight/triplet 可控量化，显式 BPM 具有更高优先级。
 - 支持全曲自动/手动移调、C3-B5 自然音映射、半音替换、八度折返和同刻冲突统计。

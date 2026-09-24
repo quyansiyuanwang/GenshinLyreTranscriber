@@ -52,10 +52,11 @@ velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复
 
 ## 可配置清理阈值
 
-清理参数由 Rust CLI/TUI 验证后，通过 worker 子进程环境传给 Python，包括
-`GLT_MIN_CONFIDENCE`、`GLT_MIN_DURATION_US` 和 `GLT_RETRIGGER_GAP_US`。这些值不改变已冻结
-的 worker JSONL v1 Schema；worker 会再次校验并把实际值写入 `CLEANING_CONFIG` 报告告警。
-默认值保持 0.2 / 50ms / 30ms，避免未显式设置时改变既有独奏行为。
+清理档位和参数由 Rust CLI/TUI 验证后，通过 worker 子进程环境传给 Python，包括
+`GLT_CLEANING_PROFILE`、`GLT_MIN_CONFIDENCE`、`GLT_MIN_DURATION_US` 和
+`GLT_RETRIGGER_GAP_US`。这些值不改变已冻结的 worker JSONL v1 Schema；worker 会再次校验
+并把实际值写入 `CLEANING_CONFIG` 报告告警。`auto` 在音符密度 >=3/s、低置信比例 >=20%
+或最大同时发声音数 >=4 时选择 Mix，否则选择 Solo。
 
 ## 音符清理
 

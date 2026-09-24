@@ -6,12 +6,14 @@ import pathlib
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import mido
 import pytest
 
 import glt_core.worker as worker_module
+from glt_core.domain.note_sequence import Note, NoteSequence, Provenance
 from glt_core.transcription import TranscriptionCancelled
 from glt_core.worker import WorkerServer
 
@@ -291,9 +293,20 @@ def test_worker_protocol_output_is_ascii_even_for_non_ascii_errors() -> None:
     assert "\\u4e2d\\u6587\\u9519\\u8bef" in output.getvalue()
 
 
+def _note_sequence(notes: tuple[Note, ...], duration_us: int = 1_000_000) -> NoteSequence:
+    return NoteSequence(
+        duration_us=duration_us,
+        notes=notes,
+        tempo_map=(),
+        beat_grid=(),
+        provenance=Provenance("audio", 0, "test", {}),
+    )
+
+
 def test_worker_reads_cleaning_thresholds_from_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("GLT_CLEANING_PROFILE", "solo")
     monkeypatch.setenv("GLT_MIN_CONFIDENCE", "0.45")
     monkeypatch.setenv("GLT_MIN_DURATION_US", "120000")
     monkeypatch.setenv("GLT_RETRIGGER_GAP_US", "40000")
@@ -301,3 +314,23 @@ def test_worker_reads_cleaning_thresholds_from_environment(
     assert config.min_confidence == 0.45
     assert config.min_duration_us == 120_000
     assert config.retrigger_gap_us == 40_000
+
+
+def test_auto_cleaning_profile_selects_mix_for_dense_low_confidence_notes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GLT_CLEANING_PROFILE", "auto")
+    note = Note(60, 0, 200_000, 80, 0.3, 0, 0)
+    sequence = _note_sequence((note, replace(note, pitch=62), replace(note, pitch=64)))
+    config = worker_module._cleaning_config(sequence)
+    assert config.min_confidence == 0.4
+    assert config.min_duration_us == 100_000
+
+
+def test_explicit_strict_profile_selects_strict_thresholds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GLT_CLEANING_PROFILE", "strict")
+    config = worker_module._cleaning_config()
+    assert config.min_confidence == 0.5
+    assert config.min_duration_us == 150_000

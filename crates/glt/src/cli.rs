@@ -110,36 +110,63 @@ impl From<TransposeArg> for Transpose {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum CleaningProfile {
+    Auto,
+    Solo,
+    Mix,
+    Strict,
+}
+
+impl CleaningProfile {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Solo => "solo",
+            Self::Mix => "mix",
+            Self::Strict => "strict",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CleaningOptions {
-    pub min_confidence: f64,
-    pub min_duration_us: u64,
-    pub retrigger_gap_us: u64,
+    pub profile: CleaningProfile,
+    pub min_confidence: Option<f64>,
+    pub min_duration_us: Option<u64>,
+    pub retrigger_gap_us: Option<u64>,
 }
 
 impl Default for CleaningOptions {
     fn default() -> Self {
         Self {
-            min_confidence: 0.2,
-            min_duration_us: 50_000,
-            retrigger_gap_us: 30_000,
+            profile: CleaningProfile::Auto,
+            min_confidence: None,
+            min_duration_us: None,
+            retrigger_gap_us: None,
         }
     }
 }
 
 impl CleaningOptions {
     pub(crate) fn validate(self) -> Result<Self, CliError> {
-        if !self.min_confidence.is_finite() || !(0.0..=1.0).contains(&self.min_confidence) {
+        if self
+            .min_confidence
+            .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+        {
             return Err(CliError::InvalidArgument(
                 "min-confidence must be finite and in range 0..=1".to_owned(),
             ));
         }
-        if self.min_duration_us > 60_000_000 {
+        if self.min_duration_us.is_some_and(|value| value > 60_000_000) {
             return Err(CliError::InvalidArgument(
                 "min-duration-ms must be at most 60000".to_owned(),
             ));
         }
-        if self.retrigger_gap_us > 60_000_000 {
+        if self
+            .retrigger_gap_us
+            .is_some_and(|value| value > 60_000_000)
+        {
             return Err(CliError::InvalidArgument(
                 "retrigger-gap-ms must be at most 60000".to_owned(),
             ));
@@ -148,20 +175,20 @@ impl CleaningOptions {
     }
 
     pub(crate) fn worker_env(self) -> Vec<(String, String)> {
-        vec![
-            (
-                "GLT_MIN_CONFIDENCE".to_owned(),
-                self.min_confidence.to_string(),
-            ),
-            (
-                "GLT_MIN_DURATION_US".to_owned(),
-                self.min_duration_us.to_string(),
-            ),
-            (
-                "GLT_RETRIGGER_GAP_US".to_owned(),
-                self.retrigger_gap_us.to_string(),
-            ),
-        ]
+        let mut env = vec![(
+            "GLT_CLEANING_PROFILE".to_owned(),
+            self.profile.as_str().to_owned(),
+        )];
+        if let Some(value) = self.min_confidence {
+            env.push(("GLT_MIN_CONFIDENCE".to_owned(), value.to_string()));
+        }
+        if let Some(value) = self.min_duration_us {
+            env.push(("GLT_MIN_DURATION_US".to_owned(), value.to_string()));
+        }
+        if let Some(value) = self.retrigger_gap_us {
+            env.push(("GLT_RETRIGGER_GAP_US".to_owned(), value.to_string()));
+        }
+        env
     }
 }
 
@@ -202,6 +229,9 @@ struct TranscribeArgs {
     /// Retrigger/overlap merge gap in milliseconds.
     #[arg(long)]
     retrigger_gap_ms: Option<u64>,
+    /// Cleaning profile: auto, solo, mix or strict.
+    #[arg(long, value_enum, default_value = "auto")]
+    cleaning_profile: CleaningProfile,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -238,6 +268,9 @@ struct ConvertMidiArgs {
     /// Retrigger/overlap merge gap in milliseconds.
     #[arg(long)]
     retrigger_gap_ms: Option<u64>,
+    /// Cleaning profile: auto, solo, mix or strict.
+    #[arg(long, value_enum, default_value = "auto")]
+    cleaning_profile: CleaningProfile,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -414,6 +447,7 @@ fn run_transcribe(args: TranscribeArgs) -> Result<(), CliError> {
         args.overwrite,
     )?;
     let cleaning = build_cleaning_options(
+        args.cleaning_profile,
         args.min_confidence,
         args.min_duration_ms,
         args.retrigger_gap_ms,
@@ -441,6 +475,7 @@ fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
         args.overwrite,
     )?;
     let cleaning = build_cleaning_options(
+        args.cleaning_profile,
         args.min_confidence,
         args.min_duration_ms,
         args.retrigger_gap_ms,
@@ -519,14 +554,16 @@ pub(crate) fn build_job_options(
 }
 
 pub(crate) fn build_cleaning_options(
+    profile: CleaningProfile,
     min_confidence: Option<f64>,
     min_duration_ms: Option<u64>,
     retrigger_gap_ms: Option<u64>,
 ) -> Result<CleaningOptions, CliError> {
     CleaningOptions {
-        min_confidence: min_confidence.unwrap_or(0.2),
-        min_duration_us: min_duration_ms.unwrap_or(50) * 1_000,
-        retrigger_gap_us: retrigger_gap_ms.unwrap_or(30) * 1_000,
+        profile,
+        min_confidence,
+        min_duration_us: min_duration_ms.map(|value| value * 1_000),
+        retrigger_gap_us: retrigger_gap_ms.map(|value| value * 1_000),
     }
     .validate()
 }

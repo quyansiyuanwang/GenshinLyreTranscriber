@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -340,7 +341,7 @@ class WorkerServer:
                 cancelled=cancelled,
             )
             source_hash = sha256_file(source_midi)
-            cleaning_config = _cleaning_config()
+            cleaning_config = _cleaning_config(transcription.note_sequence)
             cleaning = clean_note_sequence(transcription.note_sequence, cleaning_config)
             timing = analyze_timing(decoded_path, cleaning.cleaned)
             if timing.fallback:
@@ -578,7 +579,7 @@ class WorkerServer:
         _raise_if_cancelled(cancelled)
         imported = import_midi(input_path)
         _raise_if_cancelled(cancelled)
-        cleaning_config = _cleaning_config()
+        cleaning_config = _cleaning_config(imported.sequence)
         cleaning = clean_note_sequence(imported.sequence, cleaning_config)
         timing = analyze_timing(None, cleaning.cleaned)
         quantization = quantize_note_sequence(
@@ -916,11 +917,33 @@ def _compatibility_warnings(compatibility: CompatibilityScore) -> list[dict[str,
     return warnings
 
 
-def _cleaning_config() -> CleanConfig:
+def _cleaning_config(sequence: NoteSequence | None = None) -> CleanConfig:
+    profile = os.environ.get("GLT_CLEANING_PROFILE", "auto").strip().lower()
+    presets = {
+        "solo": (0.2, 50_000, 30_000),
+        "mix": (0.4, 100_000, 30_000),
+        "strict": (0.5, 150_000, 30_000),
+    }
+    if profile == "auto":
+        min_confidence, min_duration_us, retrigger_gap_us = (
+            (0.4, 100_000, 30_000)
+            if sequence is not None and _looks_like_mix(sequence)
+            else (0.2, 50_000, 30_000)
+        )
+    elif profile in presets:
+        min_confidence, min_duration_us, retrigger_gap_us = presets[profile]
+    else:
+        raise WorkerJobError(
+            "INVALID_CLEANING_OPTIONS",
+            "cleaning profile must be auto, solo, mix or strict",
+        )
     try:
-        min_confidence = float(os.environ.get("GLT_MIN_CONFIDENCE", "0.2"))
-        min_duration_us = int(os.environ.get("GLT_MIN_DURATION_US", "50000"))
-        retrigger_gap_us = int(os.environ.get("GLT_RETRIGGER_GAP_US", "30000"))
+        if "GLT_MIN_CONFIDENCE" in os.environ:
+            min_confidence = float(os.environ["GLT_MIN_CONFIDENCE"])
+        if "GLT_MIN_DURATION_US" in os.environ:
+            min_duration_us = int(os.environ["GLT_MIN_DURATION_US"])
+        if "GLT_RETRIGGER_GAP_US" in os.environ:
+            retrigger_gap_us = int(os.environ["GLT_RETRIGGER_GAP_US"])
     except ValueError as exc:
         raise WorkerJobError("INVALID_CLEANING_OPTIONS", "cleaning options are invalid") from exc
     config = CleanConfig(
@@ -933,6 +956,20 @@ def _cleaning_config() -> CleanConfig:
     except ValueError as exc:
         raise WorkerJobError("INVALID_CLEANING_OPTIONS", str(exc)) from exc
     return config
+
+
+def _looks_like_mix(sequence: NoteSequence) -> bool:
+    if not sequence.notes:
+        return False
+    duration_seconds = max(sequence.duration_us / 1_000_000, 1.0)
+    density = len(sequence.notes) / duration_seconds
+    low_confidence = sum(
+        note.confidence is not None and note.confidence < 0.4 for note in sequence.notes
+    )
+    low_confidence_ratio = low_confidence / len(sequence.notes)
+    polyphony = Counter(note.start_us for note in sequence.notes)
+    max_polyphony = max(polyphony.values(), default=0)
+    return density >= 3.0 or low_confidence_ratio >= 0.2 or max_polyphony >= 4
 
 
 class WorkerJobError(RuntimeError):
@@ -983,6 +1020,7 @@ def _report_warnings(
             "code": "CLEANING_CONFIG",
             "message": (
                 "cleaning thresholds: "
+                f"profile={os.environ.get('GLT_CLEANING_PROFILE', 'auto')}, "
                 f"min_confidence={cleaning_config.min_confidence}, "
                 f"min_duration_us={cleaning_config.min_duration_us}, "
                 f"retrigger_gap_us={cleaning_config.retrigger_gap_us}"
