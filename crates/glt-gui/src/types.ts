@@ -110,6 +110,91 @@ export interface ReportDocument {
   [key: string]: unknown;
 }
 
+export interface AnalysisRequest {
+  input: string;
+  output: string;
+  audio_track: number | null;
+  start_us: number | null;
+  end_us: number | null;
+  fft_size: number;
+  hop_size: number;
+  window: "hann" | "hamming" | "blackman";
+  spectral: boolean;
+  worker_path: string | null;
+}
+
+export interface AnalysisManifest {
+  format_version: 1;
+  cache_key: string;
+  decode: {
+    frames: number;
+    duration_us: number;
+    sample_rate: number;
+    channels: number;
+  };
+  waveform: {
+    base_bucket_count: number;
+    levels: Array<{
+      samples_per_bucket: number;
+      bucket_count: number;
+      offset_bytes: number;
+      size_bytes: number;
+    }>;
+  };
+  spectral?: {
+    fft_size: number;
+    hop_size: number;
+    window: string;
+    frames: number;
+    bins: number;
+  };
+}
+
+export interface AnalysisFinished {
+  type: "result";
+  directory: string;
+  manifest_path: string;
+  cache_key: string;
+  cache_hit: boolean;
+  duration_us: number;
+  frames: number;
+  sample_rate: number;
+  channels: number;
+}
+
+export interface AnalysisProgress {
+  type: "progress";
+  stage: string;
+  fraction: number | null;
+}
+
+export interface WaveformPayload {
+  samples_per_bucket: number;
+  bucket_count: number;
+  data_base64: string;
+}
+
+export interface SpectrogramImage {
+  width: number;
+  height: number;
+  data_base64: string;
+}
+
+export interface SpectrumFrame {
+  frame: number;
+  total_frames: number;
+  hop_us: number;
+  spectrum: number[];
+  features: number[];
+  columns: string[];
+}
+
+export interface PlaybackStatus {
+  position_us: number;
+  paused: boolean;
+  available: boolean;
+}
+
 export interface DraftFilterRule {
   enabled: boolean;
   confidenceMin: string;

@@ -12,7 +12,7 @@ use crate::cli::{
 };
 use crate::jobs::{
     DEFAULT_READY_TIMEOUT, FilterPreset, FilterSpec, Operation, ResultPayload, Timing, Transpose,
-    WorkerClient,
+    WorkerClient, WorkerSpec,
 };
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -172,6 +172,10 @@ pub fn doctor(worker_path: Option<PathBuf>) -> Result<DesktopDoctorInfo, String>
         application_version: ready.application_version.clone(),
         model_version: ready.model_version.clone(),
     })
+}
+
+pub fn worker_spec(worker_path: Option<PathBuf>) -> Result<WorkerSpec, String> {
+    resolve_worker_spec(worker_path).map_err(|error| error.to_string())
 }
 
 fn map_update(update: JobUpdate) -> DesktopJobEvent {

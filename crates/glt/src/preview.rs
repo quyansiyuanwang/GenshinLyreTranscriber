@@ -29,6 +29,15 @@ pub trait PlaybackBackend: Send {
     fn stop(&mut self) -> Result<(), PlaybackError>;
     fn set_volume(&mut self, volume: f32) -> Result<(), PlaybackError>;
     fn is_finished(&self) -> bool;
+    fn position(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+    fn seek(&mut self, _position: std::time::Duration) -> Result<(), PlaybackError> {
+        Ok(())
+    }
+    fn is_paused(&self) -> bool {
+        false
+    }
 }
 
 pub struct PlaybackService {
@@ -131,6 +140,30 @@ impl PlaybackService {
         self.store_result(result)
     }
 
+    pub fn position(&self) -> std::time::Duration {
+        self.backend
+            .as_ref()
+            .map_or(std::time::Duration::ZERO, |backend| backend.position())
+    }
+
+    pub fn seek(&mut self, position: std::time::Duration) -> Result<(), PlaybackError> {
+        if self.backend.is_none() {
+            self.ensure_backend()?;
+        }
+        let result = self
+            .backend
+            .as_mut()
+            .expect("backend was checked above")
+            .seek(position);
+        self.store_result(result)
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.backend
+            .as_ref()
+            .is_none_or(|backend| backend.is_paused())
+    }
+
     fn ensure_backend(&mut self) -> Result<(), PlaybackError> {
         if self.backend.is_some() {
             return Ok(());
@@ -211,6 +244,20 @@ impl PlaybackBackend for RodioBackend {
 
     fn is_finished(&self) -> bool {
         self.player.empty()
+    }
+
+    fn position(&self) -> std::time::Duration {
+        self.player.get_pos()
+    }
+
+    fn seek(&mut self, position: std::time::Duration) -> Result<(), PlaybackError> {
+        self.player
+            .try_seek(position)
+            .map_err(|error| PlaybackError::Backend(error.to_string()))
+    }
+
+    fn is_paused(&self) -> bool {
+        self.player.is_paused()
     }
 }
 

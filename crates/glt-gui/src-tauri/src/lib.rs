@@ -8,6 +8,7 @@ use project::{ProjectDocument, ProjectRevision};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+mod analysis;
 mod project;
 
 #[derive(Default)]
@@ -260,13 +261,47 @@ fn set_preview_volume(state: State<'_, GuiState>, volume: f32) -> Result<(), Str
     Ok(())
 }
 
+#[tauri::command]
+fn playback_status(state: State<'_, GuiState>) -> Result<analysis::PlaybackStatus, String> {
+    let playback = state.lock_playback()?;
+    Ok(match playback.as_ref() {
+        Some(service) => analysis::PlaybackStatus {
+            position_us: u64::try_from(service.position().as_micros()).unwrap_or(u64::MAX),
+            paused: service.is_paused(),
+            available: service.is_available(),
+        },
+        None => analysis::PlaybackStatus {
+            position_us: 0,
+            paused: true,
+            available: false,
+        },
+    })
+}
+
+#[tauri::command]
+fn seek_playback(state: State<'_, GuiState>, position_us: u64) -> Result<(), String> {
+    let mut playback = state.lock_playback()?;
+    playback
+        .as_mut()
+        .ok_or_else(|| "no preview is loaded".to_owned())?
+        .seek(std::time::Duration::from_micros(position_us))
+        .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(GuiState::default())
+        .manage(analysis::AnalysisState::default())
         .invoke_handler(tauri::generate_handler![
+            analysis::start_analysis,
+            analysis::cancel_analysis,
+            analysis::analysis_manifest,
+            analysis::analysis_waveform,
+            analysis::analysis_spectrogram_image,
+            analysis::analysis_spectrum,
             project_create,
             project_open,
             project_current,
@@ -283,6 +318,8 @@ pub fn run() {
             pause_preview,
             stop_preview,
             set_preview_volume,
+            playback_status,
+            seek_playback,
         ])
         .run(tauri::generate_context!())
         .expect("error while running GenshinLyreTranscriber desktop");

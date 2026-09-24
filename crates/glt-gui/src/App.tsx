@@ -7,6 +7,9 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { openPath } from "@tauri-apps/plugin-opener";
 
 import type {
+  AnalysisFinished,
+  AnalysisManifest,
+  AnalysisProgress,
   CleaningProfile,
   DoctorInfo,
   DraftFilterRule,
@@ -18,10 +21,15 @@ import type {
   JobResult,
   Operation,
   ProjectDocument,
+  PlaybackStatus,
   ReportDocument,
+  SpectrogramImage,
+  SpectrumFrame,
   Timing,
   Transpose,
+  WaveformPayload,
 } from "./types";
+import AnalysisView from "./AnalysisView";
 
 const MEDIA_FILTERS = [
   {
@@ -158,6 +166,15 @@ function App() {
   const [report, setReport] = useState<ReportDocument | null>(null);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
   const [project, setProject] = useState<ProjectDocument | null>(null);
+  const [analysisManifest, setAnalysisManifest] = useState<AnalysisManifest | null>(null);
+  const [analysisDirectory, setAnalysisDirectory] = useState<string | null>(null);
+  const [analysisWaveform, setAnalysisWaveform] = useState<WaveformPayload | null>(null);
+  const [analysisSpectrogram, setAnalysisSpectrogram] = useState<SpectrogramImage | null>(null);
+  const [analysisSpectrum, setAnalysisSpectrum] = useState<SpectrumFrame | null>(null);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisStage, setAnalysisStage] = useState("idle");
+  const [analysisFraction, setAnalysisFraction] = useState<number | null>(null);
+  const [positionUs, setPositionUs] = useState(0);
   const [playback, setPlayback] = useState("idle");
   const [volume, setVolume] = useState(0.8);
   const jobRequestRef = useRef(request);
@@ -221,11 +238,59 @@ function App() {
       setNotice("任务已取消");
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
+    void listen<AnalysisProgress>("analysis-progress", ({ payload }) => {
+      setAnalysisRunning(payload.stage !== "completed");
+      setAnalysisStage(payload.stage);
+      setAnalysisFraction(payload.fraction);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<AnalysisFinished>("analysis-finished", ({ payload }) => {
+      setAnalysisRunning(false);
+      setAnalysisDirectory(payload.directory);
+      setNotice(payload.cache_hit ? "分析缓存已加载" : "音频分析完成");
+      void loadAnalysisViews(payload.directory);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<string>("analysis-failed", ({ payload }) => {
+      setAnalysisRunning(false);
+      setAnalysisStage("failed");
+      setError(`分析失败：${payload}`);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
     return () => {
       disposed = true;
       for (const unlisten of unlisteners) unlisten();
     };
   }, []);
+
+  useEffect(() => {
+    if (!analysisManifest?.spectral || !analysisDirectory) return;
+    const timer = window.setInterval(() => {
+      void invoke<PlaybackStatus>("playback_status")
+        .then(async (status) => {
+          setPositionUs(status.position_us);
+          if (status.paused || !status.available) return;
+          const frame = Math.min(
+            analysisManifest.spectral!.frames - 1,
+            Math.max(
+              0,
+              Math.round(
+                status.position_us /
+                  ((analysisManifest.spectral!.hop_size * 1_000_000) /
+                    analysisManifest.decode.sample_rate),
+              ),
+            ),
+          );
+          const spectrum = await invoke<SpectrumFrame>("analysis_spectrum", {
+            directory: analysisDirectory,
+            frame,
+          });
+          setAnalysisSpectrum(spectrum);
+        })
+        .catch(() => undefined);
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [analysisDirectory, analysisManifest]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -241,7 +306,64 @@ function App() {
     return () => unlisten?.();
   }, []);
 
-  async function applyInput(path: string) {
+  async function startAnalysis(path: string, output: string) {
+    if (isMidi(path)) return;
+    const directory = await join(output, "analysis");
+    setAnalysisRunning(true);
+    setAnalysisStage("validating");
+    setAnalysisFraction(0);
+    try {
+      await invoke("start_analysis", {
+        request: {
+          input: path,
+          output: directory,
+          audio_track: jobRequestRef.current.audio_track,
+          start_us: jobRequestRef.current.start_seconds
+            ? Math.round(jobRequestRef.current.start_seconds * 1_000_000)
+            : null,
+          end_us: jobRequestRef.current.end_seconds
+            ? Math.round(jobRequestRef.current.end_seconds * 1_000_000)
+            : null,
+          fft_size: 2048,
+          hop_size: 512,
+          window: "hann",
+          spectral: true,
+          worker_path: jobRequestRef.current.worker_path,
+        },
+      });
+    } catch (reason) {
+      setAnalysisRunning(false);
+      setError(String(reason));
+    }
+  }
+
+  async function loadAnalysisViews(directory: string) {
+    try {
+      const manifest = await invoke<AnalysisManifest>("analysis_manifest", { directory });
+      setAnalysisManifest(manifest);
+      const level = Math.min(1, manifest.waveform.levels.length - 1);
+      const [waveform, spectrum] = await Promise.all([
+        invoke<WaveformPayload>("analysis_waveform", { directory, level }),
+        manifest.spectral
+          ? invoke<SpectrumFrame>("analysis_spectrum", { directory, frame: 0 })
+          : Promise.resolve(null),
+      ]);
+      setAnalysisWaveform(waveform);
+      setAnalysisSpectrum(spectrum);
+      if (manifest.spectral) {
+        const image = await invoke<SpectrogramImage>("analysis_spectrogram_image", {
+          directory,
+          width: 1200,
+          height: 256,
+        });
+        setAnalysisSpectrogram(image);
+      }
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function applyInput(path: string, analyze = true) {
     const operation = operationForPath(path);
     const output = request.output || (await defaultOutputFor(path));
     setRequest((current) => ({
@@ -251,6 +373,7 @@ function App() {
       operation,
       timing: operation === "convert_midi" ? "preserve" : current.timing,
     }));
+    if (analyze && operation !== "convert_midi") await startAnalysis(path, output);
   }
 
   async function chooseInput() {
@@ -359,6 +482,27 @@ function App() {
       setError(null);
     } catch (reason) {
       setPlayback("error");
+      setError(String(reason));
+    }
+  }
+
+  async function playSource() {
+    if (!request.input) return;
+    try {
+      await invoke("play_preview", { path: request.input, volume });
+      setPlayback("playing-source");
+      setError(null);
+    } catch (reason) {
+      setPlayback("error");
+      setError(String(reason));
+    }
+  }
+
+  async function seekAnalysis(position: number) {
+    setPositionUs(position);
+    try {
+      await invoke("seek_playback", { positionUs: position });
+    } catch (reason) {
       setError(String(reason));
     }
   }
@@ -531,7 +675,16 @@ function App() {
               <span>输入路径</span>
               <input
                 value={request.input}
-                onChange={(event) => void applyInput(event.target.value)}
+                onChange={(event) => {
+                  const path = event.target.value;
+                  const operation = operationForPath(path);
+                  setRequest((current) => ({
+                    ...current,
+                    input: path,
+                    operation,
+                    timing: operation === "convert_midi" ? "preserve" : current.timing,
+                  }));
+                }}
                 placeholder="选择或拖入文件"
               />
             </label>
@@ -554,6 +707,42 @@ function App() {
             <span>输入 MIDI 会自动切换到 preserve，避免覆盖已有 tempo map。</span>
           </div>
         </section>
+
+        {analysisManifest && analysisWaveform && (
+          <section className="panel analysis-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="section-number">ANALYSIS</span>
+                <h2>音频分析</h2>
+              </div>
+              <div className="button-row">
+                <button className="primary-button" onClick={() => void playSource()}>
+                  {playback === "playing-source" ? "重新播放原音" : "播放原音"}
+                </button>
+                <button className="ghost-button" onClick={() => void pausePreview()}>
+                  暂停
+                </button>
+                <button className="ghost-button" onClick={() => void stopPreview()}>
+                  停止
+                </button>
+              </div>
+            </div>
+            <div className="analysis-status">
+              <span>{analysisRunning ? analysisStage : "分析就绪"}</span>
+              <strong>
+                {analysisFraction === null ? "—" : `${Math.round(analysisFraction * 100)}%`}
+              </strong>
+            </div>
+            <AnalysisView
+              manifest={analysisManifest}
+              waveform={analysisWaveform}
+              spectrogram={analysisSpectrogram}
+              spectrum={analysisSpectrum}
+              positionUs={positionUs}
+              onSeek={(position) => void seekAnalysis(position)}
+            />
+          </section>
+        )}
 
         <section id="tuning" className="panel">
           <div className="panel-heading">

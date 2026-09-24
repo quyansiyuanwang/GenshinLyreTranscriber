@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from glt_core import __version__
+from glt_core.analysis_cli import main as analysis_main
 from glt_core.cache import (
     CANDIDATE_CACHE_NAME,
     CandidateCache,
@@ -1652,6 +1653,8 @@ def _mapping_config(options: dict[str, Any]) -> MappingConfig:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "analyze":
+        return analysis_main(sys.argv[2:])
     logging.basicConfig(level=logging.WARNING)
     return WorkerServer(sys.stdin, sys.stdout).run()
 

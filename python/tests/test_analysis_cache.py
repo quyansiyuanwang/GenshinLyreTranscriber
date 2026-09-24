@@ -14,6 +14,7 @@ from glt_core.analysis import (
     build_analysis_cache,
 )
 from glt_core.analysis.decode import ANALYSIS_CHANNELS, ANALYSIS_SAMPLE_RATE
+from glt_core.analysis_cli import main as analysis_main
 from glt_core.media.ffmpeg import MediaError
 from glt_core.protocol.validation import validate_analysis_manifest
 
@@ -170,3 +171,30 @@ def test_wave_fallback_without_ffmpeg(
     )
     assert result.decoded.channels == ANALYSIS_CHANNELS
     assert result.spectral is not None
+
+
+def test_analysis_cli_emits_progress_and_result(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "tone.wav"
+    _write_stereo_wave(source, seconds=0.25)
+    exit_code = analysis_main(
+        [
+            "--input",
+            str(source),
+            "--output",
+            str(tmp_path / "analysis"),
+            "--fft-size",
+            "512",
+            "--hop-size",
+            "128",
+            "--spectral",
+        ]
+    )
+    assert exit_code == 0
+    messages = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any(message["type"] == "progress" for message in messages)
+    result = next(message for message in messages if message["type"] == "result")
+    assert result["duration_us"] == 250_000
+    assert result["spectral"]["fft_size"] == 512
