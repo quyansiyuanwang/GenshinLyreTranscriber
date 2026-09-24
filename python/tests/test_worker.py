@@ -168,7 +168,7 @@ def test_worker_converts_midi_to_source_copy(tmp_path: pathlib.Path) -> None:
         operation="convert_midi",
         input_path=str(source),
         staging_dir=str(staging),
-        options={"timing": "preserve", "transpose": 0},
+        options={"timing": "preserve", "transpose": 0, "preview_wav": True},
     )
     output = io.StringIO()
     controlled = ControlledInput([message])
@@ -189,6 +189,7 @@ def test_worker_converts_midi_to_source_copy(tmp_path: pathlib.Path) -> None:
     assert (staging / "score.events.json").is_file()
     assert (staging / "score.readable.txt").is_file()
     assert (staging / "score.compat.txt").is_file()
+    assert (staging / "preview.wav").is_file()
     report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
     assert report["input"]["source_type"] == "midi"
     assert report["counts"]["input_notes"] == 1
@@ -198,6 +199,7 @@ def test_worker_converts_midi_to_source_copy(tmp_path: pathlib.Path) -> None:
         "events",
         "readable_text",
         "compat_text",
+        "preview_wav",
     }
     assert "COMPATIBILITY_TAIL_OMITTED" in {warning["code"] for warning in report["warnings"]}
 
@@ -240,3 +242,33 @@ def test_worker_reports_compatibility_slot_collision(tmp_path: pathlib.Path) -> 
     assert report["counts"]["compatibility_collisions"] == 1
     assert "COMPATIBILITY_COLLISIONS" in {warning["code"] for warning in report["warnings"]}
     assert (staging / "score.compat.txt").read_text(encoding="utf-8").splitlines()[-1] == "/ A/"
+
+
+def test_worker_empty_score_does_not_create_fake_preview(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "empty.mid"
+    midi = mido.MidiFile(type=1, ticks_per_beat=480)
+    midi.tracks.append(mido.MidiTrack())
+    midi.save(str(source))
+    staging = tmp_path / "output"
+    message = _message(
+        "start",
+        operation="convert_midi",
+        input_path=str(source),
+        staging_dir=str(staging),
+        options={"timing": "preserve", "preview_wav": True},
+    )
+    output = io.StringIO()
+    controlled = ControlledInput([message])
+    thread = threading.Thread(target=WorkerServer(controlled, output).run)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while '"type":"result"' not in output.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controlled.release()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+
+    assert not (staging / "preview.wav").exists()
+    report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
+    assert "EMPTY_PREVIEW" in {warning["code"] for warning in report["warnings"]}
+    assert "preview_wav" not in {artifact["kind"] for artifact in report["artifacts"]}

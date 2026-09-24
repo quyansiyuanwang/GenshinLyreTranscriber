@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod jobs;
+pub mod preview;
 pub mod protocol;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

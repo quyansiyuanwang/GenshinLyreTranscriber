@@ -47,6 +47,7 @@ from glt_core.processing import (
     quantize_note_sequence,
 )
 from glt_core.protocol import validate_report
+from glt_core.synthesis import synthesize_preview_wav
 from glt_core.transcription import (
     BasicPitchRuntime,
     TranscriptionCancelled,
@@ -65,6 +66,7 @@ MAPPED_MIDI_NAME = "mapped.mid"
 EVENTS_NAME = "score.events.json"
 READABLE_NAME = "score.readable.txt"
 COMPAT_NAME = "score.compat.txt"
+PREVIEW_NAME = "preview.wav"
 REPORT_NAME = "report.json"
 DECODED_AUDIO_NAME = "source.decoded.wav"
 
@@ -397,6 +399,9 @@ class WorkerServer:
                 mapping_profile=mapping_profile,
                 source_offset_us=start_us or 0,
             )
+            preview_requested = bool(options.get("preview_wav", False))
+            preview = _write_preview(staging_dir, events_document, preview_requested)
+            preview_artifacts = _preview_artifact_entries(preview)
             cleaning_removed = (
                 cleaning.stats.dropped_low_confidence
                 + cleaning.stats.dropped_short
@@ -436,7 +441,12 @@ class WorkerServer:
                     timing.fallback,
                     len(quantization.fallback_regions),
                 )
-                + _compatibility_warnings(text_exports.compatibility),
+                + _compatibility_warnings(text_exports.compatibility)
+                + _preview_warnings(
+                    preview_requested,
+                    preview,
+                    events_document,
+                ),
                 "artifacts": [
                     {
                         "kind": "source_midi",
@@ -474,6 +484,7 @@ class WorkerServer:
                         "sha256": text_exports.compatibility_hash,
                         "size_bytes": text_exports.compatibility_path.stat().st_size,
                     },
+                    *preview_artifacts,
                 ],
             }
             validate_report(report)
@@ -519,6 +530,7 @@ class WorkerServer:
                     "sha256": text_exports.compatibility_hash,
                     "size_bytes": text_exports.compatibility_path.stat().st_size,
                 },
+                *preview_artifacts,
                 {
                     "kind": "report",
                     "relative_path": REPORT_NAME,
@@ -604,6 +616,9 @@ class WorkerServer:
             mapping_profile=mapping_profile,
             source_offset_us=0,
         )
+        preview_requested = bool(options.get("preview_wav", False))
+        preview = _write_preview(staging_dir, events_document, preview_requested)
+        preview_artifacts = _preview_artifact_entries(preview)
         cleaning_removed = (
             cleaning.stats.dropped_low_confidence
             + cleaning.stats.dropped_short
@@ -657,7 +672,12 @@ class WorkerServer:
                     len(quantization.fallback_regions),
                 )
             )
-            + _compatibility_warnings(text_exports.compatibility),
+            + _compatibility_warnings(text_exports.compatibility)
+            + _preview_warnings(
+                preview_requested,
+                preview,
+                events_document,
+            ),
             "artifacts": [
                 {
                     "kind": "source_midi",
@@ -695,6 +715,7 @@ class WorkerServer:
                     "sha256": text_exports.compatibility_hash,
                     "size_bytes": text_exports.compatibility_path.stat().st_size,
                 },
+                *preview_artifacts,
             ],
         }
         validate_report(report)
@@ -740,6 +761,7 @@ class WorkerServer:
                 "sha256": text_exports.compatibility_hash,
                 "size_bytes": text_exports.compatibility_path.stat().st_size,
             },
+            *preview_artifacts,
             {
                 "kind": "report",
                 "relative_path": REPORT_NAME,
@@ -773,6 +795,40 @@ class _TextExports:
     compatibility_path: pathlib.Path
     compatibility_hash: str
     compatibility: CompatibilityScore
+
+
+@dataclass(frozen=True, slots=True)
+class _PreviewExport:
+    path: pathlib.Path
+    sha256: str
+
+
+def _write_preview(
+    staging_dir: pathlib.Path,
+    events_document: dict[str, Any],
+    requested: bool,
+) -> _PreviewExport | None:
+    if not requested or not events_document["events"]:
+        return None
+    synthesis = synthesize_preview_wav(
+        events_document,
+        staging_dir / PREVIEW_NAME,
+        overwrite=True,
+    )
+    return _PreviewExport(path=synthesis.path, sha256=sha256_file(synthesis.path))
+
+
+def _preview_artifact_entries(preview: _PreviewExport | None) -> list[dict[str, Any]]:
+    if preview is None:
+        return []
+    return [
+        {
+            "kind": "preview_wav",
+            "relative_path": PREVIEW_NAME,
+            "sha256": preview.sha256,
+            "size_bytes": preview.path.stat().st_size,
+        }
+    ]
 
 
 def _write_text_scores(
@@ -813,6 +869,21 @@ def _write_text_scores(
         compatibility_hash=sha256_file(compatibility_path),
         compatibility=compatibility,
     )
+
+
+def _preview_warnings(
+    requested: bool,
+    preview: _PreviewExport | None,
+    events_document: dict[str, Any],
+) -> list[dict[str, str]]:
+    if requested and preview is None and not events_document["events"]:
+        return [
+            {
+                "code": "EMPTY_PREVIEW",
+                "message": "empty score has no audible preview",
+            }
+        ]
+    return []
 
 
 def _compatibility_warnings(compatibility: CompatibilityScore) -> list[dict[str, str]]:

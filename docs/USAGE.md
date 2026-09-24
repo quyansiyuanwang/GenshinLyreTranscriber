@@ -19,10 +19,13 @@ glt convert-midi INPUT --output DIR [OPTIONS]
 - `--transpose auto|INTEGER`
 - `--audio-track N`
 - `--start-seconds SECONDS`、`--end-seconds SECONDS`
-- `--preview-wav`
+- `--preview-wav`：按映射起音生成自合成轻量试听 WAV
 - `--overwrite`
 - `--json`
 - `--worker PATH`，仅开发或高级诊断使用
+
+`--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
+静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。
 
 `--timing auto` 比较直拍与三连音候选；证据不足时保留原始起音。`preserve`
 完全不改时间，`straight`/`triplet` 强制使用对应网格。`--bpm` 是显式速度
@@ -53,6 +56,7 @@ uv run --directory python python -m glt_core.tools.mapping_preview output/cleane
 - `score.events.json`：按整数微秒记录映射起音和按键，同一时刻只保留一个和弦事件。
 - `score.readable.txt`：带时间戳和图例的人工阅读谱；文件首行明确它不是旧播放器精确执行格式。
 - `score.compat.txt`：按参考播放器 10ms 网格编码的兼容谱；网格碰撞和省略的尾部静音会写入报告。
+- `preview.wav`：仅在 `--preview-wav` 且存在可演奏起音时生成；使用自行合成的短衰减音色，不包含游戏采样。
 - `report.json`：版本、输入哈希、参数、损失统计以及每个产物的 SHA256 和字节数。
 
 worker 只写输出目录同级的隐藏 staging。Rust 会验证已声明产物存在且大小、SHA256
