@@ -10,12 +10,12 @@
     "performance-v1.schema.json": "34bb9a473d13e62477853691dd3e2c563090c144d2e50be98fbfead84f1f5c82",
     "report-v1.schema.json": "4ff4a7ef5994407d3073eb54809b6105feba6b3b49f30a0fa321811315b6e04d",
     "report-v2.schema.json": "cae0ebfb14cdba14b49e865803f68749aa24d7fed2a2c3b6b06429aa55108144",
-    "report-v3.schema.json": "2ac7134e4fb0d0449e9d655b7c99063cd1cda61bc9616a79af03af51e3d6801a",
+    "report-v3.schema.json": "d887c5909e0220783db0d2122ac13bd3c010520d8da7c926bde3b09ad9723e93",
     "routing-plan-v1.schema.json": "f6683afd40f8e5e17670c961bac617ac63717ca813b644e358155f69fe379d0c",
     "separator-component-v1.schema.json": "225080837284fafbe8db0e4f5c0037646a72282713138abc71f1b39fef42eec9",
     "stem-set-v1.schema.json": "c2b7caa696044f89e630e0403a57534f56e75251ef30e3a60d69143be6b10568",
     "worker-v1.schema.json": "f50bce828d81c40c2d48b7183081ae40eb991ab29c7ae86ae39d911397b37b31",
     "worker-v2.schema.json": "aaea00b4a2d0706e4bf450193c7127987fb828be821be291afde2e5500f64630",
-    "worker-v3.schema.json": "e7736c2e45a925fad4c97aece1cb63ade8f10a7018dfb534deab0f87782808b3"
+    "worker-v3.schema.json": "35390f82d7b9ccaf263f4aa6a86fb3acdff1adad7cfda363ed034cdff772f5e2"
   }
 }
