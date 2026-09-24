@@ -13,7 +13,7 @@ import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 from glt_core import __version__
 from glt_core.analysis_cli import main as analysis_main
@@ -47,6 +47,14 @@ from glt_core.media import (
     resolve_ffmpeg_tools,
     sha256_file,
 )
+from glt_core.performance import (
+    PERFORMANCE_NAME,
+    PerformanceBundle,
+    PerformanceDocument,
+    build_performance,
+    read_performance,
+    render_performance_bundle,
+)
 from glt_core.processing import (
     ArrangementConfig,
     CleanConfig,
@@ -79,7 +87,7 @@ from glt_core.transcription.onnx_probe import ModelResourceError
 
 install_frozen_replace_fallback()
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 MAX_LINE_BYTES = 1024 * 1024
 MODEL_VERSION = "basic-pitch-0.4.0/nmp.onnx"
 SOURCE_MIDI_NAME = "source.mid"
@@ -256,6 +264,8 @@ class WorkerServer:
                 result = self._convert_midi(payload, job_id, cancel_event.is_set)
             elif operation == "refilter":
                 result = self._refilter(payload, job_id, cancel_event.is_set)
+            elif operation == "render_performance":
+                result = self._render_performance(payload, job_id, cancel_event.is_set)
             else:
                 raise WorkerJobError(
                     "NOT_IMPLEMENTED",
@@ -391,6 +401,17 @@ class WorkerServer:
                 arrangement.arranged,
                 _mapping_config(options),
             )
+            _performance_document, performance_bundle = _render_performance_for_mapping(
+                staging_dir,
+                mapping,
+                source_type=_source_type(input_path),
+                revision_source="transcribe",
+                source_offset_us=start_us or 0,
+                title=input_path.name,
+                timing_mode=str(options.get("timing", "auto")),
+                preview_wav=bool(options.get("preview_wav", False)),
+            )
+            performance_artifacts = _performance_artifacts(performance_bundle)
             selection_spec = legacy_filter_spec(
                 min_confidence=cleaning_config.min_confidence,
                 min_duration_us=cleaning_config.min_duration_us,
@@ -488,7 +509,7 @@ class WorkerServer:
                 + cleaning.stats.overlapped_notes_merged
             )
             report = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "application_version": __version__,
                 "engine": {"name": "basic-pitch", "version": "0.4.0", "backend": "onnxruntime-cpu"},
                 "model": {
@@ -551,6 +572,7 @@ class WorkerServer:
                         "sha256": candidate_hash,
                         "size_bytes": candidate_path.stat().st_size,
                     },
+                    *performance_artifacts,
                     {
                         "kind": "source_midi",
                         "relative_path": SOURCE_MIDI_NAME,
@@ -603,6 +625,7 @@ class WorkerServer:
                     "sha256": candidate_hash,
                     "size_bytes": candidate_path.stat().st_size,
                 },
+                *performance_artifacts,
                 {
                     "kind": "source_midi",
                     "relative_path": SOURCE_MIDI_NAME,
@@ -693,6 +716,17 @@ class WorkerServer:
         arrangement_config = _arrangement_config()
         arrangement = arrange_note_sequence(quantization.quantized, arrangement_config)
         mapping = map_note_sequence(arrangement.arranged, _mapping_config(options))
+        _performance_document, performance_bundle = _render_performance_for_mapping(
+            staging_dir,
+            mapping,
+            source_type="midi",
+            revision_source="convert_midi",
+            source_offset_us=0,
+            title=input_path.name,
+            timing_mode=str(options.get("timing", "preserve")),
+            preview_wav=bool(options.get("preview_wav", False)),
+        )
+        performance_artifacts = _performance_artifacts(performance_bundle)
         selection_spec = legacy_filter_spec(
             min_confidence=cleaning_config.min_confidence,
             min_duration_us=cleaning_config.min_duration_us,
@@ -794,7 +828,7 @@ class WorkerServer:
         )
         candidate_hash = sha256_file(candidate_path)
         report = {
-            "schema_version": 2,
+            "schema_version": 3,
             "application_version": __version__,
             "engine": {"name": "midi-import", "version": "mido", "backend": "python"},
             "model": None,
@@ -858,6 +892,7 @@ class WorkerServer:
                     "sha256": candidate_hash,
                     "size_bytes": candidate_path.stat().st_size,
                 },
+                *performance_artifacts,
                 {
                     "kind": "source_midi",
                     "relative_path": SOURCE_MIDI_NAME,
@@ -910,6 +945,7 @@ class WorkerServer:
                 "sha256": candidate_hash,
                 "size_bytes": candidate_path.stat().st_size,
             },
+            *performance_artifacts,
             {
                 "kind": "source_midi",
                 "relative_path": SOURCE_MIDI_NAME,
@@ -1022,6 +1058,25 @@ class WorkerServer:
             arrangement.arranged,
             _mapping_config(cache.original_parameters),
         )
+        context_input = cache.report_context.get("input")
+        if not isinstance(context_input, dict):
+            raise WorkerJobError("CACHE_INVALID", "candidate input metadata is invalid")
+        performance_title = str(context_input.get("filename", "transcription"))
+        performance_source_type = str(context_input.get("source_type", "audio"))
+        performance_offset = context_input.get("segment_start_us", 0)
+        if isinstance(performance_offset, bool) or not isinstance(performance_offset, int):
+            performance_offset = 0
+        _performance_document, performance_bundle = _render_performance_for_mapping(
+            staging_dir,
+            mapping,
+            source_type=performance_source_type,
+            revision_source="refilter",
+            source_offset_us=max(0, performance_offset),
+            title=performance_title,
+            timing_mode=str(cache.original_parameters.get("timing", "auto")),
+            preview_wav=bool(options.get("preview_wav", False)),
+        )
+        performance_artifacts = _performance_artifacts(performance_bundle)
         source_midi = staging_dir / SOURCE_MIDI_NAME
         source_source = source_dir / SOURCE_MIDI_NAME
         if not source_source.is_file():
@@ -1101,7 +1156,7 @@ class WorkerServer:
             else False
         )
         report = {
-            "schema_version": 2,
+            "schema_version": 3,
             "application_version": __version__,
             "engine": cache.report_context.get("engine"),
             "model": cache.report_context.get("model"),
@@ -1152,6 +1207,7 @@ class WorkerServer:
                     "sha256": candidate_hash,
                     "size_bytes": candidate_path.stat().st_size,
                 },
+                *performance_artifacts,
                 {
                     "kind": "source_midi",
                     "relative_path": SOURCE_MIDI_NAME,
@@ -1219,6 +1275,159 @@ class WorkerServer:
             "artifacts": artifacts,
         }
 
+    def _render_performance(
+        self,
+        payload: dict[str, Any],
+        job_id: str,
+        cancelled: Callable[[], bool],
+    ) -> dict[str, Any]:
+        source_input = pathlib.Path(str(payload.get("input_path", ""))).expanduser().resolve()
+        staging_dir = pathlib.Path(str(payload.get("staging_dir", ""))).expanduser().resolve()
+        if source_input.is_file() and source_input.name == PERFORMANCE_NAME:
+            source_dir = source_input.parent
+            performance_path = source_input
+        elif source_input.is_dir():
+            source_dir = source_input
+            performance_path = source_dir / PERFORMANCE_NAME
+        else:
+            raise WorkerJobError("INPUT_NOT_FOUND", "performance result directory does not exist")
+        if not performance_path.is_file():
+            raise WorkerJobError(
+                "PERFORMANCE_MISSING",
+                "result has no performance.json; legacy results remain read-only",
+            )
+        options = payload.get("options")
+        if not isinstance(options, dict):
+            raise WorkerJobError("SCHEMA_INVALID", "options must be an object")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "validating", "fraction": 0.0},
+        )
+        _raise_if_cancelled(cancelled)
+        document = read_performance(performance_path)
+        previous_report = _read_optional_report(source_dir)
+        title_value = options.get("title")
+        if title_value is not None and (
+            not isinstance(title_value, str) or not title_value.strip()
+        ):
+            raise WorkerJobError("SCHEMA_INVALID", "performance title must be a non-empty string")
+        title = (
+            str(title_value).strip()
+            if title_value is not None
+            else _report_input_filename(previous_report) or "performance"
+        )
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "exporting", "fraction": 0.25},
+        )
+        bundle = render_performance_bundle(
+            document,
+            staging_dir,
+            title=title,
+            timing_mode=str(options.get("timing", "preserve")),
+            preview_wav=bool(options.get("preview_wav", False)),
+            generator=f"GenshinLyreTranscriber {__version__}",
+        )
+        _raise_if_cancelled(cancelled)
+        artifacts = list(bundle.artifacts)
+        source_midi = staging_dir / SOURCE_MIDI_NAME
+        source_candidate = staging_dir / CANDIDATE_CACHE_NAME
+        original_source_midi = source_dir / SOURCE_MIDI_NAME
+        original_candidate = source_dir / CANDIDATE_CACHE_NAME
+        if original_source_midi.is_file():
+            shutil.copyfile(original_source_midi, source_midi)
+            artifacts.append(_artifact_entry("source_midi", source_midi))
+        if original_candidate.is_file():
+            shutil.copyfile(original_candidate, source_candidate)
+            artifacts.append(_artifact_entry("candidate_cache", source_candidate))
+
+        input_document = _performance_report_input(
+            previous_report,
+            performance_path=performance_path,
+            document=document,
+            fallback_title=title,
+        )
+        parameters = previous_report.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+        parameters = {
+            **parameters,
+            "performance": {
+                "format_version": document.format_version,
+                "revision_id": document.revision.id,
+                "mapping_profile": document.mapping.profile,
+                "transpose_semitones": document.mapping.transpose_semitones,
+            },
+            "preview_wav": bool(options.get("preview_wav", False)),
+        }
+        engine = previous_report.get("engine")
+        if not isinstance(engine, dict):
+            engine = {"name": "performance-renderer", "version": "1", "backend": "python"}
+        model = previous_report.get("model")
+        if model is not None and not isinstance(model, dict):
+            model = None
+        selected_track = previous_report.get("selected_track")
+        if isinstance(selected_track, bool) or not isinstance(selected_track, int):
+            selected_track = None
+        warnings = _compatibility_warnings(bundle.compatibility)
+        if bool(options.get("preview_wav", False)) and not bundle.events_document["events"]:
+            warnings.append(
+                {
+                    "code": "EMPTY_PREVIEW",
+                    "message": "empty performance has no audible preview",
+                }
+            )
+        report = {
+            "schema_version": 3,
+            "application_version": __version__,
+            "engine": engine,
+            "model": model,
+            "input": input_document,
+            "parameters": parameters,
+            "selected_track": selected_track,
+            "elapsed_ms": 0.0,
+            "counts": {
+                "input_notes": len(document.notes),
+                "output_notes": len(document.notes),
+                "dropped_notes": 0,
+                "mapped_keys": len({note.key for note in document.notes}),
+                "replaced_semitones": 0,
+                "octave_folds": 0,
+                "duplicate_keys": 0,
+                "compatibility_collisions": bundle.compatibility.collisions,
+            },
+            "selection": {
+                "format_version": 1,
+                "source": "performance",
+                "spec": {"format_version": 1, "rules": []},
+                "matched_notes": len(document.notes),
+                "dropped_notes": 0,
+                "rule_hits": [len(document.notes)],
+            },
+            "warnings": warnings,
+            "artifacts": artifacts,
+        }
+        validate_report(report)
+        report_path = staging_dir / REPORT_NAME
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        artifacts.append(_artifact_entry("report", report_path))
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "completed", "fraction": 1.0},
+        )
+        return {
+            "output_dir": str(staging_dir),
+            "report_path": REPORT_NAME,
+            "artifacts": artifacts,
+        }
+
     def _protocol_error(self, job_id: str | None, code: str, message: str) -> None:
         self._writer.send(
             kind="error",
@@ -1268,6 +1477,101 @@ def _preview_artifact_entries(preview: _PreviewExport | None) -> list[dict[str, 
             "size_bytes": preview.path.stat().st_size,
         }
     ]
+
+
+def _artifact_entry(kind: str, path: pathlib.Path) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "relative_path": path.name,
+        "sha256": sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _render_performance_for_mapping(
+    staging_dir: pathlib.Path,
+    mapping: Any,
+    *,
+    source_type: str,
+    revision_source: str,
+    source_offset_us: int,
+    title: str,
+    timing_mode: str,
+    preview_wav: bool,
+) -> tuple[PerformanceDocument, PerformanceBundle]:
+    document = build_performance(
+        mapping,
+        source_type=cast(Any, source_type),
+        revision_source=cast(Any, revision_source),
+        source_offset_us=source_offset_us,
+    )
+    bundle = render_performance_bundle(
+        document,
+        staging_dir,
+        title=title,
+        timing_mode=timing_mode,
+        preview_wav=preview_wav,
+        generator=f"GenshinLyreTranscriber {__version__}",
+    )
+    return document, bundle
+
+
+def _performance_artifacts(bundle: PerformanceBundle) -> list[dict[str, Any]]:
+    return [
+        artifact
+        for artifact in bundle.artifacts
+        if artifact["kind"] in {"performance", "performance_midi"}
+    ]
+
+
+def _read_optional_report(source_dir: pathlib.Path) -> dict[str, Any]:
+    report_path = source_dir / REPORT_NAME
+    if not report_path.is_file():
+        return {}
+    try:
+        document = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return document if isinstance(document, dict) else {}
+
+
+def _report_input_filename(report: dict[str, Any]) -> str | None:
+    input_document = report.get("input")
+    if not isinstance(input_document, dict):
+        return None
+    filename = input_document.get("filename")
+    return filename if isinstance(filename, str) and filename else None
+
+
+def _performance_report_input(
+    report: dict[str, Any],
+    *,
+    performance_path: pathlib.Path,
+    document: PerformanceDocument,
+    fallback_title: str,
+) -> dict[str, Any]:
+    previous = report.get("input")
+    previous = previous if isinstance(previous, dict) else {}
+    sha256 = previous.get("sha256")
+    if not _is_sha256(sha256):
+        sha256 = sha256_file(performance_path)
+    offset = previous.get("segment_start_us")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        offset = document.source.offset_us
+    return {
+        "source_type": document.source.type,
+        "filename": _report_input_filename(report) or fallback_title,
+        "sha256": sha256,
+        "segment_start_us": offset,
+    }
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _write_text_scores(

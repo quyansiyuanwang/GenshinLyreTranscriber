@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u8 = 2;
+pub const PROTOCOL_VERSION: u8 = 3;
 pub const MAX_PROTOCOL_LINE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const DEFAULT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
@@ -101,6 +101,7 @@ pub enum Operation {
     Transcribe,
     ConvertMidi,
     Refilter,
+    RenderPerformance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +279,8 @@ pub struct StartOptions {
     pub filter: Option<FilterSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_preset: Option<FilterPreset>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

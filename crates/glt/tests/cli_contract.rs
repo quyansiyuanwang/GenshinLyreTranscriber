@@ -311,6 +311,32 @@ fn filter_auto_mode_runs_without_a_filter_file() {
 }
 
 #[test]
+fn performance_command_accepts_a_result_directory() {
+    let root = unique_test_dir("performance-command");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = root.join("result");
+    std::fs::create_dir_all(&source).unwrap();
+    let output_dir = root.join("performance-revision");
+    let output = Command::new(binary())
+        .args(["performance"])
+        .arg(&source)
+        .arg("--output")
+        .arg(&output_dir)
+        .arg("--worker")
+        .arg(mock_worker())
+        .output()
+        .expect("run glt performance");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_dir.is_dir());
+    assert!(source.is_dir());
+}
+
+#[test]
 fn invalid_filter_file_is_usage_error() {
     let root = unique_test_dir("filter-invalid");
     let _ = std::fs::remove_dir_all(&root);

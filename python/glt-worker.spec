@@ -10,8 +10,8 @@ if not model_path.is_file():
 
 schema_dir = project_dir.parent / "schemas"
 schema_files = sorted(schema_dir.glob("*.schema.json"))
-if len(schema_files) != 12:
-    raise SystemExit(f"Expected 12 protocol schemas, found {len(schema_files)}")
+if len(schema_files) != 15:
+    raise SystemExit(f"Expected 15 protocol schemas, found {len(schema_files)}")
 
 datas = [
     (str(model_path), "glt_core/resources/models/basic_pitch"),
@@ -38,6 +38,9 @@ a = Analysis(
         "sklearn",
         "tensorflow",
         "tflite_runtime",
+        "torch",
+        "torchaudio",
+        "demucs",
     ],
     noarchive=False,
 )

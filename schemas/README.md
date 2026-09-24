@@ -1,6 +1,6 @@
 # 协议 Schema 与版本策略
 
-本目录保存事件 v1、NoteSequence v1、候选缓存 v1，以及 worker/report v2 正式数据契约。
+本目录保存事件 v1、NoteSequence v1、候选缓存 v1、Performance v1，以及 worker/report v3 正式数据契约。
 当前状态为 `frozen`：
 
 - `events-v1.schema.json`：交给播放器消费的精确起音事件。
@@ -10,12 +10,15 @@
 - `candidate-cache-v1.schema.json`：结果页快速重筛所需候选音符和 timing 元数据。
 - `worker-v2.schema.json`：v2 JSONL worker，新增 `refilter` operation、FilterSpec 和预设/自动检测选项。
 - `report-v2.schema.json`：v2 报告，新增筛选规格、筛选统计和候选缓存 artifact。
+- `performance-v1.schema.json`：可编辑映射表演层，保留来源 stem、velocity、confidence 和 Pitch Bend 参考。
+- `worker-v3.schema.json`：v3 JSONL worker，新增从既有 Performance 生成不可变派生产物的 operation。
+- `report-v3.schema.json`：v3 报告，记录 Performance 与离散 MIDI 派生产物。
 - `versions.json`：正式 Schema 的 SHA256 冻结清单。
 
 ## 时间与版本
 
 所有时间字段使用整数微秒，最大值为 `9007199254740991`。JSON boolean 不能作为整数。
-worker/report v2 顶层版本字段固定为 `2`；事件和 NoteSequence 保持 v1。未知版本必须
+worker/report v3 顶层版本字段固定为 `3`；事件、NoteSequence 和 Performance 保持 v1。未知版本必须
 报告 `UNSUPPORTED_VERSION`，不能用旧解析器猜测字段语义。各版本禁止未声明字段。
 
 ## 验证层次
@@ -51,5 +54,5 @@ cargo test --locked
 uv run --directory python pytest
 ```
 
-播放器交接继续使用冻结的 `events-v1.schema.json`；worker/report v2 和候选缓存只属于
+播放器交接继续使用冻结的 `events-v1.schema.json`；worker/report v3、Performance 和候选缓存只属于
 本工具内部及结果页重筛。所有 Schema 均以 `versions.json` 的 SHA256 验证一致。

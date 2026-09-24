@@ -17,11 +17,12 @@ SCHEMA_FILES = {
     "separator_component": "separator-component-v1.schema.json",
     "routing_plan": "routing-plan-v1.schema.json",
     "notes": "notes-v1.schema.json",
+    "performance": "performance-v1.schema.json",
     "stem_set": "stem-set-v1.schema.json",
     "events": "events-v1.schema.json",
-    "worker": "worker-v2.schema.json",
+    "worker": "worker-v3.schema.json",
     "note_sequence": "note-sequence-v1.schema.json",
-    "report": "report-v2.schema.json",
+    "report": "report-v3.schema.json",
     "candidate_cache": "candidate-cache-v1.schema.json",
 }
 
@@ -150,9 +151,14 @@ def validate_events(document: Any) -> None:
 
 def validate_worker_message(document: Any) -> None:
     """Validate one worker JSONL message at the schema boundary."""
-    _require_version(document, {1, 2})
+    _require_version(document, {1, 2, 3})
     version = document.get("protocol_version") if isinstance(document, dict) else None
-    schema = "worker-v1.schema.json" if version == 1 else SCHEMA_FILES["worker"]
+    if version == 1:
+        schema = "worker-v1.schema.json"
+    elif version == 2:
+        schema = "worker-v2.schema.json"
+    else:
+        schema = SCHEMA_FILES["worker"]
     _schema_error(document, schema)
 
 
@@ -210,9 +216,14 @@ def _validate_relative_path(value: str, pointer: str) -> None:
 
 def validate_report(document: Any) -> None:
     """Validate a report document and its relative artifact paths."""
-    _require_version(document, {1, 2})
+    _require_version(document, {1, 2, 3})
     version = document.get("schema_version") if isinstance(document, dict) else None
-    schema = "report-v1.schema.json" if version == 1 else SCHEMA_FILES["report"]
+    if version == 1:
+        schema = "report-v1.schema.json"
+    elif version == 2:
+        schema = "report-v2.schema.json"
+    else:
+        schema = SCHEMA_FILES["report"]
     _schema_error(document, schema)
     assert isinstance(document, dict)
     for index, artifact in enumerate(document["artifacts"]):
@@ -275,3 +286,74 @@ def validate_analysis_notes(document: Any) -> None:
         if previous is not None and order < previous:
             raise ProtocolValidationError("NOTE_ORDER", "analysis notes are not sorted")
         previous = order
+
+
+def validate_performance(document: Any) -> None:
+    """Validate the editable performance document and its playable notes."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["performance"])
+    assert isinstance(document, dict)
+    duration_us = int(document["duration_us"])
+    previous: tuple[int, int, str] | None = None
+    keys_by_time: dict[int, set[str]] = {}
+    layout = {
+        "Z": 48,
+        "X": 50,
+        "C": 52,
+        "V": 53,
+        "B": 55,
+        "N": 57,
+        "M": 59,
+        "A": 60,
+        "S": 62,
+        "D": 64,
+        "F": 65,
+        "G": 67,
+        "H": 69,
+        "J": 71,
+        "Q": 72,
+        "W": 74,
+        "E": 76,
+        "R": 77,
+        "T": 79,
+        "Y": 81,
+        "U": 83,
+    }
+    for index, note in enumerate(document["notes"]):
+        start_us = int(note["start_us"])
+        end_us = int(note["end_us"])
+        if not start_us < end_us <= duration_us:
+            raise ProtocolValidationError(
+                "NOTE_RANGE",
+                "performance note must satisfy start_us < end_us <= duration_us",
+                f"/notes/{index}",
+            )
+        if layout[str(note["key"])] != int(note["pitch"]):
+            raise ProtocolValidationError(
+                "NOTE_RANGE",
+                "performance key and mapped MIDI pitch do not match",
+                f"/notes/{index}",
+            )
+        order = (start_us, int(note["pitch"]), str(note["id"]))
+        if previous is not None and order < previous:
+            raise ProtocolValidationError("NOTE_ORDER", "performance notes are not sorted")
+        previous = order
+        keys = keys_by_time.setdefault(start_us, set())
+        key = str(note["key"])
+        if key in keys:
+            raise ProtocolValidationError(
+                "NOTE_ORDER",
+                "performance contains duplicate keys at one onset",
+                f"/notes/{index}/key",
+            )
+        keys.add(key)
+        previous_bend = -1
+        for bend_index, bend in enumerate(note["pitch_bends"]):
+            at_us = int(bend["at_us"])
+            if not start_us <= at_us <= end_us or at_us < previous_bend:
+                raise ProtocolValidationError(
+                    "NOTE_RANGE",
+                    "pitch bend point is outside its note or unsorted",
+                    f"/notes/{index}/pitch_bends/{bend_index}",
+                )
+            previous_bend = at_us

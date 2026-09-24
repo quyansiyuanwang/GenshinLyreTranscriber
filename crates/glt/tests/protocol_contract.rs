@@ -29,7 +29,16 @@ fn load_regular_json(path: &Path) -> Value {
 fn semantic_result(schema_file: &str, document: &Value) -> Result<(), ValidationError> {
     match schema_file {
         "events-v1.schema.json" => validate_events_value(document),
-        "worker-v1.schema.json" => validate_worker_value(document),
+        "worker-v1.schema.json" => {
+            if document.get("protocol_version").and_then(Value::as_u64) == Some(1) {
+                validate_worker_value(document)
+            } else {
+                Err(ValidationError::new(
+                    "UNSUPPORTED_VERSION",
+                    "unsupported worker protocol version",
+                ))
+            }
+        }
         "note-sequence-v1.schema.json" => validate_note_sequence_value(document),
         "report-v1.schema.json" => validate_report_value(document),
         other => panic!("unknown schema in fixture manifest: {other}"),
@@ -93,6 +102,35 @@ fn raw_json_cases_are_rejected() {
             case["name"].as_str().unwrap()
         );
     }
+}
+
+#[test]
+fn v3_worker_and_report_versions_are_accepted() {
+    let worker = serde_json::json!({
+        "protocol_version": 3,
+        "job_id": "local-job",
+        "type": "start",
+        "payload": {
+            "operation": "render_performance",
+            "input_path": "C:/results/source",
+            "staging_dir": "C:/results/.staging",
+            "options": {}
+        }
+    });
+    validate_worker_value(&worker).unwrap();
+
+    let report = serde_json::json!({
+        "schema_version": 3,
+        "artifacts": [
+            {
+                "kind": "performance",
+                "relative_path": "performance.json",
+                "sha256": "d".repeat(64),
+                "size_bytes": 10
+            }
+        ]
+    });
+    validate_report_value(&report).unwrap();
 }
 
 #[derive(Debug)]

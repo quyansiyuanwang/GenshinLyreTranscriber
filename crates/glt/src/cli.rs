@@ -49,6 +49,8 @@ enum Command {
     Preview(PreviewArgs),
     /// Re-filter a v2 result from its cached candidate notes.
     Filter(FilterArgs),
+    /// Render all player-facing artifacts from an existing performance revision.
+    Performance(PerformanceArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -424,6 +426,30 @@ struct FilterArgs {
     worker: Option<PathBuf>,
 }
 
+#[derive(Debug, clap::Args)]
+struct PerformanceArgs {
+    /// Existing result directory containing performance.json.
+    result_dir: PathBuf,
+    /// New result directory for the derived performance revision.
+    #[arg(long)]
+    output: PathBuf,
+    /// Optional title used in readable text output.
+    #[arg(long)]
+    title: Option<String>,
+    /// Request a synthesized preview WAV.
+    #[arg(long)]
+    preview_wav: bool,
+    /// Allow replacing the output directory.
+    #[arg(long)]
+    overwrite: bool,
+    /// Emit a machine-readable result.
+    #[arg(long)]
+    json: bool,
+    /// Override the worker executable path.
+    #[arg(long)]
+    worker: Option<PathBuf>,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum CliError {
     #[error("invalid argument: {0}")]
@@ -479,6 +505,7 @@ fn execute(cli: Cli) -> Result<(), CliError> {
         Some(Command::ConvertMidi(args)) => run_convert_midi(args),
         Some(Command::Preview(args)) => run_preview(args),
         Some(Command::Filter(args)) => run_filter(args),
+        Some(Command::Performance(args)) => run_performance(args),
         Some(Command::Tui) | None => crate::tui::run(),
     }
 }
@@ -666,6 +693,25 @@ fn run_filter(args: FilterArgs) -> Result<(), CliError> {
     )
 }
 
+fn run_performance(args: PerformanceArgs) -> Result<(), CliError> {
+    let options = StartOptions {
+        title: args.title,
+        preview_wav: Some(args.preview_wav),
+        overwrite: Some(args.overwrite),
+        ..StartOptions::default()
+    };
+    run_job(
+        args.worker,
+        args.result_dir,
+        args.output,
+        Operation::RenderPerformance,
+        options,
+        CleaningOptions::default(),
+        ArrangementOptions::default(),
+        args.json,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_options(
     timing: TimingArg,
@@ -727,6 +773,7 @@ pub(crate) fn build_job_options(
         mapping_profile: None,
         filter: None,
         filter_preset: None,
+        title: None,
     })
 }
 
@@ -859,10 +906,9 @@ where
     F: FnMut(JobUpdate),
 {
     let input = absolute_path(&input)?;
-    let input_valid = if operation == Operation::Refilter {
-        input.is_dir()
-    } else {
-        input.is_file()
+    let input_valid = match operation {
+        Operation::Refilter | Operation::RenderPerformance => input.is_dir(),
+        Operation::Transcribe | Operation::ConvertMidi => input.is_file(),
     };
     if !input_valid {
         return Err(CliError::InvalidArgument(format!(
@@ -883,7 +929,7 @@ where
         CliError::InvalidArgument("output must have a parent directory".to_owned())
     })?;
     fs::create_dir_all(output_parent)?;
-    if operation != Operation::Refilter
+    if matches!(operation, Operation::Transcribe | Operation::ConvertMidi)
         && output.exists()
         && overwrite
         && input.starts_with(&output)

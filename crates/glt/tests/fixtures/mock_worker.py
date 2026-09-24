@@ -18,7 +18,7 @@ def send(value: dict[str, object]) -> None:
 
 def envelope(kind: str, payload: dict[str, object], *, ready: bool = False) -> dict[str, object]:
     return {
-        "protocol_version": 1 if mode == "wrong-version" else 2,
+        "protocol_version": 1 if mode == "wrong-version" else 3,
         "job_id": None if ready else job_id,
         "type": kind,
         "payload": payload,
@@ -102,7 +102,7 @@ for raw_line in sys.stdin:
     elif mode == "wrong-job":
         send(
             {
-                "protocol_version": 2,
+                "protocol_version": 3,
                 "job_id": "other-job",
                 "type": "result",
                 "payload": result_payload(staging_dir),

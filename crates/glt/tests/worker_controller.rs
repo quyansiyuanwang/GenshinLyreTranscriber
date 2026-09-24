@@ -40,6 +40,7 @@ fn request(staging: &Path) -> StartRequest {
             mapping_profile: None,
             filter: None,
             filter_preset: None,
+            title: None,
         },
     }
 }

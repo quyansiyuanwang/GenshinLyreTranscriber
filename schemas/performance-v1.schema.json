@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:performance:v1",
+  "title": "Performance v1",
+  "description": "Editable mapped performance derived from notes, routing, quantization and mapping. Player-facing outputs are derived from this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "time_unit", "duration_us", "revision", "source", "mapping", "tempo_map", "beat_grid", "notes"],
+  "properties": {
+    "format_version": {"const": 1},
+    "time_unit": {"const": "us"},
+    "duration_us": {"$ref": "#/$defs/safe_time"},
+    "revision": {"$ref": "#/$defs/revision"},
+    "source": {"$ref": "#/$defs/source"},
+    "mapping": {"$ref": "#/$defs/mapping"},
+    "tempo_map": {"type": "array", "items": {"$ref": "#/$defs/tempo_point"}},
+    "beat_grid": {"type": "array", "items": {"$ref": "#/$defs/beat_point"}},
+    "notes": {"type": "array", "items": {"$ref": "#/$defs/note"}}
+  },
+  "$defs": {
+    "safe_time": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "confidence": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "number", "minimum": 0, "maximum": 1}
+      ]
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "parent_id", "source"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "parent_id": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 128}]},
+        "source": {"enum": ["transcribe", "convert_midi", "refilter", "render_performance", "edit"]}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "offset_us"],
+      "properties": {
+        "type": {"enum": ["audio", "video", "midi"]},
+        "offset_us": {"$ref": "#/$defs/safe_time"}
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "transpose_semitones"],
+      "properties": {
+        "profile": {"type": "string", "minLength": 1, "maxLength": 128},
+        "transpose_semitones": {"type": "integer", "minimum": -48, "maximum": 48}
+      }
+    },
+    "tempo_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at_us", "bpm", "source"],
+      "properties": {
+        "at_us": {"$ref": "#/$defs/safe_time"},
+        "bpm": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+        "source": {"enum": ["midi", "estimated", "manual"]}
+      }
+    },
+    "beat_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at_us", "beat_position", "bpm", "confidence"],
+      "properties": {
+        "at_us": {"$ref": "#/$defs/safe_time"},
+        "beat_position": {"type": "number"},
+        "bpm": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+        "confidence": {"$ref": "#/$defs/confidence"}
+      }
+    },
+    "bend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at_us", "cents"],
+      "properties": {
+        "at_us": {"$ref": "#/$defs/safe_time"},
+        "cents": {"type": "number", "minimum": -200, "maximum": 200}
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "start_us", "end_us", "key", "pitch", "velocity", "confidence", "source_stem", "candidate_id", "original_pitch", "pitch_center", "pitch_bend_class", "pitch_bends"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "start_us": {"$ref": "#/$defs/safe_time"},
+        "end_us": {"$ref": "#/$defs/safe_time"},
+        "key": {"enum": ["Z", "X", "C", "V", "B", "N", "M", "A", "S", "D", "F", "G", "H", "J", "Q", "W", "E", "R", "T", "Y", "U"]},
+        "pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+        "velocity": {"type": "integer", "minimum": 1, "maximum": 127},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "source_stem": {"type": "string", "minLength": 1, "maxLength": 64},
+        "candidate_id": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 128}]},
+        "original_pitch": {"type": "integer", "minimum": 0, "maximum": 127},
+        "pitch_center": {"type": "number", "minimum": 0, "maximum": 127},
+        "pitch_bend_class": {"enum": ["stable", "vibrato", "slide", "bend"]},
+        "pitch_bends": {"type": "array", "items": {"$ref": "#/$defs/bend"}}
+      }
+    }
+  }
+}

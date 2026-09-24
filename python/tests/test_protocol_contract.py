@@ -222,3 +222,78 @@ def test_v2_report_requires_selection_and_accepts_candidate_cache() -> None:
         ],
     }
     validate_report(report)
+
+
+def test_v3_worker_accepts_performance_render() -> None:
+    validate_worker_message(
+        {
+            "protocol_version": 3,
+            "job_id": "local-job-performance",
+            "type": "start",
+            "payload": {
+                "operation": "render_performance",
+                "input_path": "C:/results/source",
+                "staging_dir": "C:/results/.staging",
+                "options": {"title": "revision.wav", "preview_wav": True},
+            },
+        }
+    )
+
+
+def test_v3_report_accepts_performance_artifacts_and_selection() -> None:
+    report = {
+        "schema_version": 3,
+        "application_version": "0.1.0",
+        "engine": {"name": "performance-renderer", "version": "1", "backend": "python"},
+        "model": None,
+        "input": {
+            "source_type": "midi",
+            "filename": "input.mid",
+            "sha256": "c" * 64,
+            "segment_start_us": 0,
+        },
+        "parameters": {
+            "performance": {
+                "format_version": 1,
+                "revision_id": "performance-000",
+                "mapping_profile": "lyre-21-default",
+                "transpose_semitones": 0,
+            }
+        },
+        "selected_track": None,
+        "elapsed_ms": 0.0,
+        "counts": {
+            "input_notes": 1,
+            "output_notes": 1,
+            "dropped_notes": 0,
+            "mapped_keys": 1,
+            "replaced_semitones": 0,
+            "octave_folds": 0,
+            "duplicate_keys": 0,
+            "compatibility_collisions": 0,
+        },
+        "selection": {
+            "format_version": 1,
+            "source": "performance",
+            "spec": {"format_version": 1, "rules": []},
+            "matched_notes": 1,
+            "dropped_notes": 0,
+            "rule_hits": [1],
+        },
+        "warnings": [],
+        "artifacts": [
+            {
+                "kind": "performance",
+                "relative_path": "performance.json",
+                "sha256": "d" * 64,
+                "size_bytes": 10,
+            },
+            {
+                "kind": "performance_midi",
+                "relative_path": "performance.mid",
+                "sha256": "e" * 64,
+                "size_bytes": 20,
+            },
+        ],
+    }
+    validate_report(report)

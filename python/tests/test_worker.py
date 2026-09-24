@@ -82,7 +82,7 @@ def _message(kind: str, **payload: object) -> bytes:
     return (
         json.dumps(
             {
-                "protocol_version": 2,
+                "protocol_version": 3,
                 "job_id": "local-test",
                 "type": kind,
                 "payload": payload,
@@ -341,7 +341,7 @@ def test_worker_refilters_cached_candidates_without_retranscribing(
         )
     )
     report = json.loads((second / "report.json").read_text(encoding="utf-8"))
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
     assert report["selection"]["source"] == "refilter"
     assert report["selection"]["matched_notes"] == 2
     assert report["selection"]["rule_hits"] == [2]
@@ -364,6 +364,84 @@ def test_worker_refilters_cached_candidates_without_retranscribing(
     automatic_report = json.loads((automatic / "report.json").read_text(encoding="utf-8"))
     assert automatic_report["selection"]["source"] == "refilter"
     assert "FILTER_AUTO" in {warning["code"] for warning in automatic_report["warnings"]}
+
+
+def test_worker_renders_performance_revision_without_mutating_parent(
+    tmp_path: pathlib.Path,
+) -> None:
+    source = tmp_path / "input.mid"
+    midi = mido.MidiFile(type=1, ticks_per_beat=480)
+    track = mido.MidiTrack()
+    track.extend(
+        [
+            mido.Message("note_on", note=60, velocity=100, time=0),
+            mido.Message("note_on", note=64, velocity=80, time=0),
+            mido.Message("note_off", note=60, velocity=0, time=480),
+            mido.Message("note_off", note=64, velocity=0, time=0),
+        ]
+    )
+    midi.tracks.append(track)
+    midi.save(str(source))
+    parent = tmp_path / "parent"
+    run_worker_message(
+        _message(
+            "start",
+            operation="convert_midi",
+            input_path=str(source),
+            staging_dir=str(parent),
+            options={"timing": "preserve", "transpose": 0, "preview_wav": False},
+        )
+    )
+    parent_performance = (parent / "performance.json").read_bytes()
+    parent_events = (parent / "score.events.json").read_bytes()
+    revision = tmp_path / "revision"
+    run_worker_message(
+        _message(
+            "start",
+            operation="render_performance",
+            input_path=str(parent),
+            staging_dir=str(revision),
+            options={"title": "revision.wav", "timing": "preserve", "preview_wav": True},
+        )
+    )
+    assert (revision / "performance.json").is_file()
+    assert (revision / "performance.mid").is_file()
+    assert (revision / "score.events.json").is_file()
+    assert (revision / "score.readable.txt").is_file()
+    assert (revision / "score.compat.txt").is_file()
+    assert (revision / "preview.wav").is_file()
+    report = json.loads((revision / "report.json").read_text(encoding="utf-8"))
+    assert report["schema_version"] == 3
+    assert report["selection"]["source"] == "performance"
+    assert report["elapsed_ms"] == 0.0
+    assert (parent / "performance.json").read_bytes() == parent_performance
+    assert (parent / "score.events.json").read_bytes() == parent_events
+
+
+def test_worker_rejects_legacy_result_without_performance(tmp_path: pathlib.Path) -> None:
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    output = io.StringIO()
+    controlled = ControlledInput(
+        [
+            _message(
+                "start",
+                operation="render_performance",
+                input_path=str(legacy),
+                staging_dir=str(tmp_path / "revision"),
+                options={},
+            )
+        ]
+    )
+    thread = threading.Thread(target=WorkerServer(controlled, output).run)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while '"type":"error"' not in output.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controlled.release()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert _outputs(output)[-1]["payload"]["code"] == "PERFORMANCE_MISSING"
 
 
 def run_worker_message(message: bytes) -> None:

@@ -6,6 +6,7 @@ from glt_core.protocol.validation import (
     validate_candidate_cache,
     validate_events,
     validate_note_sequence,
+    validate_performance,
     validate_report,
     validate_schema,
     validate_worker_message,
@@ -18,6 +19,7 @@ __all__ = [
     "validate_events",
     "validate_candidate_cache",
     "validate_note_sequence",
+    "validate_performance",
     "validate_report",
     "validate_worker_message",
 ]

@@ -217,7 +217,7 @@ pub fn validate_worker_value(value: &Value) -> Result<(), ValidationError> {
     let object = value.as_object().ok_or_else(|| {
         ValidationError::new("SCHEMA_INVALID", "worker message must be an object")
     })?;
-    require_version(object, "protocol_version", 1)
+    require_versions(object, "protocol_version", &[1, 2, 3])
 }
 
 pub fn validate_note_sequence_value(value: &Value) -> Result<(), ValidationError> {
@@ -234,7 +234,7 @@ pub fn validate_report_value(value: &Value) -> Result<(), ValidationError> {
     let object = value
         .as_object()
         .ok_or_else(|| ValidationError::new("SCHEMA_INVALID", "report must be an object"))?;
-    require_version(object, "schema_version", 1)?;
+    require_versions(object, "schema_version", &[1, 2, 3])?;
     let artifacts = object
         .get("artifacts")
         .and_then(Value::as_array)
@@ -264,6 +264,24 @@ fn require_version(
         .and_then(Value::as_u64)
         .ok_or_else(|| ValidationError::new("SCHEMA_INVALID", format!("{field} is required")))?;
     if value != expected {
+        return Err(ValidationError::new(
+            "UNSUPPORTED_VERSION",
+            format!("unsupported {field}: {value}"),
+        ));
+    }
+    Ok(())
+}
+
+fn require_versions(
+    object: &Map<String, Value>,
+    field: &str,
+    expected: &[u64],
+) -> Result<(), ValidationError> {
+    let value = object
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ValidationError::new("SCHEMA_INVALID", format!("{field} is required")))?;
+    if !expected.contains(&value) {
         return Err(ValidationError::new(
             "UNSUPPORTED_VERSION",
             format!("unsupported {field}: {value}"),
