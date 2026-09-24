@@ -9,6 +9,10 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import numpy as np
+import soundfile
+from scipy.signal import resample_poly
+
 from glt_core.media.ffmpeg import AudioStream, MediaError, probe_media, resolve_ffmpeg_tools
 
 ANALYSIS_SAMPLE_RATE = 44_100
@@ -50,7 +54,24 @@ def decode_audio(
     if end_us is not None and end_us <= (start_us or 0):
         raise MediaError("INVALID_SEGMENT", "end_us must be greater than start_us")
 
-    media = probe_media(input_path, cancelled=cancelled)
+    try:
+        tools = resolve_ffmpeg_tools()
+        media = probe_media(input_path, tools=tools, cancelled=cancelled)
+    except MediaError as exc:
+        if exc.code == "FFMPEG_NOT_FOUND" and input_path.suffix.lower() in {
+            ".wav",
+            ".flac",
+            ".ogg",
+        }:
+            return _decode_with_soundfile(
+                input_path,
+                output,
+                start_us=start_us,
+                end_us=end_us,
+                cancelled=cancelled,
+                progress=progress,
+            )
+        raise
     if not media.audio_streams:
         raise MediaError("NO_AUDIO_STREAM", "input has no audio stream")
     selected_stream: AudioStream | None
@@ -71,7 +92,6 @@ def decode_audio(
     output.parent.mkdir(parents=True, exist_ok=True)
     partial = output.with_name(f".{output.name}.partial")
     partial.unlink(missing_ok=True)
-    tools = resolve_ffmpeg_tools()
     command = [
         str(tools.ffmpeg),
         "-v",
@@ -169,3 +189,67 @@ def decode_audio(
         channels=ANALYSIS_CHANNELS,
         duration_us=round(frames * 1_000_000 / ANALYSIS_SAMPLE_RATE),
     )
+
+
+def _decode_with_soundfile(
+    input_path: pathlib.Path,
+    output: pathlib.Path,
+    *,
+    start_us: int | None,
+    end_us: int | None,
+    cancelled: Callable[[], bool] | None,
+    progress: Callable[[float | None], None] | None,
+) -> DecodedAudio:
+    try:
+        samples, sample_rate = soundfile.read(
+            input_path,
+            dtype="float32",
+            always_2d=True,
+        )
+    except (OSError, RuntimeError, soundfile.SoundFileRuntimeError) as exc:
+        raise MediaError("DECODE_FAILED", str(exc)) from exc
+    start_frame = 0 if start_us is None else round(start_us * sample_rate / 1_000_000)
+    end_frame = len(samples) if end_us is None else round(end_us * sample_rate / 1_000_000)
+    samples = samples[start_frame:end_frame]
+    if samples.size == 0:
+        raise MediaError("DECODE_EMPTY", "decoded audio is empty")
+    if cancelled is not None and cancelled():
+        raise AnalysisCancelled("analysis was cancelled")
+    if sample_rate != ANALYSIS_SAMPLE_RATE:
+        divisor = math_gcd(sample_rate, ANALYSIS_SAMPLE_RATE)
+        samples = resample_poly(
+            samples,
+            ANALYSIS_SAMPLE_RATE // divisor,
+            sample_rate // divisor,
+            axis=0,
+        ).astype(np.float32)
+    mono = samples.mean(axis=1, dtype=np.float32)
+    stereo = np.column_stack((mono, mono)).astype("<f4")
+    payload = stereo.tobytes(order="C")
+    partial = output.with_name(f".{output.name}.partial")
+    partial.unlink(missing_ok=True)
+    try:
+        with partial.open("wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(partial, output)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    if progress is not None:
+        progress(1.0)
+    return DecodedAudio(
+        path=output,
+        sha256=hashlib.sha256(payload).hexdigest(),
+        frames=len(stereo),
+        sample_rate=ANALYSIS_SAMPLE_RATE,
+        channels=ANALYSIS_CHANNELS,
+        duration_us=round(len(stereo) * 1_000_000 / ANALYSIS_SAMPLE_RATE),
+    )
+
+
+def math_gcd(left: int, right: int) -> int:
+    while right:
+        left, right = right, left % right
+    return abs(left)

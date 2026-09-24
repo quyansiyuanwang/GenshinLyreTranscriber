@@ -14,6 +14,7 @@ from glt_core.analysis import (
     build_analysis_cache,
 )
 from glt_core.analysis.decode import ANALYSIS_CHANNELS, ANALYSIS_SAMPLE_RATE
+from glt_core.media.ffmpeg import MediaError
 from glt_core.protocol.validation import validate_analysis_manifest
 
 
@@ -149,3 +150,23 @@ def test_chirp_centroid_increases_and_window_variants_are_valid(
 
     with pytest.raises(ValueError, match="hop_size"):
         SpectralConfig(fft_size=512, hop_size=600).validate()
+
+
+def test_wave_fallback_without_ffmpeg(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "tone.wav"
+    _write_stereo_wave(source, seconds=0.25)
+
+    def missing_ffmpeg() -> object:
+        raise MediaError("FFMPEG_NOT_FOUND", "not installed")
+
+    monkeypatch.setattr("glt_core.analysis.decode.resolve_ffmpeg_tools", missing_ffmpeg)
+    result = build_analysis_cache(
+        source,
+        tmp_path / "analysis",
+        spectral_config=SpectralConfig(fft_size=512, hop_size=128),
+    )
+    assert result.decoded.channels == ANALYSIS_CHANNELS
+    assert result.spectral is not None
