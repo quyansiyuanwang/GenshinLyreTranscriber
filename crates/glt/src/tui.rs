@@ -29,8 +29,8 @@ use crate::cli::{
     run_job_with_cancel,
 };
 use crate::jobs::{
-    FilterRange, FilterRule, FilterSpec, IntegerFilterRange, Operation, StartOptions, Timing,
-    Transpose,
+    FilterPreset, FilterRange, FilterRule, FilterSpec, IntegerFilterRange, Operation, StartOptions,
+    Timing, Transpose,
 };
 use crate::preview::PlaybackService;
 
@@ -494,10 +494,6 @@ impl TuiApp {
     }
 
     fn start_filter_job(&mut self) {
-        let Some(input) = self.result_directory.clone() else {
-            self.message = "result directory is unavailable".to_owned();
-            return;
-        };
         let spec = match self.current_filter_spec() {
             Ok(spec) => spec,
             Err(error) => {
@@ -505,6 +501,29 @@ impl TuiApp {
                 return;
             }
         };
+        self.start_filter_job_with(Some(spec), None);
+    }
+
+    fn start_auto_filter_job(&mut self) {
+        self.start_filter_job_with(None, Some(FilterPreset::Auto));
+    }
+
+    fn start_preset_filter_job(&mut self, preset: FilterPreset) {
+        self.start_filter_job_with(None, Some(preset));
+    }
+
+    fn start_filter_job_with(
+        &mut self,
+        filter: Option<FilterSpec>,
+        filter_preset: Option<FilterPreset>,
+    ) {
+        let Some(input) = self.result_directory.clone() else {
+            self.message = "result directory is unavailable".to_owned();
+            return;
+        };
+        if filter.is_none() && filter_preset.is_none() {
+            return;
+        }
         let output = match next_filter_directory(&input) {
             Ok(output) => output,
             Err(error) => {
@@ -513,7 +532,8 @@ impl TuiApp {
             }
         };
         let options = StartOptions {
-            filter: Some(spec),
+            filter,
+            filter_preset,
             preview_wav: Some(true),
             overwrite: Some(false),
             ..StartOptions::default()
@@ -845,6 +865,9 @@ impl TuiApp {
                 KeyCode::Char('+' | '=') => self.adjust_volume(0.1),
                 KeyCode::Char('-') => self.adjust_volume(-0.1),
                 KeyCode::Char('f') => self.open_filter(),
+                KeyCode::Char('a') => self.start_auto_filter_job(),
+                KeyCode::Char('b') => self.start_preset_filter_job(FilterPreset::Balanced),
+                KeyCode::Char('m') => self.start_preset_filter_job(FilterPreset::Melody),
                 KeyCode::Char('r') => {
                     self.screen = Screen::Parameters;
                     self.focus = FIELD_TIMING;
@@ -1011,7 +1034,7 @@ impl TuiApp {
         let footer = match self.screen {
             Screen::Running => "Ctrl+C cancel/exit",
             Screen::Completed => {
-                "Space play/pause  S stop  +/- volume  F filter  R rerun  Esc exit"
+                "Space play  S stop  +/- volume  F edit  A auto  B balanced  M melody  R rerun"
             }
             Screen::Filter => "Tab field  Up/Down rule  Space toggle  F5 apply  R reset  Esc back",
             Screen::Failed => "Esc exit",

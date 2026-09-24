@@ -351,6 +351,20 @@ def test_worker_refilters_cached_candidates_without_retranscribing(
     assert (first / "source.mid").read_bytes() == original_source
     assert (first / "report.json").read_bytes() == original_report
 
+    automatic = tmp_path / "automatic"
+    run_worker_message(
+        _message(
+            "start",
+            operation="refilter",
+            input_path=str(first),
+            staging_dir=str(automatic),
+            options={"preview_wav": False, "filter_preset": "auto"},
+        )
+    )
+    automatic_report = json.loads((automatic / "report.json").read_text(encoding="utf-8"))
+    assert automatic_report["selection"]["source"] == "refilter"
+    assert "FILTER_AUTO" in {warning["code"] for warning in automatic_report["warnings"]}
+
 
 def run_worker_message(message: bytes) -> None:
     output = io.StringIO()

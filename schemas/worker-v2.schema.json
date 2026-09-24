@@ -197,6 +197,14 @@
                 },
                 "filter": {
                   "$ref": "#/$defs/filter_spec"
+                },
+                "filter_preset": {
+                  "enum": [
+                    "off",
+                    "auto",
+                    "balanced",
+                    "melody"
+                  ]
                 }
               }
             }

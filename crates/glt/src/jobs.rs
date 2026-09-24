@@ -112,6 +112,15 @@ pub enum Timing {
     Triplet,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterPreset {
+    Off,
+    Auto,
+    Balanced,
+    Melody,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Transpose {
@@ -267,6 +276,8 @@ pub struct StartOptions {
     pub mapping_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<FilterSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter_preset: Option<FilterPreset>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

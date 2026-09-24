@@ -39,6 +39,7 @@ fn request(staging: &Path) -> StartRequest {
             overwrite: Some(true),
             mapping_profile: None,
             filter: None,
+            filter_preset: None,
         },
     }
 }

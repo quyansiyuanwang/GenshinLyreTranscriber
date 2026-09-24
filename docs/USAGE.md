@@ -12,7 +12,7 @@ glt doctor [--worker PATH] [--json]
 glt transcribe INPUT --output DIR [OPTIONS]
 glt convert-midi INPUT --output DIR [OPTIONS]
 glt preview RESULT_DIR [--volume 0..1]
-glt filter RESULT_DIR --output DIR --filter-file FILTER_JSON
+glt filter RESULT_DIR --output DIR (--filter-file FILTER_JSON | --auto | --preset PRESET)
 ```
 
 ## TUI
@@ -25,7 +25,9 @@ glt filter RESULT_DIR --output DIR --filter-file FILTER_JSON
 
 运行页只显示 worker 实际发送的阶段和进度；没有可信百分比时明确显示未知。完成后结果页
 显示计数、告警和产物，`Space` 播放/暂停、`S` 停止、`+/-` 调整音量，`R` 可带当前参数
-重试；按 `F` 打开分组筛选编辑器。筛选页使用 `Up/Down` 选择规则、`Tab` 切换范围字段、
+重试；按 `A` 直接执行自动检测并生成新版本，`B` 使用 balanced 预设，`M` 使用 melody
+预设，按 `F` 打开分组筛选编辑器。筛选页使用
+`Up/Down` 选择规则、`Tab` 切换范围字段、
 `Space` 切换规则启用状态、`F5` 应用、`R` 恢复初始规则、`Esc` 返回。每次应用生成新的
 `原目录-filter-NN` 版本，不覆盖原结果。没有 `preview.wav` 时明确提示重新生成。TUI 与
 CLI 共用参数构造和作业控制器，
@@ -75,6 +77,16 @@ CLI 共用参数构造和作业控制器，
 每条规则内所有填写的范围同时满足，任意一条启用规则满足即可保留。范围包含边界；未填写的
 属性不参与判断。`pitch` 使用原始 MIDI 编号或 `C#4` 音名，不受移调影响。旧 v1 结果没有
 候选缓存，会明确失败并提示重新转录。
+
+也可使用内置配置：
+
+- `--auto`：根据候选音符的时长低分位、confidence 低分位和音高低分位生成可解释规则。
+- `--preset balanced`：保留中长音，并使用多组条件减弱短促鼓型误检。
+- `--preset melody`：进一步偏向较长、高置信音符，适合只要主旋律的试听。
+- `--preset off`：不做属性筛选，只执行结构清理。
+
+自动检测阈值会写入 `FILTER_AUTO` 告警，实际生成的 FilterSpec 仍完整写入报告，可在
+TUI 中继续编辑。
 
 `--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
 静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。

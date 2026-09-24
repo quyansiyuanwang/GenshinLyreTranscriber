@@ -6,6 +6,11 @@ from glt_core.processing.arrangement import (
     ArrangementStats,
     arrange_note_sequence,
 )
+from glt_core.processing.auto_filter import (
+    AutoFilterRecommendation,
+    detect_filter_spec,
+    filter_preset,
+)
 from glt_core.processing.clean import (
     CleanConfig,
     CleanResult,
@@ -73,6 +78,7 @@ __all__ = [
     "ArrangementConfig",
     "ArrangementResult",
     "ArrangementStats",
+    "AutoFilterRecommendation",
     "NoteChange",
     "FallbackRegion",
     "QuantizationChange",
@@ -98,6 +104,8 @@ __all__ = [
     "filter_spec_from_dict",
     "legacy_filter_spec",
     "arrange_note_sequence",
+    "detect_filter_spec",
+    "filter_preset",
     "default_mapping_layout",
     "map_note_sequence",
     "preview_transpositions",

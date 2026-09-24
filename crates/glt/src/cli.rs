@@ -13,9 +13,9 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::jobs::{
-    DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, FilterSpec, Operation,
-    ResultPayload, StartOptions, StartRequest, Timing, Transpose, WorkerClient, WorkerError,
-    WorkerEvent, WorkerSpec,
+    DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, FilterPreset,
+    FilterSpec, Operation, ResultPayload, StartOptions, StartRequest, Timing, Transpose,
+    WorkerClient, WorkerError, WorkerEvent, WorkerSpec,
 };
 
 const EXIT_USAGE: i32 = 2;
@@ -84,6 +84,25 @@ impl From<TimingArg> for Timing {
 enum TransposeArg {
     Auto,
     Semitones(i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum FilterPresetArg {
+    Off,
+    Auto,
+    Balanced,
+    Melody,
+}
+
+impl From<FilterPresetArg> for FilterPreset {
+    fn from(value: FilterPresetArg) -> Self {
+        match value {
+            FilterPresetArg::Off => Self::Off,
+            FilterPresetArg::Auto => Self::Auto,
+            FilterPresetArg::Balanced => Self::Balanced,
+            FilterPresetArg::Melody => Self::Melody,
+        }
+    }
 }
 
 impl FromStr for TransposeArg {
@@ -374,6 +393,11 @@ struct PreviewArgs {
 }
 
 #[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("filter_source")
+        .required(true)
+        .args(["filter_file", "auto_filter", "preset"])
+))]
 struct FilterArgs {
     /// Existing v2 result directory.
     result_dir: PathBuf,
@@ -381,8 +405,14 @@ struct FilterArgs {
     #[arg(long)]
     output: PathBuf,
     /// JSON file containing one FilterSpec v1 object.
-    #[arg(long)]
-    filter_file: PathBuf,
+    #[arg(long, conflicts_with_all = ["auto_filter", "preset"])]
+    filter_file: Option<PathBuf>,
+    /// Automatically derive editable filter rules from the candidate cache.
+    #[arg(long = "auto", conflicts_with_all = ["filter_file", "preset"])]
+    auto_filter: bool,
+    /// Apply a built-in filter preset.
+    #[arg(long, value_enum, conflicts_with_all = ["filter_file", "auto_filter"])]
+    preset: Option<FilterPresetArg>,
     /// Allow replacing the output directory.
     #[arg(long)]
     overwrite: bool,
@@ -602,12 +632,25 @@ fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
 }
 
 fn run_filter(args: FilterArgs) -> Result<(), CliError> {
-    let filter_text = fs::read_to_string(&args.filter_file)?;
-    let filter: FilterSpec = serde_json::from_str(&filter_text)
-        .map_err(|error| CliError::InvalidArgument(format!("invalid filter file: {error}")))?;
-    filter.validate().map_err(CliError::InvalidArgument)?;
+    let filter = match &args.filter_file {
+        Some(path) => {
+            let filter_text = fs::read_to_string(path)?;
+            let filter: FilterSpec = serde_json::from_str(&filter_text).map_err(|error| {
+                CliError::InvalidArgument(format!("invalid filter file: {error}"))
+            })?;
+            filter.validate().map_err(CliError::InvalidArgument)?;
+            Some(filter)
+        }
+        None => None,
+    };
+    let filter_preset = if args.auto_filter {
+        Some(FilterPreset::Auto)
+    } else {
+        args.preset.map(Into::into)
+    };
     let options = StartOptions {
-        filter: Some(filter),
+        filter,
+        filter_preset,
         overwrite: Some(args.overwrite),
         ..StartOptions::default()
     };
@@ -683,6 +726,7 @@ pub(crate) fn build_job_options(
         overwrite: Some(overwrite),
         mapping_profile: None,
         filter: None,
+        filter_preset: None,
     })
 }
 

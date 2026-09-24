@@ -155,6 +155,20 @@ def test_v2_refilter_worker_message_is_valid() -> None:
         }
     )
 
+    validate_worker_message(
+        {
+            "protocol_version": 2,
+            "job_id": "local-job-auto",
+            "type": "start",
+            "payload": {
+                "operation": "refilter",
+                "input_path": "C:/results/source",
+                "staging_dir": "C:/results/.staging",
+                "options": {"filter_preset": "auto"},
+            },
+        }
+    )
+
 
 def test_v2_report_requires_selection_and_accepts_candidate_cache() -> None:
     report = {

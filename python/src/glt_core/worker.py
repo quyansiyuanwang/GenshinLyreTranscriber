@@ -49,6 +49,7 @@ from glt_core.media import (
 from glt_core.processing import (
     ArrangementConfig,
     CleanConfig,
+    FilterSpec,
     MappingConfig,
     QuantizationConfig,
     analyze_timing,
@@ -56,6 +57,7 @@ from glt_core.processing import (
     arrange_note_sequence,
     clean_note_sequence,
     default_mapping_layout,
+    filter_preset,
     filter_spec_from_dict,
     legacy_filter_spec,
     map_note_sequence,
@@ -974,11 +976,6 @@ class WorkerServer:
         options = payload.get("options")
         if not isinstance(options, dict):
             raise WorkerJobError("SCHEMA_INVALID", "options must be an object")
-        filter_document = options.get("filter")
-        try:
-            filter_spec = filter_spec_from_dict(filter_document)
-        except ValueError as exc:
-            raise WorkerJobError("INVALID_FILTER", str(exc)) from exc
         try:
             cache = read_candidate_cache(source_dir / CANDIDATE_CACHE_NAME)
         except (OSError, ValueError) as exc:
@@ -990,6 +987,13 @@ class WorkerServer:
             payload={"stage": "validating", "fraction": 0.0},
         )
         _raise_if_cancelled(cancelled)
+        try:
+            filter_spec, automatic_diagnostics = _filter_selection(
+                options,
+                cache_sequence=cache.sequence,
+            )
+        except ValueError as exc:
+            raise WorkerJobError("INVALID_FILTER", str(exc)) from exc
         filtered = apply_filter(cache.sequence, filter_spec)
         self._writer.send(
             kind="progress",
@@ -1134,6 +1138,7 @@ class WorkerServer:
                 len(quantization.fallback_regions),
                 arrangement_config,
                 arrangement.stats.dropped_notes,
+                automatic_diagnostics,
             )
             + _compatibility_warnings(text_exports.compatibility)
             + _preview_warnings(preview_requested, preview, events_document),
@@ -1542,6 +1547,7 @@ def _refilter_warnings(
     quantization_fallbacks: int,
     arrangement_config: ArrangementConfig,
     arrangement_removed: int,
+    automatic_diagnostics: dict[str, Any] | None,
 ) -> list[dict[str, str]]:
     warnings: list[dict[str, str]] = [
         {
@@ -1586,7 +1592,37 @@ def _refilter_warnings(
                 "message": f"{quantization_fallbacks} notes kept their original timing",
             }
         )
+    if automatic_diagnostics is not None:
+        warnings.append(
+            {
+                "code": "FILTER_AUTO",
+                "message": (
+                    "automatic filter thresholds: "
+                    f"duration_floor_ms={automatic_diagnostics.get('duration_floor_ms')}, "
+                    f"confidence_floor={automatic_diagnostics.get('confidence_floor')}, "
+                    f"pitch_floor={automatic_diagnostics.get('pitch_floor')}, "
+                    f"suspected_notes={automatic_diagnostics.get('suspected_notes')}"
+                ),
+            }
+        )
     return warnings
+
+
+def _filter_selection(
+    options: dict[str, Any],
+    *,
+    cache_sequence: Any,
+) -> tuple[FilterSpec, dict[str, Any] | None]:
+    filter_document = options.get("filter")
+    if filter_document is not None:
+        return filter_spec_from_dict(filter_document), None
+    preset = options.get("filter_preset")
+    if not isinstance(preset, str):
+        raise ValueError("refilter requires filter or filter_preset")
+    if cache_sequence is None:
+        raise ValueError("automatic filter detection requires candidate notes")
+    recommendation = filter_preset(preset, cache_sequence)
+    return recommendation.spec, recommendation.diagnostics
 
 
 def _quantization_config(options: dict[str, Any], *, default_mode: str) -> QuantizationConfig:

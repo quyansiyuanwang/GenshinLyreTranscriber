@@ -8,7 +8,7 @@
 - `note-sequence-v1.schema.json`：内部统一音符时间轴。
 - `report-v1.schema.json`：转换报告与产物清单。
 - `candidate-cache-v1.schema.json`：结果页快速重筛所需候选音符和 timing 元数据。
-- `worker-v2.schema.json`：v2 JSONL worker，新增 `refilter` operation 和 FilterSpec。
+- `worker-v2.schema.json`：v2 JSONL worker，新增 `refilter` operation、FilterSpec 和预设/自动检测选项。
 - `report-v2.schema.json`：v2 报告，新增筛选规格、筛选统计和候选缓存 artifact。
 - `versions.json`：正式 Schema 的 SHA256 冻结清单。
 

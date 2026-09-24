@@ -30,7 +30,7 @@
 - 使用稳定节拍追踪分析整曲与局部速度；低置信时退回原始 onset，不伪造 BPM。
 - 支持 auto/preserve/straight/triplet 可控量化，直拍网格按十六分音符细分，显式 BPM 具有更高优先级。
 - 默认启用可演奏性编排：合并 150ms 内的近同时起音，并按力度、时值和音程关系保留最多两个互补声部；可通过 `--arrangement off`、`--onset-window-ms` 和 `--max-voices` 调整。
-- 结果包含候选音符缓存，可用分组区间筛选 `confidence`、时长、力度和原始 MIDI 音高；组内条件全部满足，任意一组满足即保留。结果页可按 `F` 反复调参并生成新的 `*-filter-NN` 版本。
+- 结果包含候选音符缓存，可用分组区间筛选 `confidence`、时长、力度和原始 MIDI 音高；组内条件全部满足，任意一组满足即保留。结果页可按 `F` 反复调参，按 `A` 自动检测并生成可继续编辑的规则，输出新的 `*-filter-NN` 版本。
 - 自动移调优先保留音高类别，再使用八度折返进入 C3-B5，避免为了减少折返而整体错移调；仍支持手动移调、半音替换和同刻冲突统计。
 - 提供 -12..12 半音移调候选预览，可在正式映射前查看损失和冲突。
 - 结果目录包含候选缓存 `score.candidates.json`、`source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 和 `report.json`；按需生成 `preview.wav`。
