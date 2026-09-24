@@ -142,7 +142,8 @@
                 "transcribe",
                 "convert_midi",
                 "refilter",
-                "render_performance"
+                "render_performance",
+                "edit_export"
               ]
             },
             "input_path": {
@@ -211,6 +212,24 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 256
+                },
+                "source_result_dir": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "revision_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "parent_revision_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1,
+                  "maxLength": 128
                 }
               }
             }

@@ -51,6 +51,7 @@ from glt_core.performance import (
     PERFORMANCE_NAME,
     PerformanceBundle,
     PerformanceDocument,
+    PerformanceRevision,
     build_performance,
     read_performance,
     render_performance_bundle,
@@ -266,6 +267,8 @@ class WorkerServer:
                 result = self._refilter(payload, job_id, cancel_event.is_set)
             elif operation == "render_performance":
                 result = self._render_performance(payload, job_id, cancel_event.is_set)
+            elif operation == "edit_export":
+                result = self._edit_export(payload, job_id, cancel_event.is_set)
             else:
                 raise WorkerJobError(
                     "NOT_IMPLEMENTED",
@@ -1402,6 +1405,179 @@ class WorkerServer:
             "selection": {
                 "format_version": 1,
                 "source": "performance",
+                "spec": {"format_version": 1, "rules": []},
+                "matched_notes": len(document.notes),
+                "dropped_notes": 0,
+                "rule_hits": [len(document.notes)],
+            },
+            "warnings": warnings,
+            "artifacts": artifacts,
+        }
+        validate_report(report)
+        report_path = staging_dir / REPORT_NAME
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        artifacts.append(_artifact_entry("report", report_path))
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "completed", "fraction": 1.0},
+        )
+        return {
+            "output_dir": str(staging_dir),
+            "report_path": REPORT_NAME,
+            "artifacts": artifacts,
+        }
+
+    def _edit_export(
+        self,
+        payload: dict[str, Any],
+        job_id: str,
+        cancelled: Callable[[], bool],
+    ) -> dict[str, Any]:
+        input_path = pathlib.Path(str(payload.get("input_path", ""))).expanduser().resolve()
+        staging_dir = pathlib.Path(str(payload.get("staging_dir", ""))).expanduser().resolve()
+        if not input_path.is_file():
+            raise WorkerJobError("INPUT_NOT_FOUND", "edited performance file does not exist")
+        options = payload.get("options")
+        if not isinstance(options, dict):
+            raise WorkerJobError("SCHEMA_INVALID", "options must be an object")
+        source_value = options.get("source_result_dir")
+        source_dir = input_path.parent
+        if source_value is not None:
+            source_dir = pathlib.Path(str(source_value)).expanduser().resolve()
+            if not source_dir.is_dir():
+                raise WorkerJobError(
+                    "INPUT_NOT_FOUND",
+                    "source performance result directory does not exist",
+                )
+        revision_id = options.get("revision_id", "edit-01")
+        parent_revision_id = options.get("parent_revision_id")
+        if not isinstance(revision_id, str) or not revision_id.strip() or len(revision_id) > 128:
+            raise WorkerJobError("SCHEMA_INVALID", "edit revision_id is invalid")
+        if parent_revision_id is not None and (
+            not isinstance(parent_revision_id, str)
+            or not parent_revision_id.strip()
+            or len(parent_revision_id) > 128
+        ):
+            raise WorkerJobError("SCHEMA_INVALID", "parent_revision_id is invalid")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "validating", "fraction": 0.0},
+        )
+        _raise_if_cancelled(cancelled)
+        document = read_performance(input_path)
+        document = replace(
+            document,
+            revision=PerformanceRevision(
+                id=revision_id.strip(),
+                parent_id=(
+                    parent_revision_id.strip()
+                    if isinstance(parent_revision_id, str)
+                    else document.revision.id
+                ),
+                source="edit",
+            ),
+        )
+        previous_report = _read_optional_report(source_dir)
+        title_value = options.get("title")
+        if title_value is not None and (
+            not isinstance(title_value, str) or not title_value.strip()
+        ):
+            raise WorkerJobError("SCHEMA_INVALID", "edit title must be a non-empty string")
+        title = (
+            str(title_value).strip()
+            if title_value is not None
+            else _report_input_filename(previous_report) or "edited-performance"
+        )
+        self._writer.send(
+            kind="progress",
+            job_id=job_id,
+            payload={"stage": "exporting", "fraction": 0.25},
+        )
+        bundle = render_performance_bundle(
+            document,
+            staging_dir,
+            title=title,
+            timing_mode=str(options.get("timing", "preserve")),
+            preview_wav=bool(options.get("preview_wav", False)),
+            generator=f"GenshinLyreTranscriber {__version__}",
+        )
+        _raise_if_cancelled(cancelled)
+        artifacts = list(bundle.artifacts)
+        source_midi = staging_dir / SOURCE_MIDI_NAME
+        source_candidate = staging_dir / CANDIDATE_CACHE_NAME
+        original_source_midi = source_dir / SOURCE_MIDI_NAME
+        original_candidate = source_dir / CANDIDATE_CACHE_NAME
+        if original_source_midi.is_file():
+            shutil.copyfile(original_source_midi, source_midi)
+            artifacts.append(_artifact_entry("source_midi", source_midi))
+        if original_candidate.is_file():
+            shutil.copyfile(original_candidate, source_candidate)
+            artifacts.append(_artifact_entry("candidate_cache", source_candidate))
+
+        input_document = _performance_report_input(
+            previous_report,
+            performance_path=input_path,
+            document=document,
+            fallback_title=title,
+        )
+        parameters = previous_report.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+        parameters = {
+            **parameters,
+            "performance": {
+                "format_version": document.format_version,
+                "revision_id": document.revision.id,
+                "mapping_profile": document.mapping.profile,
+                "transpose_semitones": document.mapping.transpose_semitones,
+            },
+            "preview_wav": bool(options.get("preview_wav", False)),
+        }
+        engine = previous_report.get("engine")
+        if not isinstance(engine, dict):
+            engine = {"name": "performance-editor", "version": "1", "backend": "python"}
+        model = previous_report.get("model")
+        if model is not None and not isinstance(model, dict):
+            model = None
+        selected_track = previous_report.get("selected_track")
+        if isinstance(selected_track, bool) or not isinstance(selected_track, int):
+            selected_track = None
+        warnings = _compatibility_warnings(bundle.compatibility)
+        if bool(options.get("preview_wav", False)) and not bundle.events_document["events"]:
+            warnings.append(
+                {
+                    "code": "EMPTY_PREVIEW",
+                    "message": "empty performance has no audible preview",
+                }
+            )
+        report = {
+            "schema_version": 3,
+            "application_version": __version__,
+            "engine": engine,
+            "model": model,
+            "input": input_document,
+            "parameters": parameters,
+            "selected_track": selected_track,
+            "elapsed_ms": 0.0,
+            "counts": {
+                "input_notes": len(document.notes),
+                "output_notes": len(document.notes),
+                "dropped_notes": 0,
+                "mapped_keys": len({note.key for note in document.notes}),
+                "replaced_semitones": 0,
+                "octave_folds": 0,
+                "duplicate_keys": 0,
+                "compatibility_collisions": bundle.compatibility.collisions,
+            },
+            "selection": {
+                "format_version": 1,
+                "source": "edit",
                 "spec": {"format_version": 1, "rules": []},
                 "matched_notes": len(document.notes),
                 "dropped_notes": 0,

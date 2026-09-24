@@ -337,7 +337,8 @@
           "enum": [
             "legacy_cleaning",
             "refilter",
-            "performance"
+            "performance",
+            "edit"
           ]
         },
         "spec": {

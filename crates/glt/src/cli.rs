@@ -774,6 +774,9 @@ pub(crate) fn build_job_options(
         filter: None,
         filter_preset: None,
         title: None,
+        source_result_dir: None,
+        revision_id: None,
+        parent_revision_id: None,
     })
 }
 
@@ -908,7 +911,7 @@ where
     let input = absolute_path(&input)?;
     let input_valid = match operation {
         Operation::Refilter | Operation::RenderPerformance => input.is_dir(),
-        Operation::Transcribe | Operation::ConvertMidi => input.is_file(),
+        Operation::Transcribe | Operation::ConvertMidi | Operation::EditExport => input.is_file(),
     };
     if !input_valid {
         return Err(CliError::InvalidArgument(format!(

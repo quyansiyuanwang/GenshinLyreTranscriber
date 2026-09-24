@@ -444,6 +444,61 @@ def test_worker_rejects_legacy_result_without_performance(tmp_path: pathlib.Path
     assert _outputs(output)[-1]["payload"]["code"] == "PERFORMANCE_MISSING"
 
 
+def test_worker_exports_edit_revision_without_mutating_parent(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "input.mid"
+    midi = mido.MidiFile(type=1, ticks_per_beat=480)
+    track = mido.MidiTrack()
+    track.extend(
+        [
+            mido.Message("note_on", note=60, velocity=100, time=0),
+            mido.Message("note_off", note=60, velocity=0, time=480),
+        ]
+    )
+    midi.tracks.append(track)
+    midi.save(str(source))
+    parent = tmp_path / "parent"
+    run_worker_message(
+        _message(
+            "start",
+            operation="convert_midi",
+            input_path=str(source),
+            staging_dir=str(parent),
+            options={"timing": "preserve", "transpose": 0},
+        )
+    )
+    parent_performance = (parent / "performance.json").read_bytes()
+    edited = json.loads(parent_performance)
+    edited["notes"][0]["velocity"] = 71
+    payload_path = tmp_path / "edited-performance.json"
+    payload_path.write_text(json.dumps(edited), encoding="utf-8")
+    revision = tmp_path / "edit-01"
+    run_worker_message(
+        _message(
+            "start",
+            operation="edit_export",
+            input_path=str(payload_path),
+            staging_dir=str(revision),
+            options={
+                "source_result_dir": str(parent),
+                "revision_id": "edit-01",
+                "parent_revision_id": "performance-000",
+                "preview_wav": True,
+            },
+        )
+    )
+    document = json.loads((revision / "performance.json").read_text(encoding="utf-8"))
+    assert document["revision"] == {
+        "id": "edit-01",
+        "parent_id": "performance-000",
+        "source": "edit",
+    }
+    assert document["notes"][0]["velocity"] == 71
+    report = json.loads((revision / "report.json").read_text(encoding="utf-8"))
+    assert report["selection"]["source"] == "edit"
+    assert (revision / "source.mid").is_file()
+    assert (parent / "performance.json").read_bytes() == parent_performance
+
+
 def run_worker_message(message: bytes) -> None:
     output = io.StringIO()
     controlled = ControlledInput([message])

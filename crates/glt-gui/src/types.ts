@@ -1,4 +1,4 @@
-export type Operation = "transcribe" | "convert_midi" | "refilter";
+export type Operation = "transcribe" | "convert_midi" | "refilter" | "render_performance" | "edit_export";
 export type Timing = "auto" | "preserve" | "straight" | "triplet";
 export type Transpose = "auto" | number;
 export type CleaningProfile = "auto" | "solo" | "mix" | "strict";
@@ -221,4 +221,66 @@ export interface DraftFilterRule {
   velocityMax: string;
   pitchMin: string;
   pitchMax: string;
+}
+
+export type PitchBendClass = "stable" | "vibrato" | "slide" | "bend";
+
+export interface PitchBendPoint {
+  at_us: number;
+  cents: number;
+}
+
+export interface PerformanceRevision {
+  id: string;
+  parent_id: string | null;
+  source: "transcribe" | "convert_midi" | "refilter" | "render_performance" | "edit";
+}
+
+export interface PerformanceNote {
+  id: string;
+  start_us: number;
+  end_us: number;
+  key: string;
+  pitch: number;
+  velocity: number;
+  confidence: number | null;
+  source_stem: string;
+  candidate_id: string | null;
+  original_pitch: number;
+  pitch_center: number;
+  pitch_bend_class: PitchBendClass;
+  pitch_bends: PitchBendPoint[];
+}
+
+export interface PerformanceDocument {
+  format_version: 1;
+  time_unit: "us";
+  duration_us: number;
+  revision: PerformanceRevision;
+  source: {
+    type: "audio" | "video" | "midi";
+    offset_us: number;
+  };
+  mapping: {
+    profile: string;
+    transpose_semitones: number;
+  };
+  tempo_map: Array<{ at_us: number; bpm: number; source: string }>;
+  beat_grid: Array<{
+    at_us: number;
+    beat_position: number;
+    bpm: number;
+    confidence: number | null;
+  }>;
+  notes: PerformanceNote[];
+}
+
+export interface CandidateNote {
+  pitch: number;
+  start_us: number;
+  end_us: number;
+  velocity: number;
+  confidence: number | null;
+  track: number;
+  channel: number;
 }

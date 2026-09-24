@@ -1,12 +1,15 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use glt::desktop::{self, DesktopJobRequest};
+use glt::jobs::{Operation, Timing, Transpose};
 use glt::preview::PlaybackService;
 use project::{ProjectDocument, ProjectRevision};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
+use uuid::Uuid;
 
 mod analysis;
 mod project;
@@ -140,6 +143,15 @@ fn start_job(
     state: State<'_, GuiState>,
     request: DesktopJobRequest,
 ) -> Result<(), String> {
+    spawn_desktop_job(app, &state, request, None)
+}
+
+fn spawn_desktop_job(
+    app: AppHandle,
+    state: &GuiState,
+    request: DesktopJobRequest,
+    cleanup: Option<PathBuf>,
+) -> Result<(), String> {
     if state.running.swap(true, Ordering::SeqCst) {
         return Err("a job is already running".to_owned());
     }
@@ -166,6 +178,9 @@ fn start_job(
         state.running.store(false, Ordering::SeqCst);
         if let Ok(mut active) = state.cancellation.lock() {
             *active = None;
+        }
+        if let Some(path) = cleanup {
+            let _ = fs::remove_file(path);
         }
     });
     Ok(())
@@ -212,6 +227,131 @@ fn next_filter_output(source: PathBuf) -> Result<PathBuf, String> {
         }
     }
     Err("no available filter variant name remains".to_owned())
+}
+
+#[tauri::command]
+fn read_performance(result_dir: PathBuf) -> Result<Value, String> {
+    let path = result_dir.join("performance.json");
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("invalid performance JSON: {error}"))
+}
+
+#[tauri::command]
+fn read_candidate_overlay(result_dir: PathBuf) -> Result<Value, String> {
+    let path = result_dir.join("score.candidates.json");
+    if !path.is_file() {
+        return Ok(Value::Array(Vec::new()));
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let document: Value =
+        serde_json::from_str(&text).map_err(|error| format!("invalid candidate JSON: {error}"))?;
+    Ok(document
+        .pointer("/sequence/notes")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new())))
+}
+
+#[tauri::command]
+fn next_edit_output(source: PathBuf) -> Result<PathBuf, String> {
+    next_edit_output_path(&source)
+}
+
+fn next_edit_output_path(source: &Path) -> Result<PathBuf, String> {
+    let parent = source
+        .parent()
+        .ok_or_else(|| "result directory has no parent".to_owned())?;
+    let name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "result directory name is not UTF-8".to_owned())?;
+    let base = name
+        .rfind("-edit-")
+        .filter(|index| {
+            name[index + 6..]
+                .chars()
+                .all(|character| character.is_ascii_digit())
+        })
+        .map_or(name, |index| &name[..index]);
+    for index in 1..=999 {
+        let candidate = parent.join(format!("{base}-edit-{index:02}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("no available edit revision name remains".to_owned())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn edit_export(
+    app: AppHandle,
+    state: State<'_, GuiState>,
+    source_result_dir: PathBuf,
+    output: PathBuf,
+    performance: Value,
+    preview_wav: bool,
+    title: Option<String>,
+    worker_path: Option<PathBuf>,
+) -> Result<(), String> {
+    if !source_result_dir.is_dir() {
+        return Err("source performance result directory does not exist".to_owned());
+    }
+    if output.exists() {
+        return Err(format!("edit output already exists: {}", output.display()));
+    }
+    let revision_id = output
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty() && value.len() <= 128)
+        .ok_or_else(|| "edit output name is invalid".to_owned())?
+        .to_owned();
+    let parent_revision_id = performance
+        .pointer("/revision/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "performance revision id is missing".to_owned())?
+        .to_owned();
+    let parent = output
+        .parent()
+        .ok_or_else(|| "edit output must have a parent directory".to_owned())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let payload = parent.join(format!(".glt-edit-{}.json", Uuid::new_v4()));
+    let mut encoded = serde_json::to_vec_pretty(&performance).map_err(|error| error.to_string())?;
+    encoded.push(b'\n');
+    fs::write(&payload, encoded).map_err(|error| error.to_string())?;
+    let request = DesktopJobRequest {
+        input: payload.clone(),
+        output: output.clone(),
+        operation: Operation::EditExport,
+        timing: Timing::Preserve,
+        bpm: None,
+        transpose: Transpose::Semitones(0),
+        audio_track: None,
+        start_seconds: None,
+        end_seconds: None,
+        preview_wav,
+        overwrite: false,
+        cleaning_profile: Default::default(),
+        min_confidence: None,
+        min_duration_ms: None,
+        retrigger_gap_ms: None,
+        arrangement: Default::default(),
+        onset_window_ms: 150,
+        max_voices: 21,
+        filter: None,
+        filter_preset: None,
+        source_result_dir: Some(source_result_dir),
+        revision_id: Some(revision_id),
+        parent_revision_id: Some(parent_revision_id),
+        title,
+        worker_path,
+    };
+    if let Err(error) = spawn_desktop_job(app, &state, request, Some(payload.clone())) {
+        let _ = fs::remove_file(payload);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -318,6 +458,10 @@ pub fn run() {
             cancel_job,
             read_report,
             next_filter_output,
+            read_performance,
+            read_candidate_overlay,
+            next_edit_output,
+            edit_export,
             play_preview,
             pause_preview,
             stop_preview,
@@ -327,4 +471,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running GenshinLyreTranscriber desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edit_output_names_increment_without_overwriting() {
+        let root = std::env::temp_dir().join(format!("glt-edit-name-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("result-edit-01")).unwrap();
+        let source = root.join("result-edit-01");
+        let next = next_edit_output_path(&source).unwrap();
+        assert_eq!(next, root.join("result-edit-02"));
+        fs::create_dir_all(&next).unwrap();
+        assert_eq!(
+            next_edit_output_path(&source).unwrap(),
+            root.join("result-edit-03")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }

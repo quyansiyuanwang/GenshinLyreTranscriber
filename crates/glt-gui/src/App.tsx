@@ -20,6 +20,8 @@ import type {
   JobRequest,
   JobResult,
   Operation,
+  CandidateNote,
+  PerformanceDocument,
   ProjectDocument,
   PlaybackStatus,
   ReportDocument,
@@ -31,6 +33,7 @@ import type {
   WaveformPayload,
 } from "./types";
 import AnalysisView from "./AnalysisView";
+import PianoRollEditor from "./PianoRollEditor";
 
 const MEDIA_FILTERS = [
   {
@@ -165,6 +168,9 @@ function App() {
   const [notice, setNotice] = useState("准备就绪");
   const [result, setResult] = useState<JobResult | null>(null);
   const [report, setReport] = useState<ReportDocument | null>(null);
+  const [performance, setPerformance] = useState<PerformanceDocument | null>(null);
+  const [candidateNotes, setCandidateNotes] = useState<CandidateNote[]>([]);
+  const [editApplying, setEditApplying] = useState(false);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
   const [project, setProject] = useState<ProjectDocument | null>(null);
   const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
@@ -213,6 +219,24 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const directory = result?.result.output_dir;
+    if (!directory) {
+      setPerformance(null);
+      setCandidateNotes([]);
+      return;
+    }
+    void invoke<PerformanceDocument>("read_performance", { resultDir: directory })
+      .then(setPerformance)
+      .catch((reason) => {
+        setPerformance(null);
+        setNotice(`performance: ${String(reason)}`);
+      });
+    void invoke<CandidateNote[]>("read_candidate_overlay", { resultDir: directory })
+      .then(setCandidateNotes)
+      .catch(() => setCandidateNotes([]));
+  }, [result?.result.output_dir]);
+
+  useEffect(() => {
     const unlisteners: Array<() => void> = [];
     let disposed = false;
 
@@ -227,6 +251,7 @@ function App() {
 
     void listen<JobResult>("job-finished", ({ payload }) => {
       setRunning(false);
+      setEditApplying(false);
       setFraction(1);
       setStage("completed");
       setResult(payload);
@@ -239,6 +264,7 @@ function App() {
 
     void listen<string>("job-failed", ({ payload }) => {
       setRunning(false);
+      setEditApplying(false);
       setStage("failed");
       setNotice("任务失败");
       setError(payload);
@@ -246,6 +272,7 @@ function App() {
 
     void listen("job-cancelled", () => {
       setRunning(false);
+      setEditApplying(false);
       setStage("cancelled");
       setNotice("任务已取消");
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
@@ -624,6 +651,32 @@ function App() {
     setRequest(next);
     setFilterOpen(false);
     await startJob(next);
+  }
+
+  async function applyEditRevision() {
+    if (!result || !performance) return;
+    setRunning(true);
+    setEditApplying(true);
+    setError(null);
+    setStage("validating");
+    try {
+      const output = await invoke<string>("next_edit_output", {
+        source: result.result.output_dir,
+      });
+      await invoke("edit_export", {
+        sourceResultDir: result.result.output_dir,
+        output,
+        performance,
+        previewWav: true,
+        title: null,
+        workerPath: request.worker_path,
+      });
+      setNotice(`正在导出 ${output.split(/[/\\]/).pop()}`);
+    } catch (reason) {
+      setRunning(false);
+      setEditApplying(false);
+      setError(String(reason));
+    }
   }
 
   function updateRule(index: number, key: keyof DraftFilterRule, value: string | boolean) {
@@ -1211,6 +1264,18 @@ function App() {
                 </div>
               ))}
             </div>
+
+            {performance && (
+              <PianoRollEditor
+                key={performance.revision.id}
+                document={performance}
+                candidates={candidateNotes}
+                positionUs={positionUs}
+                applying={editApplying}
+                onDocumentChange={setPerformance}
+                onApply={() => void applyEditRevision()}
+              />
+            )}
 
             <div className="result-grid">
               <div className="preview-card">

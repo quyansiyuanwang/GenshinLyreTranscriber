@@ -78,6 +78,10 @@ pub struct DesktopJobRequest {
     pub max_voices: u8,
     pub filter: Option<FilterSpec>,
     pub filter_preset: Option<FilterPreset>,
+    pub title: Option<String>,
+    pub source_result_dir: Option<PathBuf>,
+    pub revision_id: Option<String>,
+    pub parent_revision_id: Option<String>,
     pub worker_path: Option<PathBuf>,
 }
 
@@ -128,6 +132,10 @@ where
     .map_err(|error| error.to_string())?;
     options.filter = request.filter;
     options.filter_preset = request.filter_preset;
+    options.title = request.title;
+    options.source_result_dir = request.source_result_dir;
+    options.revision_id = request.revision_id;
+    options.parent_revision_id = request.parent_revision_id;
 
     let cleaning = build_cleaning_options(
         request.cleaning_profile.into(),

@@ -41,6 +41,9 @@ fn request(staging: &Path) -> StartRequest {
             filter: None,
             filter_preset: None,
             title: None,
+            source_result_dir: None,
+            revision_id: None,
+            parent_revision_id: None,
         },
     }
 }

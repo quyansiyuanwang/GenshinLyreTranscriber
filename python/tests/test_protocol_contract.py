@@ -171,7 +171,7 @@ def test_v2_refilter_worker_message_is_valid() -> None:
 
 
 def test_v2_report_requires_selection_and_accepts_candidate_cache() -> None:
-    report = {
+    report: dict[str, Any] = {
         "schema_version": 2,
         "application_version": "0.1.0",
         "engine": {"name": "midi-import", "version": "mido", "backend": "python"},
@@ -238,10 +238,27 @@ def test_v3_worker_accepts_performance_render() -> None:
             },
         }
     )
+    validate_worker_message(
+        {
+            "protocol_version": 3,
+            "job_id": "local-job-edit",
+            "type": "start",
+            "payload": {
+                "operation": "edit_export",
+                "input_path": "C:/results/.edit-payload.json",
+                "staging_dir": "C:/results/.staging",
+                "options": {
+                    "source_result_dir": "C:/results/source",
+                    "revision_id": "edit-01",
+                    "parent_revision_id": "performance-000",
+                },
+            },
+        }
+    )
 
 
 def test_v3_report_accepts_performance_artifacts_and_selection() -> None:
-    report = {
+    report: dict[str, Any] = {
         "schema_version": 3,
         "application_version": "0.1.0",
         "engine": {"name": "performance-renderer", "version": "1", "backend": "python"},
@@ -296,4 +313,6 @@ def test_v3_report_accepts_performance_artifacts_and_selection() -> None:
             },
         ],
     }
+    validate_report(report)
+    report["selection"]["source"] = "edit"
     validate_report(report)
