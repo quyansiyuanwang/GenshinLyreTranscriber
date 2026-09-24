@@ -82,7 +82,7 @@ def _message(kind: str, **payload: object) -> bytes:
     return (
         json.dumps(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "job_id": "local-test",
                 "type": kind,
                 "payload": payload,
@@ -138,7 +138,7 @@ def test_worker_cancellation() -> None:
 def test_worker_rejects_version_and_long_line() -> None:
     output = io.StringIO()
     message = {
-        "protocol_version": 2,
+        "protocol_version": 1,
         "job_id": "local-test",
         "type": "cancel",
         "payload": {},
@@ -278,6 +278,93 @@ def test_worker_empty_score_does_not_create_fake_preview(tmp_path: pathlib.Path)
     report = json.loads((staging / "report.json").read_text(encoding="utf-8"))
     assert "EMPTY_PREVIEW" in {warning["code"] for warning in report["warnings"]}
     assert "preview_wav" not in {artifact["kind"] for artifact in report["artifacts"]}
+
+
+def test_worker_refilters_cached_candidates_without_retranscribing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "input.mid"
+    midi = mido.MidiFile(type=1, ticks_per_beat=1000)
+    track = mido.MidiTrack()
+    track.extend(
+        [
+            mido.Message("note_on", note=36, velocity=120, time=0),
+            mido.Message("note_on", note=64, velocity=80, time=0),
+            mido.Message("note_on", note=48, velocity=100, time=0),
+            mido.Message("note_off", note=36, velocity=0, time=50),
+            mido.Message("note_off", note=64, velocity=0, time=450),
+            mido.Message("note_off", note=48, velocity=0, time=0),
+        ]
+    )
+    midi.tracks.append(track)
+    midi.save(str(source))
+    first = tmp_path / "first"
+    run_worker_message(
+        _message(
+            "start",
+            operation="convert_midi",
+            input_path=str(source),
+            staging_dir=str(first),
+            options={"timing": "preserve", "transpose": 0, "preview_wav": False},
+        )
+    )
+    original_source = (first / "source.mid").read_bytes()
+    original_report = (first / "report.json").read_bytes()
+    assert (first / "score.candidates.json").is_file()
+
+    def fail_transcribe(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("refilter must not run Basic Pitch")
+
+    monkeypatch.setattr(worker_module, "transcribe_to_midi", fail_transcribe)
+    second = tmp_path / "second"
+    run_worker_message(
+        _message(
+            "start",
+            operation="refilter",
+            input_path=str(first),
+            staging_dir=str(second),
+            options={
+                "preview_wav": True,
+                "filter": {
+                    "format_version": 1,
+                    "rules": [
+                        {
+                            "enabled": True,
+                            "duration_ms": {"min": 200, "max": 1000},
+                            "velocity": {"min": 1, "max": 100},
+                            "pitch": {"min": 48, "max": 72},
+                        }
+                    ],
+                },
+            },
+        )
+    )
+    report = json.loads((second / "report.json").read_text(encoding="utf-8"))
+    assert report["schema_version"] == 2
+    assert report["selection"]["source"] == "refilter"
+    assert report["selection"]["matched_notes"] == 2
+    assert report["selection"]["rule_hits"] == [2]
+    assert report["counts"]["input_notes"] == 3
+    assert (second / "score.candidates.json").is_file()
+    assert (second / "preview.wav").is_file()
+    assert (first / "source.mid").read_bytes() == original_source
+    assert (first / "report.json").read_bytes() == original_report
+
+
+def run_worker_message(message: bytes) -> None:
+    output = io.StringIO()
+    controlled = ControlledInput([message])
+    thread = threading.Thread(target=WorkerServer(controlled, output).run)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while '"type":"result"' not in output.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controlled.release()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    messages = _outputs(output)
+    assert messages[-1]["type"] == "result", messages[-1]
 
 
 def test_worker_protocol_output_is_ascii_even_for_non_ascii_errors() -> None:

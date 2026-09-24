@@ -252,6 +252,65 @@ fn invalid_arrangement_options_are_usage_errors() {
 }
 
 #[test]
+fn filter_accepts_a_v2_filter_spec_and_result_directory() {
+    let root = unique_test_dir("filter-command");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = root.join("result");
+    std::fs::create_dir_all(&source).unwrap();
+    let filter = root.join("filter.json");
+    std::fs::write(
+        &filter,
+        br#"{"format_version":1,"rules":[{"enabled":true,"duration_ms":{"min":80,"max":1000}}]}"#,
+    )
+    .unwrap();
+    let output_dir = root.join("filtered");
+    let output = Command::new(binary())
+        .args(["filter"])
+        .arg(&source)
+        .arg("--output")
+        .arg(&output_dir)
+        .arg("--filter-file")
+        .arg(&filter)
+        .arg("--worker")
+        .arg(mock_worker())
+        .output()
+        .expect("run glt filter");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_dir.is_dir());
+}
+
+#[test]
+fn invalid_filter_file_is_usage_error() {
+    let root = unique_test_dir("filter-invalid");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = root.join("result");
+    std::fs::create_dir_all(&source).unwrap();
+    let filter = root.join("filter.json");
+    std::fs::write(
+        &filter,
+        br#"{"format_version":1,"rules":[{"enabled":true,"velocity":{"min":0,"max":127}}]}"#,
+    )
+    .unwrap();
+    let output = Command::new(binary())
+        .args(["filter"])
+        .arg(&source)
+        .arg("--output")
+        .arg(root.join("filtered"))
+        .arg("--filter-file")
+        .arg(&filter)
+        .output()
+        .expect("run invalid filter");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("velocity"));
+}
+
+#[test]
 fn preview_reports_missing_audio_without_opening_device() {
     let root = unique_test_dir("preview-missing");
     let _ = std::fs::remove_dir_all(&root);

@@ -1,18 +1,22 @@
 # 协议 Schema 与版本策略
 
-本目录保存 GenshinLyreTranscriber v1 正式数据契约。当前状态为 `frozen`：
+本目录保存事件 v1、NoteSequence v1、候选缓存 v1，以及 worker/report v2 正式数据契约。
+当前状态为 `frozen`：
 
 - `events-v1.schema.json`：交给播放器消费的精确起音事件。
 - `worker-v1.schema.json`：Rust 与 Python worker 之间的 JSONL 请求和响应。
 - `note-sequence-v1.schema.json`：内部统一音符时间轴。
 - `report-v1.schema.json`：转换报告与产物清单。
+- `candidate-cache-v1.schema.json`：结果页快速重筛所需候选音符和 timing 元数据。
+- `worker-v2.schema.json`：v2 JSONL worker，新增 `refilter` operation 和 FilterSpec。
+- `report-v2.schema.json`：v2 报告，新增筛选规格、筛选统计和候选缓存 artifact。
 - `versions.json`：正式 Schema 的 SHA256 冻结清单。
 
 ## 时间与版本
 
 所有时间字段使用整数微秒，最大值为 `9007199254740991`。JSON boolean 不能作为整数。
-v1 顶层版本字段固定为 `1`；未知版本必须报告 `UNSUPPORTED_VERSION`，不能用 v1
-解析器猜测字段语义。v1 禁止未声明字段，增加字段或改变语义必须创建新版本。
+worker/report v2 顶层版本字段固定为 `2`；事件和 NoteSequence 保持 v1。未知版本必须
+报告 `UNSUPPORTED_VERSION`，不能用旧解析器猜测字段语义。各版本禁止未声明字段。
 
 ## 验证层次
 
@@ -47,5 +51,5 @@ cargo test --locked
 uv run --directory python pytest
 ```
 
-播放器交接副本必须逐字节复制本目录中的四份 Schema 与 `versions.json`，并以
-`versions.json` 中的 SHA256 验证一致。
+播放器交接继续使用冻结的 `events-v1.schema.json`；worker/report v2 和候选缓存只属于
+本工具内部及结果页重筛。所有 Schema 均以 `versions.json` 的 SHA256 验证一致。

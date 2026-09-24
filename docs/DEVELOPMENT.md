@@ -54,9 +54,22 @@ velocity 0 视为 note-off。缺失 note-off、孤立 note-off、零长度修复
 
 清理档位和参数由 Rust CLI/TUI 验证后，通过 worker 子进程环境传给 Python，包括
 `GLT_CLEANING_PROFILE`、`GLT_MIN_CONFIDENCE`、`GLT_MIN_DURATION_US` 和
-`GLT_RETRIGGER_GAP_US`。这些值不改变已冻结的 worker JSONL v1 Schema；worker 会再次校验
+`GLT_RETRIGGER_GAP_US`。这些值不改变 worker JSONL v2 Schema；worker 会再次校验
 并把实际值写入 `CLEANING_CONFIG` 报告告警。`auto` 当前保留 Solo 的候选阈值
 `0.2/50ms`，避免在可演奏性编排之前丢失弱音或和声。
+
+## 分组音符筛选
+
+Worker v2 在清理前生成 `score.candidates.json`，保存未经清理的 NoteSequence（包括
+confidence、velocity、音高和时长）及 timing 元数据。`FilterSpec v1` 支持最多 8 条规则；
+每条规则可包含 confidence、duration_ms、velocity 和原始 MIDI pitch 的闭区间。规则内
+所有已填写条件使用 AND，启用规则之间使用 OR。`confidence` 为 null 时，任何包含
+confidence 条件的规则都不匹配该音符。
+
+普通转录把现有 `min_confidence`/`min_duration_us` 转换为初始规则并写入 v2 报告；
+`refilter` operation 从候选缓存重新执行筛选、结构清理、量化、编排、移调和导出，不执行
+FFmpeg 或 Basic Pitch 推理。新结果复制 `source.mid` 和候选缓存，因此可以继续生成后续
+筛选版本。旧 worker/report v1 仍保留为兼容 schema，但没有候选缓存的结果不能重筛。
 
 ## 音符清理
 

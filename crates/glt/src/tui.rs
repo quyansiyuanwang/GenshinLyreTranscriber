@@ -28,7 +28,10 @@ use crate::cli::{
     JobUpdate, build_arrangement_options, build_cleaning_options, build_job_options,
     run_job_with_cancel,
 };
-use crate::jobs::{Operation, StartOptions, Timing, Transpose};
+use crate::jobs::{
+    FilterRange, FilterRule, FilterSpec, IntegerFilterRange, Operation, StartOptions, Timing,
+    Transpose,
+};
 use crate::preview::PlaybackService;
 
 const FIELD_INPUT: usize = 0;
@@ -49,14 +52,131 @@ const FIELD_ARRANGEMENT: usize = 14;
 const FIELD_ONSET_WINDOW: usize = 15;
 const FIELD_MAX_VOICES: usize = 16;
 const FIELD_COUNT: usize = 17;
+const FILTER_RULE_COUNT: usize = 4;
+const FILTER_FIELD_COUNT: usize = 9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Input,
     Parameters,
+    Filter,
     Running,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FilterRuleForm {
+    enabled: bool,
+    confidence_min: String,
+    confidence_max: String,
+    duration_min: String,
+    duration_max: String,
+    velocity_min: String,
+    velocity_max: String,
+    pitch_min: String,
+    pitch_max: String,
+}
+
+impl FilterRuleForm {
+    fn from_rule(rule: &FilterRule) -> Self {
+        Self {
+            enabled: rule.enabled,
+            confidence_min: rule
+                .confidence
+                .as_ref()
+                .map(|range| format_number(range.min))
+                .unwrap_or_default(),
+            confidence_max: rule
+                .confidence
+                .as_ref()
+                .map(|range| format_number(range.max))
+                .unwrap_or_default(),
+            duration_min: rule
+                .duration_ms
+                .as_ref()
+                .map(|range| format_number(range.min))
+                .unwrap_or_default(),
+            duration_max: rule
+                .duration_ms
+                .as_ref()
+                .map(|range| format_number(range.max))
+                .unwrap_or_default(),
+            velocity_min: rule
+                .velocity
+                .as_ref()
+                .map(|range| range.min.to_string())
+                .unwrap_or_default(),
+            velocity_max: rule
+                .velocity
+                .as_ref()
+                .map(|range| range.max.to_string())
+                .unwrap_or_default(),
+            pitch_min: rule
+                .pitch
+                .as_ref()
+                .map(|range| format_pitch(range.min))
+                .unwrap_or_default(),
+            pitch_max: rule
+                .pitch
+                .as_ref()
+                .map(|range| format_pitch(range.max))
+                .unwrap_or_default(),
+        }
+    }
+
+    fn to_rule(&self) -> Result<FilterRule, CliError> {
+        Ok(FilterRule {
+            enabled: self.enabled,
+            confidence: optional_range(
+                &self.confidence_min,
+                &self.confidence_max,
+                0.0,
+                1.0,
+                "confidence",
+            )?,
+            duration_ms: optional_range(
+                &self.duration_min,
+                &self.duration_max,
+                0.0,
+                3_600_000.0,
+                "duration-ms",
+            )?,
+            velocity: optional_integer_range(
+                &self.velocity_min,
+                &self.velocity_max,
+                1,
+                127,
+                "velocity",
+            )?,
+            pitch: optional_pitch_range(&self.pitch_min, &self.pitch_max)?,
+        })
+    }
+
+    fn field_mut(&mut self, index: usize) -> Option<&mut String> {
+        match index {
+            1 => Some(&mut self.confidence_min),
+            2 => Some(&mut self.confidence_max),
+            3 => Some(&mut self.duration_min),
+            4 => Some(&mut self.duration_max),
+            5 => Some(&mut self.velocity_min),
+            6 => Some(&mut self.velocity_max),
+            7 => Some(&mut self.pitch_min),
+            8 => Some(&mut self.pitch_max),
+            _ => None,
+        }
+    }
+}
+
+impl From<&FilterSpec> for [FilterRuleForm; FILTER_RULE_COUNT] {
+    fn from(spec: &FilterSpec) -> Self {
+        let mut forms: [FilterRuleForm; FILTER_RULE_COUNT] =
+            std::array::from_fn(|_| Default::default());
+        for (index, rule) in spec.rules.iter().take(FILTER_RULE_COUNT).enumerate() {
+            forms[index] = FilterRuleForm::from_rule(rule);
+        }
+        forms
+    }
 }
 
 #[derive(Debug)]
@@ -130,6 +250,12 @@ pub struct TuiApp {
     result_directory: Option<PathBuf>,
     result_lines: Vec<String>,
     result_scroll: u16,
+    filter_rules: [FilterRuleForm; FILTER_RULE_COUNT],
+    filter_rule_index: usize,
+    filter_field_index: usize,
+    filter_seed: FilterSpec,
+    filter_transpose: i32,
+    filter_cache_available: bool,
     preview_path: Option<PathBuf>,
     playback: Option<PlaybackService>,
     playback_paused: bool,
@@ -165,6 +291,12 @@ impl Default for TuiApp {
             result_directory: None,
             result_lines: Vec::new(),
             result_scroll: 0,
+            filter_rules: std::array::from_fn(|_| Default::default()),
+            filter_rule_index: 0,
+            filter_field_index: 1,
+            filter_seed: FilterSpec::default(),
+            filter_transpose: 0,
+            filter_cache_available: false,
             preview_path: None,
             playback: None,
             playback_paused: true,
@@ -280,6 +412,18 @@ impl TuiApp {
             }
         };
         let operation = self.operation();
+        self.launch_job(input, output, operation, options, cleaning, arrangement);
+    }
+
+    fn launch_job(
+        &mut self,
+        input: PathBuf,
+        output: PathBuf,
+        operation: Operation,
+        options: StartOptions,
+        cleaning: CleaningOptions,
+        arrangement: ArrangementOptions,
+    ) {
         let cancel = Arc::new(AtomicBool::new(false));
         let thread_cancel = Arc::clone(&cancel);
         let (sender, receiver) = mpsc::channel();
@@ -313,6 +457,77 @@ impl TuiApp {
         }));
     }
 
+    fn open_filter(&mut self) {
+        if !self.filter_cache_available {
+            self.message =
+                "this result has no candidate cache; rerun with the current worker".to_owned();
+            return;
+        }
+        self.filter_rules = (&self.filter_seed).into();
+        self.filter_rule_index = 0;
+        self.filter_field_index = 1;
+        self.screen = Screen::Filter;
+        self.message = "F5 apply  R reset  Up/Down rule  Tab field".to_owned();
+    }
+
+    fn current_filter_spec(&self) -> Result<FilterSpec, CliError> {
+        let mut rules = Vec::new();
+        for form in &self.filter_rules {
+            let has_range = !form.confidence_min.is_empty()
+                || !form.confidence_max.is_empty()
+                || !form.duration_min.is_empty()
+                || !form.duration_max.is_empty()
+                || !form.velocity_min.is_empty()
+                || !form.velocity_max.is_empty()
+                || !form.pitch_min.is_empty()
+                || !form.pitch_max.is_empty();
+            if form.enabled || has_range {
+                rules.push(form.to_rule()?);
+            }
+        }
+        let spec = FilterSpec {
+            format_version: 1,
+            rules,
+        };
+        spec.validate().map_err(CliError::InvalidArgument)?;
+        Ok(spec)
+    }
+
+    fn start_filter_job(&mut self) {
+        let Some(input) = self.result_directory.clone() else {
+            self.message = "result directory is unavailable".to_owned();
+            return;
+        };
+        let spec = match self.current_filter_spec() {
+            Ok(spec) => spec,
+            Err(error) => {
+                self.message = error.to_string();
+                return;
+            }
+        };
+        let output = match next_filter_directory(&input) {
+            Ok(output) => output,
+            Err(error) => {
+                self.message = error.to_string();
+                return;
+            }
+        };
+        let options = StartOptions {
+            filter: Some(spec),
+            preview_wav: Some(true),
+            overwrite: Some(false),
+            ..StartOptions::default()
+        };
+        self.launch_job(
+            input,
+            output,
+            Operation::Refilter,
+            options,
+            CleaningOptions::default(),
+            ArrangementOptions::default(),
+        );
+    }
+
     fn load_result(&mut self, outcome: &JobOutcome) {
         self.result_directory = Some(outcome.result.output_dir.clone());
         self.result_lines.clear();
@@ -331,6 +546,27 @@ impl TuiApp {
                 return;
             }
         };
+        self.filter_seed = report
+            .get("parameters")
+            .and_then(|parameters| parameters.get("filter"))
+            .and_then(|filter| serde_json::from_value::<FilterSpec>(filter.clone()).ok())
+            .filter(|filter| filter.validate().is_ok())
+            .unwrap_or_default();
+        self.filter_rules = (&self.filter_seed).into();
+        self.filter_rule_index = 0;
+        self.filter_field_index = 1;
+        let candidate_path = outcome.result.output_dir.join("score.candidates.json");
+        self.filter_cache_available = candidate_path.is_file();
+        self.filter_transpose = std::fs::read_to_string(&candidate_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|cache| {
+                cache
+                    .get("resolved_transpose")
+                    .and_then(serde_json::Value::as_i64)
+            })
+            .and_then(|value| i32::try_from(value).ok())
+            .unwrap_or(0);
         if let Some(counts) = report.get("counts").and_then(serde_json::Value::as_object) {
             for key in [
                 "input_notes",
@@ -434,6 +670,62 @@ impl TuiApp {
         }
     }
 
+    fn handle_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.screen = Screen::Completed;
+                self.message.clear();
+            }
+            KeyCode::F(5) => self.start_filter_job(),
+            KeyCode::Up => {
+                self.filter_rule_index = self.filter_rule_index.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                self.filter_rule_index = (self.filter_rule_index + 1).min(FILTER_RULE_COUNT - 1);
+            }
+            KeyCode::Left | KeyCode::BackTab => {
+                self.filter_field_index =
+                    (self.filter_field_index + FILTER_FIELD_COUNT - 1) % FILTER_FIELD_COUNT;
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                self.filter_field_index = (self.filter_field_index + 1) % FILTER_FIELD_COUNT;
+            }
+            KeyCode::Char('r') => {
+                self.filter_rules = (&self.filter_seed).into();
+                self.message = "filter reset to source result".to_owned();
+            }
+            KeyCode::Char(' ') if self.filter_field_index == 0 => {
+                let rule = &mut self.filter_rules[self.filter_rule_index];
+                rule.enabled = !rule.enabled;
+            }
+            KeyCode::Delete => {
+                if let Some(field) =
+                    self.filter_rules[self.filter_rule_index].field_mut(self.filter_field_index)
+                {
+                    field.clear();
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(field) =
+                    self.filter_rules[self.filter_rule_index].field_mut(self.filter_field_index)
+                {
+                    field.pop();
+                }
+            }
+            KeyCode::Char(character)
+                if self.filter_field_index > 0
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(field) =
+                    self.filter_rules[self.filter_rule_index].field_mut(self.filter_field_index)
+                {
+                    field.push(character);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn poll_job(&mut self) {
         let mut events = Vec::new();
         if let Some(receiver) = self.receiver.as_ref() {
@@ -483,7 +775,8 @@ impl TuiApp {
     }
 
     fn handle_paste(&mut self, text: &str) {
-        if self.screen == Screen::Running || self.browser.is_some() {
+        if self.screen == Screen::Running || self.screen == Screen::Filter || self.browser.is_some()
+        {
             return;
         }
         let Some(mut path) = text
@@ -541,12 +834,17 @@ impl TuiApp {
         if self.screen == Screen::Running {
             return false;
         }
+        if self.screen == Screen::Filter {
+            self.handle_filter_key(key);
+            return false;
+        }
         if self.screen == Screen::Completed {
             match key.code {
                 KeyCode::Char(' ') => self.toggle_playback(),
                 KeyCode::Char('s') => self.stop_playback(),
                 KeyCode::Char('+' | '=') => self.adjust_volume(0.1),
                 KeyCode::Char('-') => self.adjust_volume(-0.1),
+                KeyCode::Char('f') => self.open_filter(),
                 KeyCode::Char('r') => {
                     self.screen = Screen::Parameters;
                     self.focus = FIELD_TIMING;
@@ -712,7 +1010,10 @@ impl TuiApp {
         }
         let footer = match self.screen {
             Screen::Running => "Ctrl+C cancel/exit",
-            Screen::Completed => "Space play/pause  S stop  +/- volume  R rerun  Esc exit",
+            Screen::Completed => {
+                "Space play/pause  S stop  +/- volume  F filter  R rerun  Esc exit"
+            }
+            Screen::Filter => "Tab field  Up/Down rule  Space toggle  F5 apply  R reset  Esc back",
             Screen::Failed => "Esc exit",
             Screen::Input => "Enter parameters  F2 browse  Esc quit",
             Screen::Parameters => "Space cycle/toggle  F5 run  Tab next  Esc quit",
@@ -783,6 +1084,100 @@ impl TuiApp {
                 frame.render_widget(
                     Paragraph::new(lines)
                         .block(Block::default().borders(Borders::ALL).title("Parameters"))
+                        .wrap(Wrap { trim: false }),
+                    area,
+                );
+            }
+            Screen::Filter => {
+                let mut lines = vec![Line::from(
+                    "Within one rule: all ranges AND. Across rules: any rule OR.",
+                )];
+                for (index, rule) in self.filter_rules.iter().enumerate() {
+                    let selected = if index == self.filter_rule_index {
+                        ">"
+                    } else {
+                        " "
+                    };
+                    let marker = |field: usize| {
+                        if index == self.filter_rule_index && field == self.filter_field_index {
+                            "["
+                        } else {
+                            ""
+                        }
+                    };
+                    let end_marker = |field: usize| {
+                        if index == self.filter_rule_index && field == self.filter_field_index {
+                            "]"
+                        } else {
+                            ""
+                        }
+                    };
+                    let enabled = if rule.enabled { "x" } else { " " };
+                    let confidence = format!(
+                        "{}conf {}{}..{}",
+                        marker(1),
+                        display_or(&rule.confidence_min, "min"),
+                        display_or(&rule.confidence_max, "max"),
+                        end_marker(2)
+                    );
+                    let duration = format!(
+                        "{}dur {}{}..{}ms",
+                        marker(3),
+                        display_or(&rule.duration_min, "min"),
+                        display_or(&rule.duration_max, "max"),
+                        end_marker(4)
+                    );
+                    let velocity = format!(
+                        "{}vel {}{}..{}",
+                        marker(5),
+                        display_or(&rule.velocity_min, "min"),
+                        display_or(&rule.velocity_max, "max"),
+                        end_marker(6)
+                    );
+                    let pitch = format!(
+                        "{}pitch {}{}..{}",
+                        marker(7),
+                        display_or(&rule.pitch_min, "min"),
+                        display_or(&rule.pitch_max, "max"),
+                        end_marker(8)
+                    );
+                    lines.push(Line::from(format!(
+                        "{selected} rule {} [{}] {confidence} | {duration} | {velocity} | {pitch}",
+                        index + 1,
+                        enabled
+                    )));
+                }
+                if self.filter_field_index >= 7 {
+                    let min = self.filter_rules[self.filter_rule_index].pitch_min.trim();
+                    let max = self.filter_rules[self.filter_rule_index].pitch_max.trim();
+                    let min_note = parse_pitch_value(min)
+                        .ok()
+                        .map(|pitch| {
+                            format!(
+                                "{} -> {}",
+                                format_pitch(i64::from(pitch)),
+                                mapped_key(pitch, self.filter_transpose)
+                            )
+                        })
+                        .unwrap_or_default();
+                    let max_note = parse_pitch_value(max)
+                        .ok()
+                        .map(|pitch| {
+                            format!(
+                                "{} -> {}",
+                                format_pitch(i64::from(pitch)),
+                                mapped_key(pitch, self.filter_transpose)
+                            )
+                        })
+                        .unwrap_or_default();
+                    lines.push(Line::from(format!("pitch preview: {min_note}  {max_note}")));
+                }
+                lines.push(Line::from(
+                    "Range is inclusive. Missing min/max uses the full legal domain.",
+                ));
+                frame.render_widget(
+                    Paragraph::new(lines)
+                        .block(Block::default().borders(Borders::ALL).title("Note Filter"))
                         .wrap(Wrap { trim: false }),
                     area,
                 );
@@ -905,6 +1300,247 @@ fn parse_arrangement_profile(value: &str) -> Result<ArrangementProfile, CliError
             "arrangement must be balanced or off".to_owned(),
         )),
     }
+}
+
+fn optional_range(
+    minimum: &str,
+    maximum: &str,
+    lower: f64,
+    upper: f64,
+    name: &str,
+) -> Result<Option<FilterRange>, CliError> {
+    if minimum.trim().is_empty() && maximum.trim().is_empty() {
+        return Ok(None);
+    }
+    let min = if minimum.trim().is_empty() {
+        lower
+    } else {
+        minimum
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| CliError::InvalidArgument(format!("{name} minimum must be a number")))?
+    };
+    let max = if maximum.trim().is_empty() {
+        upper
+    } else {
+        maximum
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| CliError::InvalidArgument(format!("{name} maximum must be a number")))?
+    };
+    if min < lower || max > upper || min > max {
+        return Err(CliError::InvalidArgument(format!(
+            "{name} must be within {lower}..{upper} and min <= max"
+        )));
+    }
+    Ok(Some(FilterRange { min, max }))
+}
+
+fn optional_integer_range(
+    minimum: &str,
+    maximum: &str,
+    lower: i64,
+    upper: i64,
+    name: &str,
+) -> Result<Option<IntegerFilterRange>, CliError> {
+    if minimum.trim().is_empty() && maximum.trim().is_empty() {
+        return Ok(None);
+    }
+    let min = if minimum.trim().is_empty() {
+        lower
+    } else {
+        minimum
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| CliError::InvalidArgument(format!("{name} minimum must be an integer")))?
+    };
+    let max = if maximum.trim().is_empty() {
+        upper
+    } else {
+        maximum
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| CliError::InvalidArgument(format!("{name} maximum must be an integer")))?
+    };
+    if min < lower || max > upper || min > max {
+        return Err(CliError::InvalidArgument(format!(
+            "{name} must be within {lower}..{upper} and min <= max"
+        )));
+    }
+    Ok(Some(IntegerFilterRange { min, max }))
+}
+
+fn optional_pitch_range(
+    minimum: &str,
+    maximum: &str,
+) -> Result<Option<IntegerFilterRange>, CliError> {
+    if minimum.trim().is_empty() && maximum.trim().is_empty() {
+        return Ok(None);
+    }
+    let min = if minimum.trim().is_empty() {
+        0
+    } else {
+        parse_pitch_value(minimum)?
+    };
+    let max = if maximum.trim().is_empty() {
+        127
+    } else {
+        parse_pitch_value(maximum)?
+    };
+    if min > max {
+        return Err(CliError::InvalidArgument(
+            "pitch minimum must not exceed maximum".to_owned(),
+        ));
+    }
+    Ok(Some(IntegerFilterRange {
+        min: i64::from(min),
+        max: i64::from(max),
+    }))
+}
+
+fn parse_pitch_value(value: &str) -> Result<u8, CliError> {
+    let trimmed = value.trim();
+    if let Ok(number) = trimmed.parse::<i64>() {
+        return u8::try_from(number)
+            .ok()
+            .filter(|pitch| *pitch <= 127)
+            .ok_or_else(|| {
+                CliError::InvalidArgument("pitch must be in MIDI range 0..127".to_owned())
+            });
+    }
+    let normalized = trimmed.to_ascii_uppercase();
+    let bytes = normalized.as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() {
+        return Err(CliError::InvalidArgument(format!("invalid pitch: {value}")));
+    }
+    let semitone = match bytes[0] {
+        b'C' => 0,
+        b'D' => 2,
+        b'E' => 4,
+        b'F' => 5,
+        b'G' => 7,
+        b'A' => 9,
+        b'B' => 11,
+        _ => return Err(CliError::InvalidArgument(format!("invalid pitch: {value}"))),
+    };
+    let (accidental, octave_start) = if bytes.get(1) == Some(&b'#') {
+        (1, 2)
+    } else if bytes.get(1) == Some(&b'B') {
+        (-1, 2)
+    } else {
+        (0, 1)
+    };
+    let octave = normalized[octave_start..]
+        .parse::<i32>()
+        .map_err(|_| CliError::InvalidArgument(format!("invalid pitch: {value}")))?;
+    let pitch = (octave + 1) * 12 + semitone + accidental;
+    u8::try_from(pitch)
+        .ok()
+        .filter(|pitch| *pitch <= 127)
+        .ok_or_else(|| CliError::InvalidArgument(format!("pitch out of range: {value}")))
+}
+
+fn format_pitch(pitch: i64) -> String {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let octave = pitch.div_euclid(12) - 1;
+    let name = NAMES[pitch.rem_euclid(12) as usize];
+    format!("{name}{octave}")
+}
+
+fn format_number(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{}", value as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
+fn display_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        value.trim()
+    }
+}
+
+fn mapped_key(pitch: u8, transpose: i32) -> String {
+    const KEYS: &str = "ZXCVBNMASDFGHJQWERTYU";
+    let naturals = [0_i32, 2, 4, 5, 7, 9, 11];
+    let mut value = i32::from(pitch) + transpose;
+    if !naturals.contains(&value.rem_euclid(12)) {
+        let lower = value - value.rem_euclid(12);
+        let lower_natural = naturals
+            .iter()
+            .rev()
+            .find(|candidate| lower + **candidate <= value)
+            .copied()
+            .unwrap_or(11);
+        let mut upper = lower;
+        let upper_natural = loop {
+            upper += 1;
+            if naturals.contains(&upper.rem_euclid(12)) {
+                break upper.rem_euclid(12);
+            }
+        };
+        let lower_pitch = lower + lower_natural;
+        let upper_pitch = lower + upper_natural;
+        value = if value - lower_pitch < upper_pitch - value {
+            lower_pitch
+        } else {
+            upper_pitch
+        };
+    }
+    while value < 48 {
+        value += 12;
+    }
+    while value > 83 {
+        value -= 12;
+    }
+    let natural_pitches: Vec<i32> = (48_i32..=83_i32)
+        .filter(|candidate| naturals.contains(&(*candidate).rem_euclid(12)))
+        .collect();
+    match natural_pitches
+        .iter()
+        .position(|candidate| *candidate == value)
+    {
+        Some(index) => format!(
+            "{}({})",
+            KEYS.as_bytes()[index] as char,
+            format_pitch(i64::from(value))
+        ),
+        None => format!("?({})", format_pitch(i64::from(value))),
+    }
+}
+
+fn next_filter_directory(source: &Path) -> Result<PathBuf, CliError> {
+    let parent = source
+        .parent()
+        .ok_or_else(|| CliError::InvalidArgument("result directory has no parent".to_owned()))?;
+    let name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            CliError::InvalidArgument("result directory name is not UTF-8".to_owned())
+        })?;
+    let base = name
+        .rfind("-filter-")
+        .filter(|index| {
+            name[index + 8..]
+                .chars()
+                .all(|character| character.is_ascii_digit())
+        })
+        .map_or(name, |index| &name[..index]);
+    for index in 1..=999 {
+        let candidate = parent.join(format!("{base}-filter-{index:02}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(CliError::InvalidArgument(
+        "no available filter variant name remains".to_owned(),
+    ))
 }
 
 fn next_arrangement_profile(value: &str) -> &'static str {
@@ -1229,11 +1865,98 @@ mod tests {
     }
 
     #[test]
+    fn filter_form_builds_grouped_ranges() {
+        let mut app = TuiApp::default();
+        app.filter_rules[0].enabled = true;
+        app.filter_rules[0].confidence_min = "0.3".to_owned();
+        app.filter_rules[0].confidence_max = "0.7".to_owned();
+        app.filter_rules[0].duration_min = "100".to_owned();
+        app.filter_rules[0].pitch_min = "C2".to_owned();
+        app.filter_rules[0].pitch_max = "C5".to_owned();
+        app.filter_rules[1].enabled = true;
+        app.filter_rules[1].velocity_max = "60".to_owned();
+        let spec = app.current_filter_spec().unwrap();
+        assert_eq!(spec.rules.len(), 2);
+        assert_eq!(spec.rules[0].pitch.as_ref().unwrap().min, 36);
+        assert_eq!(spec.rules[0].pitch.as_ref().unwrap().max, 72);
+        assert_eq!(spec.rules[1].velocity.as_ref().unwrap().min, 1);
+    }
+
+    #[test]
+    fn filter_variant_names_increment_without_overwriting() {
+        let root = std::env::temp_dir().join(format!("glt-filter-name-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let source = root.join("song-result");
+        std::fs::create_dir_all(&source).unwrap();
+        assert_eq!(
+            next_filter_directory(&source).unwrap(),
+            root.join("song-result-filter-01")
+        );
+        std::fs::create_dir_all(root.join("song-result-filter-01")).unwrap();
+        assert_eq!(
+            next_filter_directory(&root.join("song-result-filter-01")).unwrap(),
+            root.join("song-result-filter-02")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn filter_screen_requires_candidate_cache() {
+        let mut app = TuiApp {
+            screen: Screen::Completed,
+            filter_cache_available: false,
+            ..TuiApp::default()
+        };
+        app.open_filter();
+        assert_eq!(app.screen, Screen::Completed);
+        assert!(app.message.contains("candidate cache"));
+    }
+
+    #[test]
+    fn v2_result_loads_filter_seed_and_cache() {
+        use crate::jobs::{Artifact, ResultPayload};
+
+        let root = std::env::temp_dir().join(format!("glt-tui-filter-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("report.json"),
+            r#"{"schema_version":2,"parameters":{"filter":{"format_version":1,"rules":[{"enabled":true,"duration_ms":{"min":120,"max":1000}}]}},"counts":{},"warnings":[],"artifacts":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("score.candidates.json"),
+            r#"{"format_version":1,"resolved_transpose":1}"#,
+        )
+        .unwrap();
+        let outcome = JobOutcome {
+            job_id: "local-filter".to_owned(),
+            result: ResultPayload {
+                output_dir: root.clone(),
+                report_path: PathBuf::from("report.json"),
+                artifacts: Vec::<Artifact>::new(),
+            },
+        };
+        let mut app = TuiApp::default();
+        app.load_result(&outcome);
+        assert!(app.filter_cache_available);
+        assert_eq!(app.filter_transpose, 1);
+        assert_eq!(app.filter_seed.rules.len(), 1);
+        app.open_filter();
+        assert_eq!(app.screen, Screen::Filter);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn render_fits_supported_terminal_sizes() {
         for (width, height) in [(80, 24), (120, 40)] {
             let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend).unwrap();
-            let app = TuiApp::default();
+            let app = TuiApp {
+                screen: Screen::Filter,
+                ..TuiApp::default()
+            };
             terminal.draw(|frame| app.render(frame)).unwrap();
             assert_eq!(terminal.backend().buffer().area().width, width);
             assert_eq!(terminal.backend().buffer().area().height, height);

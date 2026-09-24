@@ -38,6 +38,7 @@ fn request(staging: &Path) -> StartRequest {
             preview_wav: Some(false),
             overwrite: Some(true),
             mapping_profile: None,
+            filter: None,
         },
     }
 }

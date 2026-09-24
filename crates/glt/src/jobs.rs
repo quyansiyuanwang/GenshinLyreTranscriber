@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 pub const MAX_PROTOCOL_LINE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 pub const DEFAULT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
@@ -100,6 +100,7 @@ pub struct ReadyInfo {
 pub enum Operation {
     Transcribe,
     ConvertMidi,
+    Refilter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,18 +125,148 @@ impl Transpose {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterRange {
+    pub min: f64,
+    pub max: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerFilterRange {
+    pub min: i64,
+    pub max: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterRule {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub confidence: Option<FilterRange>,
+    pub duration_ms: Option<FilterRange>,
+    pub velocity: Option<IntegerFilterRange>,
+    pub pitch: Option<IntegerFilterRange>,
+}
+
+impl Default for FilterRule {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            confidence: None,
+            duration_ms: None,
+            velocity: None,
+            pitch: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterSpec {
+    pub format_version: u8,
+    pub rules: Vec<FilterRule>,
+}
+
+impl Default for FilterSpec {
+    fn default() -> Self {
+        Self {
+            format_version: 1,
+            rules: Vec::new(),
+        }
+    }
+}
+
+impl FilterSpec {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.format_version != 1 {
+            return Err("unsupported filter format version".to_owned());
+        }
+        if self.rules.len() > 8 {
+            return Err("at most 8 filter rules are supported".to_owned());
+        }
+        for (index, rule) in self.rules.iter().enumerate() {
+            let prefix = format!("rule {}: ", index + 1);
+            if let Some(range) = &rule.confidence {
+                validate_range(&prefix, "confidence", range, 0.0, 1.0)?;
+            }
+            if let Some(range) = &rule.duration_ms {
+                validate_range(&prefix, "duration_ms", range, 0.0, 3_600_000.0)?;
+            }
+            if let Some(range) = &rule.velocity {
+                validate_integer_range(&prefix, "velocity", range, 1, 127)?;
+            }
+            if let Some(range) = &rule.pitch {
+                validate_integer_range(&prefix, "pitch", range, 0, 127)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn validate_range(
+    prefix: &str,
+    name: &str,
+    range: &FilterRange,
+    lower: f64,
+    upper: f64,
+) -> Result<(), String> {
+    if !range.min.is_finite()
+        || !range.max.is_finite()
+        || range.min < lower
+        || range.max > upper
+        || range.min > range.max
+    {
+        return Err(format!(
+            "{prefix}{name} must be within {lower}..{upper} and min <= max"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_integer_range(
+    prefix: &str,
+    name: &str,
+    range: &IntegerFilterRange,
+    lower: i64,
+    upper: i64,
+) -> Result<(), String> {
+    if range.min < lower || range.max > upper || range.min > range.max {
+        return Err(format!(
+            "{prefix}{name} must be within {lower}..{upper} and min <= max"
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StartOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<Timing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bpm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transpose: Option<Transpose>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_track: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end_us: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_wav: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub overwrite: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mapping_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<FilterSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -709,6 +840,7 @@ fn is_known_stage(stage: &str) -> bool {
             | "importing"
             | "transcribing"
             | "cleaning"
+            | "filtering"
             | "analyzing"
             | "quantizing"
             | "mapping"
@@ -732,4 +864,36 @@ fn validate_code(code: &str) -> Result<(), WorkerError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FilterRange, FilterRule, FilterSpec, IntegerFilterRange};
+
+    #[test]
+    fn filter_spec_validates_grouped_ranges() {
+        let valid = FilterSpec {
+            format_version: 1,
+            rules: vec![FilterRule {
+                enabled: true,
+                confidence: Some(FilterRange { min: 0.2, max: 1.0 }),
+                duration_ms: Some(FilterRange {
+                    min: 50.0,
+                    max: 1000.0,
+                }),
+                velocity: Some(IntegerFilterRange { min: 1, max: 127 }),
+                pitch: Some(IntegerFilterRange { min: 36, max: 96 }),
+            }],
+        };
+        assert!(valid.validate().is_ok());
+
+        let invalid = FilterSpec {
+            format_version: 1,
+            rules: vec![FilterRule {
+                velocity: Some(IntegerFilterRange { min: 0, max: 127 }),
+                ..FilterRule::default()
+            }],
+        };
+        assert!(invalid.validate().is_err());
+    }
 }

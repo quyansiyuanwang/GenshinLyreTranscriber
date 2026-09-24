@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:candidate-cache:v1",
+  "title": "Candidate Note Cache v1",
+  "description": "Raw transcription notes and timing metadata used by worker refiltering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "sequence",
+    "clean_config",
+    "report_context",
+    "original_parameters",
+    "resolved_transpose",
+    "mapping_profile"
+  ],
+  "properties": {
+    "format_version": {
+      "const": 1
+    },
+    "sequence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "time_unit",
+        "duration_us",
+        "notes",
+        "tempo_map",
+        "beat_grid",
+        "provenance"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "time_unit": {
+          "const": "us"
+        },
+        "duration_us": {
+          "$ref": "#/$defs/safe_time"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          }
+        },
+        "tempo_map": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tempo_point"
+          }
+        },
+        "beat_grid": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/beat_point"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "$defs": {
+        "safe_time": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "confidence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "note": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pitch",
+            "start_us",
+            "end_us",
+            "velocity",
+            "confidence",
+            "track",
+            "channel"
+          ],
+          "properties": {
+            "pitch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 127
+            },
+            "start_us": {
+              "$ref": "#/$defs/safe_time"
+            },
+            "end_us": {
+              "$ref": "#/$defs/safe_time"
+            },
+            "velocity": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 127
+            },
+            "confidence": {
+              "$ref": "#/$defs/confidence"
+            },
+            "track": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "channel": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 15
+            }
+          }
+        },
+        "tempo_point": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "at_us",
+            "bpm",
+            "source"
+          ],
+          "properties": {
+            "at_us": {
+              "$ref": "#/$defs/safe_time"
+            },
+            "bpm": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1000
+            },
+            "source": {
+              "enum": [
+                "midi",
+                "estimated",
+                "manual"
+              ]
+            }
+          }
+        },
+        "beat_point": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "at_us",
+            "beat_position",
+            "bpm",
+            "confidence"
+          ],
+          "properties": {
+            "at_us": {
+              "$ref": "#/$defs/safe_time"
+            },
+            "beat_position": {
+              "type": "number"
+            },
+            "bpm": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1000
+            },
+            "confidence": {
+              "$ref": "#/$defs/confidence"
+            }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_type",
+            "source_offset_us",
+            "model_version",
+            "parameters"
+          ],
+          "properties": {
+            "source_type": {
+              "enum": [
+                "audio",
+                "video",
+                "midi"
+              ]
+            },
+            "source_offset_us": {
+              "$ref": "#/$defs/safe_time"
+            },
+            "model_version": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              ]
+            },
+            "parameters": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      }
+    },
+    "clean_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_confidence",
+        "min_duration_us",
+        "retrigger_gap_us"
+      ],
+      "properties": {
+        "min_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "min_duration_us": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000000
+        },
+        "retrigger_gap_us": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000000
+        }
+      }
+    },
+    "report_context": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "original_parameters": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "resolved_transpose": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": -48,
+          "maximum": 48
+        }
+      ]
+    },
+    "mapping_profile": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  },
+  "$defs": {
+    "safe_time": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "confidence": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      ]
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pitch",
+        "start_us",
+        "end_us",
+        "velocity",
+        "confidence",
+        "track",
+        "channel"
+      ],
+      "properties": {
+        "pitch": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "start_us": {
+          "$ref": "#/$defs/safe_time"
+        },
+        "end_us": {
+          "$ref": "#/$defs/safe_time"
+        },
+        "velocity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "track": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "channel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        }
+      }
+    },
+    "tempo_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at_us",
+        "bpm",
+        "source"
+      ],
+      "properties": {
+        "at_us": {
+          "$ref": "#/$defs/safe_time"
+        },
+        "bpm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "source": {
+          "enum": [
+            "midi",
+            "estimated",
+            "manual"
+          ]
+        }
+      }
+    },
+    "beat_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at_us",
+        "beat_position",
+        "bpm",
+        "confidence"
+      ],
+      "properties": {
+        "at_us": {
+          "$ref": "#/$defs/safe_time"
+        },
+        "beat_position": {
+          "type": "number"
+        },
+        "bpm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_type",
+        "source_offset_us",
+        "model_version",
+        "parameters"
+      ],
+      "properties": {
+        "source_type": {
+          "enum": [
+            "audio",
+            "video",
+            "midi"
+          ]
+        },
+        "source_offset_us": {
+          "$ref": "#/$defs/safe_time"
+        },
+        "model_version": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          ]
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

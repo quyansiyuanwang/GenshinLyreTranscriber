@@ -12,6 +12,7 @@ glt doctor [--worker PATH] [--json]
 glt transcribe INPUT --output DIR [OPTIONS]
 glt convert-midi INPUT --output DIR [OPTIONS]
 glt preview RESULT_DIR [--volume 0..1]
+glt filter RESULT_DIR --output DIR --filter-file FILTER_JSON
 ```
 
 ## TUI
@@ -24,7 +25,10 @@ glt preview RESULT_DIR [--volume 0..1]
 
 运行页只显示 worker 实际发送的阶段和进度；没有可信百分比时明确显示未知。完成后结果页
 显示计数、告警和产物，`Space` 播放/暂停、`S` 停止、`+/-` 调整音量，`R` 可带当前参数
-重试；没有 `preview.wav` 时明确提示重新生成。TUI 与 CLI 共用参数构造和作业控制器，
+重试；按 `F` 打开分组筛选编辑器。筛选页使用 `Up/Down` 选择规则、`Tab` 切换范围字段、
+`Space` 切换规则启用状态、`F5` 应用、`R` 恢复初始规则、`Esc` 返回。每次应用生成新的
+`原目录-filter-NN` 版本，不覆盖原结果。没有 `preview.wav` 时明确提示重新生成。TUI 与
+CLI 共用参数构造和作业控制器，
 终端退出或异常路径通过 guard 恢复 raw mode、光标和主屏幕。
 
 ## 常用参数
@@ -49,6 +53,28 @@ glt preview RESULT_DIR [--volume 0..1]
 `glt preview RESULT_DIR` 读取 `report.json` 中的 `preview_wav` artifact 并播放；音量范围为
 `0..=1`。没有预览文件时提示重新执行并加 `--preview-wav`。播放设备不可用只影响预览命令，
 不会影响已有结果。
+
+`glt filter` 读取结果目录中的 `score.candidates.json`，不重新执行 Basic Pitch。筛选文件
+使用 `FilterSpec v1`：
+
+```json
+{
+  "format_version": 1,
+  "rules": [
+    {
+      "enabled": true,
+      "confidence": {"min": 0.25, "max": 1.0},
+      "duration_ms": {"min": 120, "max": 60000},
+      "velocity": {"min": 1, "max": 110},
+      "pitch": {"min": 36, "max": 96}
+    }
+  ]
+}
+```
+
+每条规则内所有填写的范围同时满足，任意一条启用规则满足即可保留。范围包含边界；未填写的
+属性不参与判断。`pitch` 使用原始 MIDI 编号或 `C#4` 音名，不受移调影响。旧 v1 结果没有
+候选缓存，会明确失败并提示重新转录。
 
 `--preview-wav` 只影响试听产物和试听控制，不改变 JSON、MIDI 或文本谱；空谱不会生成
 静音文件，而是在报告中给出 `EMPTY_PREVIEW`。合成不依赖音频输出设备。
@@ -86,6 +112,7 @@ uv run --directory python python -m glt_core.tools.mapping_preview output/cleane
 成功结果的核心文件如下：
 
 - `source.mid`：音频转录的原始结果；MIDI 输入时为逐字节来源副本。
+- `score.candidates.json`：清理前的完整候选音符、confidence、velocity、tempo/beat grid 和原始报告上下文，用于快速重筛。
 - `cleaned.mid`：清理和所选用时序策略后的 MIDI。
 - `mapped.mid`：映射到 21 键后的 MIDI。
 - `score.events.json`：按整数微秒记录映射起音和按键，同一时刻只保留一个和弦事件。

@@ -14,9 +14,10 @@ from jsonschema import Draft202012Validator
 SAFE_INTEGER_MAX = 9_007_199_254_740_991
 SCHEMA_FILES = {
     "events": "events-v1.schema.json",
-    "worker": "worker-v1.schema.json",
+    "worker": "worker-v2.schema.json",
     "note_sequence": "note-sequence-v1.schema.json",
-    "report": "report-v1.schema.json",
+    "report": "report-v2.schema.json",
+    "candidate_cache": "candidate-cache-v1.schema.json",
 }
 
 
@@ -98,14 +99,17 @@ def validate_schema(document: Any, schema_file: str) -> None:
     _schema_error(document, selected)
 
 
-def _require_version(document: Any) -> None:
+def _require_version(document: Any, allowed: set[int] | None = None) -> None:
     if not isinstance(document, dict):
         return
     value = document.get(
         "format_version",
         document.get("protocol_version", document.get("schema_version")),
     )
-    if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value != 1):
+    versions = allowed or {1}
+    if value is not None and (
+        not isinstance(value, int) or isinstance(value, bool) or value not in versions
+    ):
         raise ProtocolValidationError("UNSUPPORTED_VERSION", f"unsupported version: {value!r}")
 
 
@@ -141,8 +145,10 @@ def validate_events(document: Any) -> None:
 
 def validate_worker_message(document: Any) -> None:
     """Validate one worker JSONL message at the schema boundary."""
-    _require_version(document)
-    _schema_error(document, SCHEMA_FILES["worker"])
+    _require_version(document, {1, 2})
+    version = document.get("protocol_version") if isinstance(document, dict) else None
+    schema = "worker-v1.schema.json" if version == 1 else SCHEMA_FILES["worker"]
+    _schema_error(document, schema)
 
 
 def validate_note_sequence(document: Any) -> None:
@@ -199,8 +205,16 @@ def _validate_relative_path(value: str, pointer: str) -> None:
 
 def validate_report(document: Any) -> None:
     """Validate a report document and its relative artifact paths."""
-    _require_version(document)
-    _schema_error(document, SCHEMA_FILES["report"])
+    _require_version(document, {1, 2})
+    version = document.get("schema_version") if isinstance(document, dict) else None
+    schema = "report-v1.schema.json" if version == 1 else SCHEMA_FILES["report"]
+    _schema_error(document, schema)
     assert isinstance(document, dict)
     for index, artifact in enumerate(document["artifacts"]):
         _validate_relative_path(str(artifact["relative_path"]), f"/artifacts/{index}/relative_path")
+
+
+def validate_candidate_cache(document: Any) -> None:
+    """Validate the internal candidate cache used by worker refiltering."""
+    _require_version(document)
+    _schema_error(document, SCHEMA_FILES["candidate_cache"])

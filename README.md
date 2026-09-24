@@ -30,9 +30,10 @@
 - 使用稳定节拍追踪分析整曲与局部速度；低置信时退回原始 onset，不伪造 BPM。
 - 支持 auto/preserve/straight/triplet 可控量化，直拍网格按十六分音符细分，显式 BPM 具有更高优先级。
 - 默认启用可演奏性编排：合并 150ms 内的近同时起音，并按力度、时值和音程关系保留最多两个互补声部；可通过 `--arrangement off`、`--onset-window-ms` 和 `--max-voices` 调整。
+- 结果包含候选音符缓存，可用分组区间筛选 `confidence`、时长、力度和原始 MIDI 音高；组内条件全部满足，任意一组满足即保留。结果页可按 `F` 反复调参并生成新的 `*-filter-NN` 版本。
 - 自动移调优先保留音高类别，再使用八度折返进入 C3-B5，避免为了减少折返而整体错移调；仍支持手动移调、半音替换和同刻冲突统计。
 - 提供 -12..12 半音移调候选预览，可在正式映射前查看损失和冲突。
-- 结果目录包含 `source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 和 `report.json`；按需生成 `preview.wav`。
+- 结果目录包含候选缓存 `score.candidates.json`、`source.mid`、`cleaned.mid`、`mapped.mid`、`score.events.json`、`score.readable.txt`、`score.compat.txt` 和 `report.json`；按需生成 `preview.wav`。
 - 精确事件 JSON 使用整数微秒，冻结 Schema 校验事件顺序与时长；MIDI 起音 round-trip 误差不超过 1ms。
 - `score.readable.txt` 面向人工阅读并明确不是旧播放器执行格式；`score.compat.txt` 使用参考播放器的 10ms 多行分段结构，并按 `.qymusic` 常见的每行 4 段组织；网格碰撞与尾部静音仍会报告。
 - `--preview-wav` 按映射起音生成自合成轻量 WAV，不包含游戏采样；空谱不会伪造可听文件。

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::jobs::{
-    DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, Operation,
+    DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, FilterSpec, Operation,
     ResultPayload, StartOptions, StartRequest, Timing, Transpose, WorkerClient, WorkerError,
     WorkerEvent, WorkerSpec,
 };
@@ -47,6 +47,8 @@ enum Command {
     ConvertMidi(ConvertMidiArgs),
     /// Preview a completed result directory.
     Preview(PreviewArgs),
+    /// Re-filter a v2 result from its cached candidate notes.
+    Filter(FilterArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -371,6 +373,27 @@ struct PreviewArgs {
     volume: f32,
 }
 
+#[derive(Debug, clap::Args)]
+struct FilterArgs {
+    /// Existing v2 result directory.
+    result_dir: PathBuf,
+    /// New result directory for the filtered variant.
+    #[arg(long)]
+    output: PathBuf,
+    /// JSON file containing one FilterSpec v1 object.
+    #[arg(long)]
+    filter_file: PathBuf,
+    /// Allow replacing the output directory.
+    #[arg(long)]
+    overwrite: bool,
+    /// Emit a machine-readable result.
+    #[arg(long)]
+    json: bool,
+    /// Override the worker executable path.
+    #[arg(long)]
+    worker: Option<PathBuf>,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum CliError {
     #[error("invalid argument: {0}")]
@@ -425,6 +448,7 @@ fn execute(cli: Cli) -> Result<(), CliError> {
         Some(Command::Transcribe(args)) => run_transcribe(args),
         Some(Command::ConvertMidi(args)) => run_convert_midi(args),
         Some(Command::Preview(args)) => run_preview(args),
+        Some(Command::Filter(args)) => run_filter(args),
         Some(Command::Tui) | None => crate::tui::run(),
     }
 }
@@ -577,6 +601,28 @@ fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
     )
 }
 
+fn run_filter(args: FilterArgs) -> Result<(), CliError> {
+    let filter_text = fs::read_to_string(&args.filter_file)?;
+    let filter: FilterSpec = serde_json::from_str(&filter_text)
+        .map_err(|error| CliError::InvalidArgument(format!("invalid filter file: {error}")))?;
+    filter.validate().map_err(CliError::InvalidArgument)?;
+    let options = StartOptions {
+        filter: Some(filter),
+        overwrite: Some(args.overwrite),
+        ..StartOptions::default()
+    };
+    run_job(
+        args.worker,
+        args.result_dir,
+        args.output,
+        Operation::Refilter,
+        options,
+        CleaningOptions::default(),
+        ArrangementOptions::default(),
+        args.json,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_options(
     timing: TimingArg,
@@ -636,6 +682,7 @@ pub(crate) fn build_job_options(
         preview_wav: Some(preview_wav),
         overwrite: Some(overwrite),
         mapping_profile: None,
+        filter: None,
     })
 }
 
@@ -768,9 +815,14 @@ where
     F: FnMut(JobUpdate),
 {
     let input = absolute_path(&input)?;
-    if !input.is_file() {
+    let input_valid = if operation == Operation::Refilter {
+        input.is_dir()
+    } else {
+        input.is_file()
+    };
+    if !input_valid {
         return Err(CliError::InvalidArgument(format!(
-            "input file does not exist: {}",
+            "input path does not exist: {}",
             input.display()
         )));
     }
@@ -787,7 +839,11 @@ where
         CliError::InvalidArgument("output must have a parent directory".to_owned())
     })?;
     fs::create_dir_all(output_parent)?;
-    if output.exists() && overwrite && input.starts_with(&output) {
+    if operation != Operation::Refilter
+        && output.exists()
+        && overwrite
+        && input.starts_with(&output)
+    {
         return Err(CliError::InvalidArgument(
             "input file must not be inside an output directory being overwritten".to_owned(),
         ));
