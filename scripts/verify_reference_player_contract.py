@@ -48,7 +48,9 @@ def _verify_checkout(root: pathlib.Path) -> dict[str, Any]:
     remote = _git_output(root, "remote", "get-url", "origin")
     commit = _git_output(root, "rev-parse", "HEAD")
     status = _git_output(root, "status", "--porcelain=v1")
-    if remote != REFERENCE_URL:
+    normalized_remote = remote.removesuffix(".git").rstrip("/")
+    expected_remote = REFERENCE_URL.removesuffix(".git").rstrip("/")
+    if normalized_remote != expected_remote:
         raise VerificationError(f"unexpected reference remote: {remote}")
     if commit != REFERENCE_COMMIT:
         raise VerificationError(f"expected commit {REFERENCE_COMMIT}, got {commit}")
