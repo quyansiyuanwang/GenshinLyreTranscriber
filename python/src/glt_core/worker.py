@@ -74,6 +74,7 @@ from glt_core.processing import (
     quantize_note_sequence,
 )
 from glt_core.protocol import validate_report
+from glt_core.routing_cli import main as routing_main
 from glt_core.separation.cli import main as separation_main
 from glt_core.separation.demucs_worker import main as demucs_main
 from glt_core.synthesis import synthesize_preview_wav
@@ -2141,6 +2142,8 @@ def main() -> int:
         return separation_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "separate-demucs":
         return demucs_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "route":
+        return routing_main(sys.argv[2:])
     logging.basicConfig(level=logging.WARNING)
     return WorkerServer(sys.stdin, sys.stdout).run()
 

@@ -127,6 +127,21 @@ fn project_add_revision(
 }
 
 #[tauri::command]
+fn project_add_revision_path(
+    state: State<'_, GuiState>,
+    kind: String,
+    absolute_path: PathBuf,
+    parent_id: Option<String>,
+) -> Result<ProjectDocument, String> {
+    let mut current = state.lock_project()?;
+    let project = current
+        .as_mut()
+        .ok_or_else(|| "no project is open".to_owned())?;
+    project::add_revision_absolute(project, kind, absolute_path, parent_id)?;
+    Ok(project.document().clone())
+}
+
+#[tauri::command]
 fn project_close(state: State<'_, GuiState>) -> Result<(), String> {
     *state.lock_project()? = None;
     Ok(())
@@ -251,6 +266,13 @@ fn read_candidate_overlay(result_dir: PathBuf) -> Result<Value, String> {
         .pointer("/sequence/notes")
         .cloned()
         .unwrap_or_else(|| Value::Array(Vec::new())))
+}
+
+#[tauri::command]
+fn read_stem_set(path: PathBuf) -> Result<Value, String> {
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("invalid stem set JSON: {error}"))
 }
 
 #[tauri::command]
@@ -471,10 +493,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(GuiState::default())
         .manage(analysis::AnalysisState::default())
+        .manage(separation::SeparationState::default())
         .invoke_handler(tauri::generate_handler![
             separation::separator_component_status,
             separation::separator_component_install,
             separation::separator_component_uninstall,
+            separation::start_separation,
+            separation::start_routing,
+            separation::cancel_separation,
             analysis::start_analysis,
             analysis::cancel_analysis,
             analysis::analysis_manifest,
@@ -487,6 +513,7 @@ pub fn run() {
             project_save,
             project_relink_source,
             project_add_revision,
+            project_add_revision_path,
             project_close,
             doctor,
             start_job,
@@ -495,6 +522,7 @@ pub fn run() {
             next_filter_output,
             read_performance,
             read_candidate_overlay,
+            read_stem_set,
             next_edit_output,
             edit_export,
             play_preview,

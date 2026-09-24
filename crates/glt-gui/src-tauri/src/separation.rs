@@ -1,13 +1,51 @@
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Emitter, Manager, State};
 use zip::ZipArchive;
 
 const MANIFEST_NAME: &str = "separator-component-v1.json";
+
+#[derive(Default)]
+pub struct SeparationState {
+    running: AtomicBool,
+    child: Mutex<Option<Child>>,
+}
+
+impl SeparationState {
+    fn lock_child(&self) -> Result<std::sync::MutexGuard<'_, Option<Child>>, String> {
+        self.child
+            .lock()
+            .map_err(|_| "separation process state is unavailable".to_owned())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeparationRequest {
+    pub component: PathBuf,
+    pub input: PathBuf,
+    pub output: PathBuf,
+    pub model: String,
+    pub worker_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingRequest {
+    pub stem_set: PathBuf,
+    pub output: PathBuf,
+    pub mode: String,
+    pub max_voices: Option<u8>,
+    pub worker_path: Option<PathBuf>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SeparatorModelStatus {
@@ -25,6 +63,141 @@ pub struct SeparatorComponentStatus {
     pub component_version: Option<String>,
     pub models: Vec<SeparatorModelStatus>,
     pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn start_separation(
+    app: AppHandle,
+    state: State<'_, SeparationState>,
+    request: SeparationRequest,
+) -> Result<(), String> {
+    let spec = glt::desktop::worker_spec(request.worker_path)?;
+    let mut command = Command::new(&spec.program);
+    command.args(&spec.args).envs(spec.env);
+    if let Some(directory) = spec.working_directory {
+        command.current_dir(directory);
+    }
+    command
+        .arg("separate")
+        .arg("--component")
+        .arg(&request.component)
+        .arg("--input")
+        .arg(&request.input)
+        .arg("--output")
+        .arg(&request.output)
+        .arg("--model")
+        .arg(&request.model);
+    spawn_json_process(app, &state, command, "separation")
+}
+
+#[tauri::command]
+pub fn start_routing(
+    app: AppHandle,
+    state: State<'_, SeparationState>,
+    request: RoutingRequest,
+) -> Result<(), String> {
+    let spec = glt::desktop::worker_spec(request.worker_path)?;
+    let mut command = Command::new(&spec.program);
+    command.args(&spec.args).envs(spec.env);
+    if let Some(directory) = spec.working_directory {
+        command.current_dir(directory);
+    }
+    command
+        .arg("route")
+        .arg("--stem-set")
+        .arg(&request.stem_set)
+        .arg("--output")
+        .arg(&request.output)
+        .arg("--mode")
+        .arg(&request.mode);
+    if let Some(max_voices) = request.max_voices {
+        command.arg("--max-voices").arg(max_voices.to_string());
+    }
+    spawn_json_process(app, &state, command, "routing")
+}
+
+#[tauri::command]
+pub fn cancel_separation(state: State<'_, SeparationState>) -> Result<(), String> {
+    if let Some(child) = state.lock_child()?.as_mut() {
+        child.kill().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn spawn_json_process(
+    app: AppHandle,
+    state: &SeparationState,
+    mut command: Command,
+    prefix: &'static str,
+) -> Result<(), String> {
+    if state.running.swap(true, Ordering::SeqCst) {
+        return Err(format!("a {prefix} job is already running"));
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            state.running.store(false, Ordering::SeqCst);
+            return Err(format!("cannot start {prefix} worker: {error}"));
+        }
+    };
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{prefix} stdout is unavailable"))?;
+    let stderr = child.stderr.take();
+    *state.lock_child()? = Some(child);
+    std::thread::spawn(move || {
+        let mut terminal = false;
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            let Ok(payload) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            match payload.get("type").and_then(Value::as_str) {
+                Some("progress") => {
+                    let _ = app.emit(&format!("{prefix}-progress"), payload);
+                }
+                Some("result") => {
+                    terminal = true;
+                    let _ = app.emit(&format!("{prefix}-finished"), payload);
+                }
+                Some("error") => {
+                    terminal = true;
+                    let message = payload
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("worker failed")
+                        .to_owned();
+                    let _ = app.emit(&format!("{prefix}-failed"), message);
+                }
+                _ => {}
+            }
+        }
+        let status = app.state::<SeparationState>();
+        let mut process = status.lock_child().ok().and_then(|mut value| value.take());
+        if let Some(process) = process.as_mut() {
+            let _ = process.wait();
+        }
+        if !terminal {
+            let details = stderr
+                .map(|mut stream| {
+                    let mut text = String::new();
+                    let _ = stream.read_to_string(&mut text);
+                    text
+                })
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "worker exited without a terminal message".to_owned());
+            let _ = app.emit(&format!("{prefix}-failed"), details);
+        }
+        status.running.store(false, Ordering::SeqCst);
+    });
+    Ok(())
 }
 
 #[tauri::command]

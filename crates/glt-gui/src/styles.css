@@ -806,6 +806,47 @@ select {
   background: #0b100c;
 }
 
+.stem-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.stem-status > div {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 1.5%);
+}
+
+.stem-status span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.stem-status strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.routing-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.routing-row .field {
+  min-width: 230px;
+}
+
+.routing-row .pill {
+  align-self: center;
+}
+
 .piano-toolbar,
 .velocity-title,
 .piano-lanes {
@@ -1070,10 +1111,16 @@ select {
 
   .field-row,
   .control-grid,
+  .stem-status,
   .stats-grid,
   .result-grid,
   .analysis-grid {
     grid-template-columns: 1fr;
+  }
+
+  .routing-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .run-bar {

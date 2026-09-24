@@ -194,6 +194,23 @@ pub fn add_revision(
     Ok(revision)
 }
 
+pub fn add_revision_absolute(
+    project: &mut OpenProject,
+    kind: String,
+    absolute_path: PathBuf,
+    parent_id: Option<String>,
+) -> Result<ProjectRevision, String> {
+    let root = project
+        .path
+        .parent()
+        .ok_or_else(|| "project path has no parent".to_owned())?;
+    let relative = absolute_path
+        .strip_prefix(root)
+        .map_err(|_| "revision output must be inside the project directory".to_owned())?;
+    let relative_path = relative.to_string_lossy().replace('\\', "/");
+    add_revision(project, kind, relative_path, parent_id)
+}
+
 pub fn assets_directory(project_path: &Path) -> PathBuf {
     sidecar(project_path, "assets")
 }
@@ -338,5 +355,22 @@ mod tests {
         );
         assert_eq!(metadata.size_bytes, Some(5));
         let _ = fs::remove_file(source);
+    }
+
+    #[test]
+    fn absolute_revision_path_is_recorded_relative_to_project() {
+        let path = temp_path();
+        let mut project = create(&path, "revision".to_owned(), None).unwrap();
+        let output = assets_directory(&path).join("edit-01");
+        fs::create_dir_all(&output).unwrap();
+        let revision =
+            add_revision_absolute(&mut project, "performance-edit".to_owned(), output, None)
+                .unwrap();
+        assert!(revision.relative_path.contains("edit-01"));
+        assert!(!Path::new(&revision.relative_path).is_absolute());
+        drop(project);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(assets_directory(&path));
+        let _ = fs::remove_dir_all(revisions_directory(&path));
     }
 }

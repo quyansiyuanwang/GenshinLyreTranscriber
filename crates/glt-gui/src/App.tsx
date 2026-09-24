@@ -25,7 +25,11 @@ import type {
   ProjectDocument,
   PlaybackStatus,
   ReportDocument,
+  RoutingFinished,
+  SeparationFinished,
+  SeparationProgress,
   SeparatorComponentStatus,
+  StemSetDocument,
   SpectrogramImage,
   SpectrumFrame,
   Timing,
@@ -135,6 +139,11 @@ async function defaultOutputFor(input: string): Promise<string> {
   return join(parent, `${stem}-output`);
 }
 
+function parentPath(path: string): string {
+  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return separator >= 0 ? path.slice(0, separator) : ".";
+}
+
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
@@ -173,6 +182,14 @@ function App() {
   const [editApplying, setEditApplying] = useState(false);
   const [abSource, setAbSource] = useState("preview");
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [separationRunning, setSeparationRunning] = useState(false);
+  const [separationStage, setSeparationStage] = useState("idle");
+  const [separationFraction, setSeparationFraction] = useState<number | null>(null);
+  const [stemSetPath, setStemSetPath] = useState<string | null>(null);
+  const [stemSet, setStemSet] = useState<StemSetDocument | null>(null);
+  const [routingRunning, setRoutingRunning] = useState(false);
+  const [routingMode, setRoutingMode] = useState("solo");
+  const [routedAudioPath, setRoutedAudioPath] = useState<string | null>(null);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
   const [project, setProject] = useState<ProjectDocument | null>(null);
   const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
@@ -190,6 +207,11 @@ function App() {
   const [volume, setVolume] = useState(0.8);
   const jobRequestRef = useRef(request);
   jobRequestRef.current = request;
+  const pendingRevisionRef = useRef<{
+    kind: string;
+    path: string;
+    parentId: string | null;
+  } | null>(null);
 
   const previewArtifact = result?.result.artifacts.find(
     (artifact) => artifact.kind === "preview_wav",
@@ -216,8 +238,18 @@ function App() {
         });
       }
     }
+    if (stemSet && stemSetPath) {
+      options.push({
+        id: "instrumental",
+        label: "Instrumental",
+        path: `${parentPath(stemSetPath)}\\${stemSet.instrumental.relative_path}`,
+      });
+    }
+    if (routedAudioPath) {
+      options.push({ id: "routed_audio", label: "路由", path: routedAudioPath });
+    }
     return options;
-  }, [previewArtifact, request.input, result]);
+  }, [previewArtifact, request.input, result, routedAudioPath, stemSet, stemSetPath]);
   const hasActiveAbSource = abOptions.some((option) => option.id === abSource && option.path);
 
   useEffect(() => {
@@ -285,6 +317,11 @@ function App() {
       void invoke<ReportDocument>("read_report", { resultDir: payload.result.output_dir })
         .then(setReport)
         .catch((reason) => setError(String(reason)));
+      const pending = pendingRevisionRef.current;
+      if (pending && pending.path === payload.result.output_dir) {
+        pendingRevisionRef.current = null;
+        void recordRevision(pending.kind, pending.path, pending.parentId);
+      }
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<string>("job-failed", ({ payload }) => {
@@ -300,6 +337,48 @@ function App() {
       setEditApplying(false);
       setStage("cancelled");
       setNotice("任务已取消");
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<SeparationProgress>("separation-progress", ({ payload }) => {
+      setSeparationRunning(payload.stage !== "completed");
+      setSeparationStage(payload.stage);
+      setSeparationFraction(payload.fraction);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<SeparationFinished>("separation-finished", ({ payload }) => {
+      setSeparationRunning(false);
+      setSeparationStage("completed");
+      setSeparationFraction(1);
+      setStemSetPath(payload.stem_set_path);
+      setNotice("Stem 分离完成");
+      void invoke<StemSetDocument>("read_stem_set", { path: payload.stem_set_path })
+        .then((document) => {
+          setStemSet(document);
+          void recordRevision("stems", parentPath(payload.stem_set_path), null);
+        })
+        .catch((reason) => setError(String(reason)));
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<string>("separation-failed", ({ payload }) => {
+      setSeparationRunning(false);
+      setSeparationStage("failed");
+      setError(`分离失败：${payload}`);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<SeparationProgress>("routing-progress", ({ payload }) => {
+      setRoutingRunning(payload.stage !== "completed");
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<RoutingFinished>("routing-finished", ({ payload }) => {
+      setRoutingRunning(false);
+      setRoutedAudioPath(payload.routed_audio);
+      setNotice(`${payload.mode} 路由试听已生成`);
+      void recordRevision("routing-preview", parentPath(payload.routing_plan_path), null);
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
+    void listen<string>("routing-failed", ({ payload }) => {
+      setRoutingRunning(false);
+      setError(`路由失败：${payload}`);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<AnalysisProgress>("analysis-progress", ({ payload }) => {
@@ -710,6 +789,72 @@ function App() {
     await startJob(next);
   }
 
+  async function recordRevision(kind: string, path: string, parentId: string | null) {
+    try {
+      const document = await invoke<ProjectDocument>("project_add_revision_path", {
+        kind,
+        absolutePath: path,
+        parentId,
+      });
+      setProject(document);
+    } catch {
+      // No open project, or the output is outside the project directory.
+    }
+  }
+
+  async function startSeparation() {
+    const model = separatorStatus?.models[0];
+    const output = await join(result?.result.output_dir ?? request.output, "stems");
+    if (!request.input || !separatorDirectory || !model) {
+      setError("请先选择源文件并安装至少一个分离模型");
+      return;
+    }
+    setSeparationRunning(true);
+    setSeparationStage("validating");
+    setSeparationFraction(0);
+    try {
+      await invoke("start_separation", {
+        request: {
+          component: separatorDirectory,
+          input: request.input,
+          output,
+          model: model.id,
+          workerPath: request.worker_path,
+        },
+      });
+    } catch (reason) {
+      setSeparationRunning(false);
+      setError(String(reason));
+    }
+  }
+
+  async function startRouting() {
+    if (!stemSetPath) {
+      setError("请先完成 stem 分离");
+      return;
+    }
+    const output = await join(
+      result?.result.output_dir ?? request.output,
+      "routing",
+      routingMode,
+    );
+    setRoutingRunning(true);
+    try {
+      await invoke("start_routing", {
+        request: {
+          stemSet: stemSetPath,
+          output,
+          mode: routingMode,
+          maxVoices: request.max_voices,
+          workerPath: request.worker_path,
+        },
+      });
+    } catch (reason) {
+      setRoutingRunning(false);
+      setError(String(reason));
+    }
+  }
+
   async function applyEditRevision() {
     if (!result || !performance) return;
     setRunning(true);
@@ -720,6 +865,11 @@ function App() {
       const output = await invoke<string>("next_edit_output", {
         source: result.result.output_dir,
       });
+      pendingRevisionRef.current = {
+        kind: "performance-edit",
+        path: output,
+        parentId: performance.revision.id,
+      };
       await invoke("edit_export", {
         sourceResultDir: result.result.output_dir,
         output,
@@ -921,6 +1071,69 @@ function App() {
               positionUs={positionUs}
               onSeek={(position) => void seekAnalysis(position)}
             />
+          </section>
+        )}
+
+        {request.input && (
+          <section className="panel stem-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="section-number">STEM</span>
+                <h2>分离与路由</h2>
+              </div>
+              <button
+                className="primary-button"
+                onClick={() => void startSeparation()}
+                disabled={
+                  separationRunning ||
+                  !separatorStatus?.installed ||
+                  separatorStatus.models.length === 0
+                }
+              >
+                {separationRunning ? "分离中" : "分离为四轨"}
+              </button>
+            </div>
+            <div className="stem-status">
+              <div>
+                <span>运行组件</span>
+                <strong>
+                  {separatorStatus?.installed
+                    ? `Demucs ${separatorStatus.component_version}`
+                    : "未安装"}
+                </strong>
+              </div>
+              <div>
+                <span>分离状态</span>
+                <strong>
+                  {separationRunning
+                    ? `${separationStage} ${separationFraction === null ? "" : `${Math.round(separationFraction * 100)}%`}`
+                    : stemSet
+                      ? "四轨与 instrumental 就绪"
+                      : "等待分离"}
+                </strong>
+              </div>
+            </div>
+            {stemSet && (
+              <div className="routing-row">
+                <label className="field">
+                  <span>演奏模板</span>
+                  <select value={routingMode} onChange={(event) => setRoutingMode(event.target.value)}>
+                    <option value="solo">Solo</option>
+                    <option value="melody_chords">Melody + Chords</option>
+                    <option value="two_voice">Two Voice</option>
+                    <option value="full">Full</option>
+                  </select>
+                </label>
+                <button
+                  className="primary-button"
+                  onClick={() => void startRouting()}
+                  disabled={routingRunning}
+                >
+                  {routingRunning ? "路由中" : "生成路由试听"}
+                </button>
+                {routedAudioPath && <span className="pill">A/B 已加入“路由”来源</span>}
+              </div>
+            )}
           </section>
         )}
 

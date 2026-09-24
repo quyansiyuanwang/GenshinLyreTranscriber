@@ -284,3 +284,49 @@ export interface CandidateNote {
   track: number;
   channel: number;
 }
+
+export interface StemArtifact {
+  role: "vocals" | "drums" | "bass" | "other" | "instrumental";
+  relative_path: string;
+  sha256: string;
+  size_bytes: number;
+  sample_rate: 44100;
+  channels: 2;
+  duration_us: number;
+}
+
+export interface StemSetDocument {
+  format_version: 1;
+  source: { sha256: string };
+  separation: {
+    component_id: string;
+    component_version: string;
+    model_id: string;
+    model_sha256: string;
+    quality: "fast" | "balanced" | "high_quality";
+  };
+  sample_rate: 44100;
+  channels: 2;
+  stems: StemArtifact[];
+  instrumental: StemArtifact;
+}
+
+export interface SeparationProgress {
+  type: "progress";
+  stage: string;
+  fraction: number | null;
+}
+
+export interface SeparationFinished {
+  type: "result";
+  stem_set_path: string;
+  elapsed_seconds: number;
+}
+
+export interface RoutingFinished {
+  type: "result";
+  routed_audio: string;
+  routing_plan_path: string;
+  mode: string;
+  active_routes: number;
+}
