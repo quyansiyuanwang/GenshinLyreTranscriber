@@ -1,0 +1,79 @@
+name: Debug diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Repository ref to build
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  debug:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Resolve revision
+        id: revision
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "short=$($sha.Substring(0, 8))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "date=$((Get-Date).ToUniversalTime().ToString('yyyyMMdd'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: 0.9.21
+      - name: Sync and fetch resources
+        run: |
+          uv sync --project python --locked
+          uv run --project python python scripts/fetch_resources.py basic-pitch
+      - name: Tests and build
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+          uv run --project python ruff check .
+          uv run --project python ruff format --check .
+          uv run --project python mypy .
+          uv run --project python pytest -q
+          cargo build --locked
+          ./scripts/build_worker.ps1
+      - name: Stage debug diagnostics
+        shell: pwsh
+        run: |
+          $stage = Join-Path (Resolve-Path 'artifacts').Path 'debug-diagnostic'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item target/debug/glt.exe $stage
+          Copy-Item artifacts/worker/glt-worker $stage -Recurse -Force
+          $warn = 'build/pyinstaller/glt-worker/warn-glt-worker.txt'
+          if (Test-Path $warn) { Copy-Item $warn (Join-Path $stage 'warn-glt-worker.txt') }
+          Get-ChildItem $stage -Recurse -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path.Substring($stage.Length + 1))" } | Set-Content (Join-Path $stage 'SHA256SUMS')
+      - name: Upload debug diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: glt-debug-windows-x64-${{ steps.revision.outputs.date }}-${{ steps.revision.outputs.short }}
+          path: artifacts/debug-diagnostic
+          retention-days: 14
+          if-no-files-found: error

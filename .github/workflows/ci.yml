@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout pinned reference player
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: quyansiyuanwang/GenshinImpactPianoPlayer
+          ref: 7aaddad21b71e91fd36b6ce7687dfb546076f602
+          path: reference-player
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: 0.9.21
+      - name: Sync locked Python environment
+        run: uv sync --project python --locked
+      - name: Fetch pinned model
+        run: uv run --project python python scripts/fetch_resources.py basic-pitch
+      - name: Rust format and lint
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked
+      - name: Python static checks
+        run: |
+          uv run --project python ruff check .
+          uv run --project python ruff format --check .
+          uv run --project python mypy .
+      - name: Python tests
+        run: uv run --project python pytest -q
+      - name: Reference player contract
+        run: uv run --project python python scripts/verify_reference_player_contract.py --player-root reference-player

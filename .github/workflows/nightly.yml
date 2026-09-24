@@ -1,0 +1,93 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Resolve revision
+        id: revision
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          $short = $sha.Substring(0, 8)
+          $date = (Get-Date).ToUniversalTime().ToString("yyyyMMdd")
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "short=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "date=$date" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Check existing successful artifacts
+        id: inventory
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $url = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/artifacts?per_page=100"
+          $response = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
+          $short = "${{ steps.revision.outputs.short }}"
+          $existing = @($response.artifacts | Where-Object { -not $_.expired -and $_.name -like "glt-nightly-windows-x64-*$short*" })
+          "skip_build=$([bool]$existing)".ToLowerInvariant() | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
+      - name: Install Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: 0.9.21
+      - name: Sync locked Python environment
+        run: uv sync --project python --locked
+      - name: Fetch pinned model
+        run: uv run --project python python scripts/fetch_resources.py basic-pitch
+      - name: Full tests
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+          uv run --project python ruff check .
+          uv run --project python ruff format --check .
+          uv run --project python mypy .
+          uv run --project python pytest -q
+      - name: Build nightly revision
+        if: steps.inventory.outputs.skip_build != 'true'
+        run: |
+          cargo build --release --locked
+          ./scripts/build_worker.ps1
+      - name: Stage nightly diagnostics
+        if: steps.inventory.outputs.skip_build != 'true'
+        shell: pwsh
+        run: |
+          $stage = Join-Path (Resolve-Path 'artifacts').Path 'nightly-diagnostic'
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item target/release/glt.exe $stage
+          Copy-Item artifacts/worker/glt-worker $stage -Recurse -Force
+          Copy-Item LICENSE, README.md $stage
+          Copy-Item docs $stage -Recurse -Force
+          Get-ChildItem $stage -Recurse -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path.Substring($stage.Length + 1))" } | Set-Content (Join-Path $stage 'SHA256SUMS')
+      - name: Upload nightly diagnostics
+        if: steps.inventory.outputs.skip_build != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: glt-nightly-windows-x64-${{ steps.revision.outputs.date }}-${{ steps.revision.outputs.short }}
+          path: artifacts/nightly-diagnostic
+          retention-days: 14
+          if-no-files-found: error
