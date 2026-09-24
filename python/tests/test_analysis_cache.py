@@ -7,7 +7,12 @@ import numpy as np
 import pytest
 import soundfile
 
-from glt_core.analysis import AnalysisCancelled, AnalysisConfig, build_analysis_cache
+from glt_core.analysis import (
+    AnalysisCancelled,
+    AnalysisConfig,
+    SpectralConfig,
+    build_analysis_cache,
+)
 from glt_core.analysis.decode import ANALYSIS_CHANNELS, ANALYSIS_SAMPLE_RATE
 from glt_core.protocol.validation import validate_analysis_manifest
 
@@ -70,3 +75,77 @@ def test_analysis_cancellation_is_explicit(tmp_path: pathlib.Path) -> None:
 
     with pytest.raises(AnalysisCancelled):
         build_analysis_cache(source, tmp_path / "analysis", cancelled=lambda: True)
+
+
+def test_spectral_features_find_known_tone(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "tone.wav"
+    _write_stereo_wave(source)
+    config = SpectralConfig(fft_size=512, hop_size=128, window="hann")
+
+    result = build_analysis_cache(
+        source,
+        tmp_path / "analysis",
+        spectral_config=config,
+    )
+    assert result.spectral is not None
+    assert result.spectral.spectrogram.frames > 300
+    assert result.spectral.spectrogram.bins == 257
+    assert result.spectral.spectrogram.path.stat().st_size == (
+        result.spectral.spectrogram.frames * result.spectral.spectrogram.bins
+    )
+    features = np.memmap(
+        result.spectral.features.path,
+        dtype="<f4",
+        mode="r",
+        shape=(result.spectral.features.frames, len(result.spectral.features.columns)),
+    )
+    feature_index = {name: index for index, name in enumerate(result.spectral.features.columns)}
+    assert float(np.median(features[:, feature_index["centroid_hz"]])) == pytest.approx(
+        440.0,
+        abs=15.0,
+    )
+    assert float(np.median(features[:, feature_index["pitch_hz"]])) == pytest.approx(
+        440.0,
+        abs=8.0,
+    )
+    assert float(np.median(features[:, feature_index["pitch_confidence"]])) > 0.7
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    validate_analysis_manifest(manifest)
+    assert manifest["spectral"]["window"] == "hann"
+    assert {entry["kind"] for entry in manifest["files"]} == {
+        "pcm",
+        "waveform",
+        "spectrogram",
+        "features",
+    }
+
+
+def test_chirp_centroid_increases_and_window_variants_are_valid(
+    tmp_path: pathlib.Path,
+) -> None:
+    sample_rate = ANALYSIS_SAMPLE_RATE
+    frames = sample_rate * 2
+    time = np.arange(frames, dtype=np.float32) / sample_rate
+    sweep = np.sin(2 * np.pi * (200.0 * time + 450.0 * time * time), dtype=np.float32)
+    source = tmp_path / "chirp.wav"
+    soundfile.write(source, np.column_stack((sweep, sweep)), sample_rate, subtype="FLOAT")
+
+    result = build_analysis_cache(
+        source,
+        tmp_path / "analysis",
+        spectral_config=SpectralConfig(fft_size=512, hop_size=128, window="blackman"),
+    )
+    assert result.spectral is not None
+    features = np.memmap(
+        result.spectral.features.path,
+        dtype="<f4",
+        mode="r",
+        shape=(result.spectral.features.frames, len(result.spectral.features.columns)),
+    )
+    centroid_index = result.spectral.features.columns.index("centroid_hz")
+    centroid = np.asarray(features[:, centroid_index])
+    assert float(np.median(centroid[-20:])) > float(np.median(centroid[:20])) + 300.0
+
+    with pytest.raises(ValueError, match="hop_size"):
+        SpectralConfig(fft_size=512, hop_size=600).validate()

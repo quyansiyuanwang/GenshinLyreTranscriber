@@ -48,6 +48,7 @@
         }
       }
     },
+    "spectral": {"$ref": "#/$defs/spectral"},
     "files": {
       "type": "array",
       "minItems": 2,
@@ -73,10 +74,49 @@
       "additionalProperties": false,
       "required": ["kind", "relative_path", "sha256", "size_bytes"],
       "properties": {
-        "kind": {"enum": ["pcm", "waveform"]},
+        "kind": {"enum": ["pcm", "waveform", "spectrogram", "features"]},
         "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024},
         "sha256": {"$ref": "#/$defs/sha256"},
         "size_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "spectral": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format_version", "fft_size", "hop_size", "window", "frames", "bins", "db_floor", "db_ceil", "spectrogram", "features"],
+      "properties": {
+        "format_version": {"const": 1},
+        "fft_size": {"type": "integer", "minimum": 64},
+        "hop_size": {"type": "integer", "minimum": 1},
+        "window": {"enum": ["hann", "hamming", "blackman"]},
+        "frames": {"type": "integer", "minimum": 1},
+        "bins": {"type": "integer", "minimum": 2},
+        "db_floor": {"type": "number"},
+        "db_ceil": {"type": "number"},
+        "spectrogram": {"$ref": "#/$defs/spectral_file"},
+        "features": {"$ref": "#/$defs/features_file"}
+      }
+    },
+    "spectral_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "sha256", "size_bytes"],
+      "properties": {
+        "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "features_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relative_path", "sha256", "size_bytes", "columns", "hop_us"],
+      "properties": {
+        "relative_path": {"type": "string", "minLength": 1, "maxLength": 1024},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "columns": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "hop_us": {"type": "integer", "minimum": 1}
       }
     }
   }

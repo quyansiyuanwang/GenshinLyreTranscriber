@@ -17,6 +17,11 @@ from glt_core.analysis.decode import (
     DecodedAudio,
     decode_audio,
 )
+from glt_core.analysis.spectrogram import (
+    SpectralAnalysisResult,
+    SpectralConfig,
+    build_spectral_analysis,
+)
 from glt_core.analysis.waveform import WaveformResult, build_waveform
 from glt_core.media.ffmpeg import MediaError
 
@@ -53,6 +58,7 @@ class AnalysisResult:
     cache_hit: bool
     decoded: DecodedAudio
     waveform: WaveformResult
+    spectral: SpectralAnalysisResult | None
 
 
 def build_analysis_cache(
@@ -60,6 +66,7 @@ def build_analysis_cache(
     directory: pathlib.Path | str,
     *,
     config: AnalysisConfig | None = None,
+    spectral_config: SpectralConfig | None = None,
     cancelled: Callable[[], bool] | None = None,
     progress: Callable[[str, float | None], None] | None = None,
 ) -> AnalysisResult:
@@ -77,14 +84,43 @@ def build_analysis_cache(
     waveform_path = output / WAVEFORM_NAME
     cached = _read_cache(manifest_path, cache_key, pcm_path, waveform_path)
     if cached is not None:
-        return AnalysisResult(
+        cached_result = AnalysisResult(
             directory=output,
             manifest_path=manifest_path,
             cache_key=cache_key,
             cache_hit=True,
             decoded=cached[0],
             waveform=cached[1],
+            spectral=None,
         )
+        if spectral_config is not None:
+            spectral = build_spectral_analysis(
+                cached_result.decoded,
+                output,
+                config=spectral_config,
+                cancelled=cancelled,
+                progress=(None if progress is None else lambda value: progress("features", value)),
+            )
+            manifest = _manifest(
+                input_path,
+                source_hash,
+                cache_key,
+                selected,
+                cached_result.decoded,
+                cached_result.waveform,
+                spectral,
+            )
+            _write_json_atomic(manifest_path, manifest)
+            return AnalysisResult(
+                directory=cached_result.directory,
+                manifest_path=cached_result.manifest_path,
+                cache_key=cached_result.cache_key,
+                cache_hit=True,
+                decoded=cached_result.decoded,
+                waveform=cached_result.waveform,
+                spectral=spectral,
+            )
+        return cached_result
 
     if progress is not None:
         progress("decoding", 0.0)
@@ -106,7 +142,26 @@ def build_analysis_cache(
     )
     if progress is not None:
         progress("waveform", 1.0)
-    manifest = _manifest(input_path, source_hash, cache_key, selected, decoded, waveform)
+    new_spectral: SpectralAnalysisResult | None = None
+    if spectral_config is not None:
+        if progress is not None:
+            progress("features", 0.0)
+        new_spectral = build_spectral_analysis(
+            decoded,
+            output,
+            config=spectral_config,
+            cancelled=cancelled,
+            progress=(None if progress is None else lambda value: progress("features", value)),
+        )
+    manifest = _manifest(
+        input_path,
+        source_hash,
+        cache_key,
+        selected,
+        decoded,
+        waveform,
+        new_spectral,
+    )
     _write_json_atomic(manifest_path, manifest)
     return AnalysisResult(
         directory=output,
@@ -115,6 +170,7 @@ def build_analysis_cache(
         cache_hit=False,
         decoded=decoded,
         waveform=waveform,
+        spectral=new_spectral,
     )
 
 
@@ -160,8 +216,13 @@ def _manifest(
     config: AnalysisConfig,
     decoded: DecodedAudio,
     waveform: WaveformResult,
+    spectral: SpectralAnalysisResult | None,
 ) -> dict[str, Any]:
-    return {
+    files = [
+        _file_entry("pcm", decoded.path, decoded.sha256),
+        _file_entry("waveform", waveform.path),
+    ]
+    document: dict[str, Any] = {
         "format_version": 1,
         "cache_key": cache_key,
         "source": {"path": str(source), "sha256": source_hash, "size_bytes": source.stat().st_size},
@@ -180,11 +241,48 @@ def _manifest(
             "base_bucket_count": waveform.base_bucket_count,
             "levels": [level.to_dict() for level in waveform.levels],
         },
-        "files": [
-            _file_entry("pcm", decoded.path, decoded.sha256),
-            _file_entry("waveform", waveform.path),
-        ],
+        "files": files,
     }
+    if spectral is not None:
+        document["spectral"] = {
+            "format_version": 1,
+            "fft_size": spectral.spectrogram.fft_size,
+            "hop_size": spectral.spectrogram.hop_size,
+            "window": spectral.spectrogram.window,
+            "frames": spectral.spectrogram.frames,
+            "bins": spectral.spectrogram.bins,
+            "db_floor": spectral.spectrogram.db_floor,
+            "db_ceil": spectral.spectrogram.db_ceil,
+            "spectrogram": {
+                "relative_path": spectral.spectrogram.path.name,
+                "sha256": spectral.spectrogram.sha256,
+                "size_bytes": spectral.spectrogram.size_bytes,
+            },
+            "features": {
+                "relative_path": spectral.features.path.name,
+                "sha256": spectral.features.sha256,
+                "size_bytes": spectral.features.size_bytes,
+                "columns": list(spectral.features.columns),
+                "hop_us": spectral.features.hop_us,
+            },
+        }
+        files.extend(
+            [
+                {
+                    "kind": "spectrogram",
+                    "relative_path": spectral.spectrogram.path.name,
+                    "sha256": spectral.spectrogram.sha256,
+                    "size_bytes": spectral.spectrogram.size_bytes,
+                },
+                {
+                    "kind": "features",
+                    "relative_path": spectral.features.path.name,
+                    "sha256": spectral.features.sha256,
+                    "size_bytes": spectral.features.size_bytes,
+                },
+            ]
+        )
+    return document
 
 
 def _file_entry(kind: str, path: pathlib.Path, digest: str | None = None) -> dict[str, Any]:
