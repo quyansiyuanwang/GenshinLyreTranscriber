@@ -118,6 +118,17 @@ worker 的所有产物先写入输出目录同级的隐藏 staging。`result` �
 设备。Rust `preview` 模块通过 rodio 提供播放、暂停、恢复、停止和 0..=1 音量控制；
 设备或解码失败返回可查询的降级错误，停止会释放解码器和音频流资源。
 
+## TUI 与作业复用
+
+TUI 使用 Ratatui/Crossterm，支持输入/输出路径、目录浏览、参数页、真实阶段、未知进度和
+取消。表单通过 `build_job_options` 与 CLI 共用同一参数校验；作业通过
+`run_job_with_cancel` 在后台线程运行，事件循环以 50ms 轮询键事件和作业消息，不复制
+worker 启动、发布或协议逻辑。
+
+终端进入 alternate screen 后由 RAII guard 负责退出时恢复 raw mode、光标和主屏幕。
+`TestBackend` 覆盖 80x24 与 120x40 渲染边界；取消会设置共享原子标志并等待 worker
+进程树清理。完整结果列表和试听控件在后续结果闭环中接入。
+
 ## 文本谱导出
 
 `score.readable.txt` 只用于人工阅读，首行明确声明它不是旧播放器精确执行格式。拍点

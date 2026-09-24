@@ -183,7 +183,7 @@ struct PreviewArgs {
 }
 
 #[derive(Debug, Error)]
-enum CliError {
+pub(crate) enum CliError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
     #[error("worker was not found at {0}")]
@@ -237,7 +237,7 @@ fn execute(cli: Cli) -> Result<(), CliError> {
         Some(Command::Transcribe(args)) => run_transcribe(args),
         Some(Command::ConvertMidi(args)) => run_convert_midi(args),
         Some(Command::Preview(_)) => Err(CliError::NotImplemented("preview")),
-        Some(Command::Tui) | None => Err(CliError::NotImplemented("tui")),
+        Some(Command::Tui) | None => crate::tui::run(),
     }
 }
 
@@ -317,6 +317,29 @@ fn build_options(
     preview_wav: bool,
     overwrite: bool,
 ) -> Result<StartOptions, CliError> {
+    build_job_options(
+        timing.into(),
+        bpm,
+        transpose.into(),
+        audio_track,
+        start_seconds,
+        end_seconds,
+        preview_wav,
+        overwrite,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_job_options(
+    timing: Timing,
+    bpm: Option<f64>,
+    transpose: Transpose,
+    audio_track: Option<u32>,
+    start_seconds: Option<f64>,
+    end_seconds: Option<f64>,
+    preview_wav: bool,
+    overwrite: bool,
+) -> Result<StartOptions, CliError> {
     if bpm.is_some_and(|value| !value.is_finite() || value <= 0.0 || value > 1000.0) {
         return Err(CliError::InvalidArgument(
             "bpm must be finite and in range (0, 1000]".to_owned(),
@@ -333,9 +356,9 @@ fn build_options(
         ));
     }
     Ok(StartOptions {
-        timing: Some(timing.into()),
+        timing: Some(timing),
         bpm,
-        transpose: Some(transpose.into()),
+        transpose: Some(transpose),
         audio_track,
         start_us,
         end_us,
@@ -361,6 +384,24 @@ fn seconds_to_microseconds(value: Option<f64>, name: &str) -> Result<Option<u64>
     Ok(Some(microseconds.round() as u64))
 }
 
+#[derive(Debug)]
+pub(crate) struct JobOutcome {
+    pub job_id: String,
+    pub result: ResultPayload,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum JobUpdate {
+    Progress {
+        stage: String,
+        fraction: Option<f64>,
+    },
+    Warning {
+        code: String,
+        message: String,
+    },
+}
+
 fn run_job(
     worker_override: Option<PathBuf>,
     input: PathBuf,
@@ -369,6 +410,53 @@ fn run_job(
     options: StartOptions,
     json_output: bool,
 ) -> Result<(), CliError> {
+    let cancellation = cancellation_flag()?;
+    let outcome = run_job_with_cancel(
+        worker_override,
+        input,
+        output,
+        operation,
+        options,
+        cancellation,
+        |update| match update {
+            JobUpdate::Progress { stage, fraction } => match fraction {
+                Some(value) => eprintln!("{stage}: {:.0}%", value * 100.0),
+                None => eprintln!("{stage}: ..."),
+            },
+            JobUpdate::Warning { code, message } => {
+                eprintln!("warning [{code}]: {message}");
+            }
+        },
+    )?;
+    let result = outcome.result;
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "job_id": outcome.job_id,
+                "result": result,
+            }))
+            .expect("JSON serialization cannot fail")
+        );
+    } else {
+        println!("result: {}", result.output_dir.display());
+        println!("report: {}", result.report_path.display());
+    }
+    Ok(())
+}
+
+pub(crate) fn run_job_with_cancel<F>(
+    worker_override: Option<PathBuf>,
+    input: PathBuf,
+    output: PathBuf,
+    operation: Operation,
+    options: StartOptions,
+    cancellation: Arc<AtomicBool>,
+    mut on_update: F,
+) -> Result<JobOutcome, CliError>
+where
+    F: FnMut(JobUpdate),
+{
     let input = absolute_path(&input)?;
     if !input.is_file() {
         return Err(CliError::InvalidArgument(format!(
@@ -405,7 +493,6 @@ fn run_job(
     let spec = resolve_worker_spec(worker_override)?;
     let mut client = WorkerClient::launch(spec, DEFAULT_READY_TIMEOUT)?;
     client.start(job_id.clone(), &request)?;
-    let cancellation = cancellation_flag()?;
     let started = Instant::now();
     loop {
         if cancellation.load(Ordering::Relaxed) {
@@ -417,30 +504,16 @@ fn run_job(
                 operation: "job terminal message",
             }));
         }
-        match client.recv_event(Duration::from_millis(250)) {
-            Ok(WorkerEvent::Progress { stage, fraction }) => match fraction {
-                Some(value) => eprintln!("{stage}: {:.0}%", value * 100.0),
-                None => eprintln!("{stage}: ..."),
-            },
+        match client.recv_event(Duration::from_millis(100)) {
+            Ok(WorkerEvent::Progress { stage, fraction }) => {
+                on_update(JobUpdate::Progress { stage, fraction });
+            }
             Ok(WorkerEvent::Warning { code, message, .. }) => {
-                eprintln!("warning [{code}]: {message}");
+                on_update(JobUpdate::Warning { code, message });
             }
             Ok(WorkerEvent::Result(result)) => {
                 let result = publish_result(&staging_dir, &output, overwrite, result)?;
-                if json_output {
-                    println!(
-                        "{}",
-                        serde_json::to_string(&serde_json::json!({
-                            "job_id": job_id,
-                            "result": result,
-                        }))
-                        .expect("JSON serialization cannot fail")
-                    );
-                } else {
-                    println!("result: {}", result.output_dir.display());
-                    println!("report: {}", result.report_path.display());
-                }
-                return Ok(());
+                return Ok(JobOutcome { job_id, result });
             }
             Ok(WorkerEvent::Error(error)) => {
                 return Err(CliError::WorkerFailure(format!(

@@ -7,10 +7,20 @@ worker 已支持从本地音频/视频转录或导入 MIDI，并输出 `source.m
 
 ```powershell
 glt --help
+glt tui
 glt doctor [--worker PATH] [--json]
 glt transcribe INPUT --output DIR [OPTIONS]
 glt convert-midi INPUT --output DIR [OPTIONS]
 ```
+
+## TUI
+
+无参数或执行 `glt tui` 会进入 Ratatui 界面。先输入素材路径和输出目录，按 Enter 进入
+参数页；`Tab` 移动字段，`Space` 循环选择或者切换布尔值，`F5` 启动，`Esc` 退出，
+`Ctrl+C` 取消正在运行的作业。`F2` 打开当前目录浏览；选择文件后回到路径输入。
+
+运行页只显示 worker 实际发送的阶段和进度；没有可信百分比时明确显示未知。TUI 与 CLI
+共用参数构造和作业控制器，终端退出或异常路径通过 guard 恢复 raw mode、光标和主屏幕。
 
 ## 常用参数
 
