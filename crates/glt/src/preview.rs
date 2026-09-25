@@ -277,6 +277,7 @@ impl PlaybackBackend for RodioBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -443,5 +444,51 @@ mod tests {
         assert_eq!(opens.load(Ordering::SeqCst), 2);
         assert_eq!(*state.calls.lock().unwrap(), ["seek", "play"]);
         assert_eq!(service.position(), std::time::Duration::from_millis(250));
+    }
+
+    #[test]
+    fn real_playback_clock_error_is_bounded_when_device_is_available() {
+        let path = std::env::temp_dir().join(format!(
+            "glt-preview-clock-{}-{}.wav",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let sample_rate = 44_100_u32;
+        let frames = sample_rate;
+        let data_bytes = frames * 2;
+        let mut file = File::create(&path).unwrap();
+        file.write_all(b"RIFF").unwrap();
+        file.write_all(&(36 + data_bytes).to_le_bytes()).unwrap();
+        file.write_all(b"WAVEfmt ").unwrap();
+        file.write_all(&16_u32.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&sample_rate.to_le_bytes()).unwrap();
+        file.write_all(&(sample_rate * 2).to_le_bytes()).unwrap();
+        file.write_all(&2_u16.to_le_bytes()).unwrap();
+        file.write_all(&16_u16.to_le_bytes()).unwrap();
+        file.write_all(b"data").unwrap();
+        file.write_all(&data_bytes.to_le_bytes()).unwrap();
+        file.write_all(&vec![0_u8; data_bytes as usize]).unwrap();
+        drop(file);
+
+        let mut playback = PlaybackService::open_wav(path.clone());
+        if playback.error().is_some() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        playback.play().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let expected = std::time::Duration::from_millis(300);
+        let error = playback.position().abs_diff(expected);
+        playback.stop().unwrap();
+        let _ = std::fs::remove_file(path);
+        assert!(
+            error <= std::time::Duration::from_millis(50),
+            "playback position error was {error:?}"
+        );
     }
 }

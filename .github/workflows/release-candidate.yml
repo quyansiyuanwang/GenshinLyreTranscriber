@@ -72,6 +72,23 @@ jobs:
           pnpm --dir crates/glt-gui test
           pnpm --dir crates/glt-gui build
           ./scripts/package_release.ps1 -AssetPrefix glt-candidate-${{ inputs.version }}
+      - name: Playback clock gate
+        run: cargo test -p glt preview::tests::real_playback_clock_error_is_bounded_when_device_is_available --locked
+      - name: Short and long E2E gate
+        run: |
+          uv run --project python python scripts/e2e_gate.py --cli artifacts/release/.cli-stage/glt.exe --worker artifacts/release/.cli-stage/glt-worker/glt-worker.exe --output artifacts/e2e-candidate --short-seconds 2 --long-seconds 600
+          $report = Get-Content artifacts/e2e-candidate/e2e-report.json -Raw | ConvertFrom-Json
+          if ($report.gate.failures.Count -ne 0) {
+            throw "E2E gate failures: $($report.gate.failures -join '; ')"
+          }
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: glt-e2e-${{ inputs.version }}-${{ steps.revision.outputs.sha }}
+          path: artifacts/e2e-candidate/e2e-report.json
+          retention-days: 30
+          if-no-files-found: warn
       - name: Upload diagnostic candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

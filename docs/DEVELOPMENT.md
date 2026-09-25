@@ -279,3 +279,18 @@ Nightly workflow 使用固定 `nightly` tag 和同名 Pre-release。每次成功
 
 Debug workflow 仍只上传 Actions artifact。正式版本发布必须获得明确的版本、提交和发布
 方式批准。
+
+## 长短素材门禁
+
+Release candidate 工作流在打包后运行：
+
+```powershell
+cargo test -p glt preview::tests::real_playback_clock_error_is_bounded_when_device_is_available --locked
+uv run --project python python scripts/e2e_gate.py `
+  --cli <packaged-cli> `
+  --worker <packaged-worker> `
+  --output artifacts/e2e-candidate --short-seconds 2 --long-seconds 600
+```
+
+门禁检查短素材完整导出、`edit-NN` 与父 Performance 一致、10 分钟分析缓存复用、执行时间与
+峰值工作集。Gate report 失败时候选工作流直接失败，不允许把失败候选标记为可发布。

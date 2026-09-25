@@ -6,6 +6,7 @@ import hashlib
 import os
 import pathlib
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -124,14 +125,24 @@ def decode_audio(
         ]
     )
     creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=creation_flags,
-    )
+    stderr_path = output.with_name(f".{output.name}.stderr.partial")
+    stderr_path.unlink(missing_ok=True)
+    stderr_stream = stderr_path.open("wb")
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=stderr_stream,
+            creationflags=creation_flags,
+        )
+    except BaseException:
+        stderr_stream.close()
+        stderr_path.unlink(missing_ok=True)
+        raise
     if process.stdout is None:
         process.kill()
+        stderr_stream.close()
+        stderr_path.unlink(missing_ok=True)
         raise MediaError("DECODE_FAILED", "FFmpeg stdout pipe is unavailable")
     estimated_bytes = (
         None
@@ -144,27 +155,36 @@ def decode_audio(
     )
     hasher = hashlib.sha256()
     written = 0
+    last_progress_fraction = -1.0
+    last_progress_time = 0.0
     try:
         with partial.open("wb") as stream_output:
             while True:
                 if cancelled is not None and cancelled():
                     process.kill()
                     raise AnalysisCancelled("analysis was cancelled")
-                chunk = process.stdout.read(READ_BYTES)
+                chunk = os.read(process.stdout.fileno(), READ_BYTES)
                 if not chunk:
                     break
                 stream_output.write(chunk)
                 hasher.update(chunk)
                 written += len(chunk)
                 if progress is not None:
-                    progress(None if not estimated_bytes else min(written / estimated_bytes, 1.0))
+                    now = time.monotonic()
+                    if estimated_bytes:
+                        fraction = min(written / estimated_bytes, 1.0)
+                        if fraction >= 1.0 or fraction - last_progress_fraction >= 0.01:
+                            progress(fraction)
+                            last_progress_fraction = fraction
+                    elif now - last_progress_time >= 0.25:
+                        progress(None)
+                        last_progress_time = now
             stream_output.flush()
             os.fsync(stream_output.fileno())
         return_code = process.wait()
+        stderr_stream.flush()
         if return_code != 0:
-            stderr = (
-                process.stderr.read().decode("utf-8", errors="replace") if process.stderr else ""
-            )
+            stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
             raise MediaError("DECODE_FAILED", stderr.strip() or f"FFmpeg exited with {return_code}")
         if written == 0 or written % (ANALYSIS_CHANNELS * SAMPLE_BYTES) != 0:
             raise MediaError("DECODE_EMPTY", "decoded audio is empty or misaligned")
@@ -177,8 +197,8 @@ def decode_audio(
     finally:
         if process.stdout is not None:
             process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
+        stderr_stream.close()
+        stderr_path.unlink(missing_ok=True)
 
     frames = written // (ANALYSIS_CHANNELS * SAMPLE_BYTES)
     return DecodedAudio(
