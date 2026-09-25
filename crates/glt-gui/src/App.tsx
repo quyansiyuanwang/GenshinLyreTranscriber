@@ -36,6 +36,7 @@ import AnalysisView from "./AnalysisView";
 import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import FilterRangeSlider from "./FilterRangeSlider";
 import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPreview";
+import { filterMetricDefinition, type FilterMetric } from "./filterMetrics";
 import ParameterSlider from "./ParameterSlider";
 import { addRecentPath, parseRecentPaths } from "./recentPaths";
 import { shouldLoopSeek } from "./playbackLoop";
@@ -228,13 +229,18 @@ function App() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<DraftFilterRule[]>([{ ...EMPTY_RULE }]);
+  const [activeFilterRule, setActiveFilterRule] = useState(0);
   const [running, setRunning] = useState(false);
   const [stage, setStage] = useState("待机");
   const [fraction, setFraction] = useState<number | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("准备就绪");
-  const [toast, setToast] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+  const [notice, setNoticeState] = useState("准备就绪");
+  const [toast, setToast] = useState<{
+    id: number;
+    message: string;
+    kind: "info" | "error";
+  } | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [report, setReport] = useState<ReportDocument | null>(null);
   const [performance, setPerformance] = useState<PerformanceDocument | null>(null);
@@ -275,12 +281,26 @@ function App() {
   const loopSeekingRef = useRef(false);
   const [volume, setVolume] = useState(0.8);
   const jobRequestRef = useRef(request);
+  const toastSequenceRef = useRef(0);
   jobRequestRef.current = request;
   const pendingRevisionRef = useRef<{
     kind: string;
     path: string;
     parentId: string | null;
   } | null>(null);
+
+  function setNotice(message: string) {
+    setNoticeState(message);
+    toastSequenceRef.current += 1;
+    setToast({ id: toastSequenceRef.current, message, kind: "info" });
+  }
+
+  function setError(message: string | null) {
+    setErrorState(message);
+    if (!message) return;
+    toastSequenceRef.current += 1;
+    setToast({ id: toastSequenceRef.current, message, kind: "error" });
+  }
 
   const previewArtifact = result?.result.artifacts.find(
     (artifact) => artifact.kind === "preview_wav",
@@ -367,11 +387,17 @@ function App() {
   }, []);
 
   useEffect(() => {
-    setToast(notice);
-    if (!notice) return;
-    const timer = window.setTimeout(() => setToast(null), 2600);
+    if (!toast) return;
+    const timer = window.setTimeout(
+      () => setToast((current) => (current?.id === toast.id ? null : current)),
+      toast.kind === "error" ? 5200 : 3200,
+    );
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [toast]);
+
+  useEffect(() => {
+    setActiveFilterRule((current) => Math.min(current, Math.max(0, filterRules.length - 1)));
+  }, [filterRules.length]);
 
   useEffect(() => {
     if (!request.input || isMidi(request.input)) {
@@ -690,23 +716,42 @@ function App() {
       operation,
       timing: operation === "convert_midi" ? "preserve" : current.timing,
     }));
+    setNotice(`已载入素材：${path.split(/[/\\]/).pop() || path}`);
     if (analyze && operation !== "convert_midi") await startAnalysis(path, output);
   }
 
   async function chooseInput() {
-    const selected = await openDialog({ multiple: false, directory: false, filters: MEDIA_FILTERS });
-    if (typeof selected === "string") await applyInput(selected);
+    try {
+      const selected = await openDialog({ multiple: false, directory: false, filters: MEDIA_FILTERS });
+      if (typeof selected === "string") await applyInput(selected);
+    } catch (reason) {
+      setError(`选择素材失败：${String(reason)}`);
+    }
   }
 
   async function chooseOutput() {
-    const selected = await openDialog({
-      multiple: false,
-      directory: true,
-      title: "选择输出目录",
-    });
-    if (typeof selected === "string") {
-      setRecentOutputs((current) => addRecentPath(current, selected));
-      setRequest((current) => ({ ...current, output: selected }));
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: true,
+        title: "选择输出目录",
+      });
+      if (typeof selected === "string") {
+        setRecentOutputs((current) => addRecentPath(current, selected));
+        setRequest((current) => ({ ...current, output: selected }));
+        setNotice(`输出目录已设为：${selected}`);
+      }
+    } catch (reason) {
+      setError(`选择输出目录失败：${String(reason)}`);
+    }
+  }
+
+  async function openLocalPath(path: string, label: string) {
+    try {
+      await openPath(path);
+      setNotice(`已打开${label}`);
+    } catch (reason) {
+      setError(`打开${label}失败：${String(reason)}`);
     }
   }
 
@@ -755,8 +800,12 @@ function App() {
   }
 
   async function cancelJob() {
-    await invoke("cancel_job");
-    setNotice("正在取消");
+    try {
+      await invoke("cancel_job");
+      setNotice("正在取消");
+    } catch (reason) {
+      setError(`取消失败：${String(reason)}`);
+    }
   }
 
   async function createProject() {
@@ -814,10 +863,14 @@ function App() {
   }
 
   async function closeProject() {
-    await invoke("project_close");
-    setProject(null);
-    setProjectPath(null);
-    setNotice("工程已关闭");
+    try {
+      await invoke("project_close");
+      setProject(null);
+      setProjectPath(null);
+      setNotice("工程已关闭");
+    } catch (reason) {
+      setError(`关闭工程失败：${String(reason)}`);
+    }
   }
 
   async function installSeparator() {
@@ -874,6 +927,7 @@ function App() {
       setPlayback(sourceId === "original" ? "playing-source" : "playing");
       setPlaybackError(null);
       setError(null);
+      setNotice(`正在播放：${option.label}`);
     } catch (reason) {
       setPlayback("error");
       setPlaybackError(String(reason));
@@ -892,6 +946,7 @@ function App() {
     setPositionUs(position);
     try {
       await invoke("seek_playback", { positionUs: position });
+      setNotice(`播放位置：${(position / 1_000_000).toFixed(2)}s`);
     } catch (reason) {
       setError(String(reason));
     }
@@ -901,6 +956,7 @@ function App() {
     try {
       await invoke("pause_preview");
       setPlayback("paused");
+      setNotice("试听已暂停");
     } catch (reason) {
       setError(String(reason));
     }
@@ -910,6 +966,7 @@ function App() {
     try {
       await invoke("stop_preview");
       setPlayback("idle");
+      setNotice("试听已停止");
     } catch (reason) {
       setError(String(reason));
     }
@@ -926,21 +983,26 @@ function App() {
 
   async function applyPreset(preset: FilterPreset) {
     if (!result) return;
-    const output = await invoke<string>("next_filter_output", {
-      source: result.result.output_dir,
-    });
-    const next: JobRequest = {
-      ...jobRequestRef.current,
-      input: result.result.output_dir,
-      output,
-      operation: "refilter",
-      filter: null,
-      filter_preset: preset,
-      preview_wav: true,
-      overwrite: false,
-    };
-    setRequest(next);
-    await startJob(next);
+    setNotice(`正在应用筛选预设：${preset}`);
+    try {
+      const output = await invoke<string>("next_filter_output", {
+        source: result.result.output_dir,
+      });
+      const next: JobRequest = {
+        ...jobRequestRef.current,
+        input: result.result.output_dir,
+        output,
+        operation: "refilter",
+        filter: null,
+        filter_preset: preset,
+        preview_wav: true,
+        overwrite: false,
+      };
+      setRequest(next);
+      await startJob(next);
+    } catch (reason) {
+      setError(`应用筛选预设失败：${String(reason)}`);
+    }
   }
 
   async function applyManualFilter() {
@@ -950,22 +1012,27 @@ function App() {
       setError("请至少填写一条有效筛选范围");
       return;
     }
-    const output = await invoke<string>("next_filter_output", {
-      source: result.result.output_dir,
-    });
-    const next: JobRequest = {
-      ...jobRequestRef.current,
-      input: result.result.output_dir,
-      output,
-      operation: "refilter",
-      filter,
-      filter_preset: null,
-      preview_wav: true,
-      overwrite: false,
-    };
-    setRequest(next);
-    setFilterOpen(false);
-    await startJob(next);
+    try {
+      const output = await invoke<string>("next_filter_output", {
+        source: result.result.output_dir,
+      });
+      const next: JobRequest = {
+        ...jobRequestRef.current,
+        input: result.result.output_dir,
+        output,
+        operation: "refilter",
+        filter,
+        filter_preset: null,
+        preview_wav: true,
+        overwrite: false,
+      };
+      setRequest(next);
+      setFilterOpen(false);
+      setNotice(`正在应用 ${filter.rules.length} 组筛选规则`);
+      await startJob(next);
+    } catch (reason) {
+      setError(`应用手动筛选失败：${String(reason)}`);
+    }
   }
 
   async function recordRevision(kind: string, path: string, parentId: string | null) {
@@ -991,6 +1058,7 @@ function App() {
     setSeparationRunning(true);
     setSeparationStage("validating");
     setSeparationFraction(0);
+    setNotice("正在分离四轨");
     try {
       await invoke("start_separation", {
         request: {
@@ -1065,6 +1133,7 @@ function App() {
           )
         : null;
     setRoutingRunning(true);
+    setNotice(`正在生成路由试听：${routingMode}`);
     try {
       await invoke("start_routing", {
         request: {
@@ -1137,6 +1206,47 @@ function App() {
     );
   }
 
+  function updateRuleMetricRange(
+    index: number,
+    metric: FilterMetric,
+    lower: number,
+    upper: number,
+  ) {
+    const definition = filterMetricDefinition(metric);
+    updateRuleRange(
+      index,
+      definition.minimumKey,
+      definition.maximumKey,
+      lower,
+      upper,
+      definition.step,
+    );
+    setActiveFilterRule(index);
+  }
+
+  function clearRuleMetric(index: number, metric: FilterMetric) {
+    const definition = filterMetricDefinition(metric);
+    setFilterRules((current) =>
+      current.map((rule, ruleIndex) =>
+        ruleIndex === index
+          ? { ...rule, [definition.minimumKey]: "", [definition.maximumKey]: "" }
+          : rule,
+      ),
+    );
+    setNotice(`已清除规则 ${index + 1} 的 ${definition.shortLabel} 范围`);
+  }
+
+  function addFilterRule() {
+    if (filterRules.length >= 4) {
+      setNotice("最多只能创建 4 个 OR 规则组");
+      return;
+    }
+    const nextIndex = filterRules.length;
+    setFilterRules((current) => [...current, { ...EMPTY_RULE }]);
+    setActiveFilterRule(nextIndex);
+    setNotice(`已添加规则 ${nextIndex + 1}；可在图上画横向范围`);
+  }
+
   const operationLabel = request.operation === "convert_midi" ? "MIDI" : "音频 / 视频";
 
   const reportTempo =
@@ -1168,7 +1278,7 @@ function App() {
             <div className="daw-menu-popover">
               <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setRequest((current) => ({ ...current, start_seconds: null, end_seconds: null })); setNotice("已清除波形选区"); }}>清除波形选区</button>
               <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setWarnings([]); setError(null); setNotice("已清除提示信息"); }}>清除提示信息</button>
-              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilterRules([{ ...EMPTY_RULE }]); setNotice("已重置筛选规则"); }}>重置筛选规则</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilterRules([{ ...EMPTY_RULE }]); setActiveFilterRule(0); setNotice("已重置筛选规则"); }}>重置筛选规则</button>
             </div>
           </details>
           <details className="daw-menu">
@@ -1219,10 +1329,10 @@ function App() {
           <details className="daw-menu">
             <summary>选项</summary>
             <div className="daw-menu-popover">
-              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setRequest((current) => ({ ...current, preview_wav: !current.preview_wav })); setNotice(request.preview_wav ? "已关闭预览 WAV" : "已开启预览 WAV"); }}>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); const previewWav = !request.preview_wav; setRequest((current) => ({ ...current, preview_wav: previewWav })); setNotice(previewWav ? "已开启预览 WAV" : "已关闭预览 WAV"); }}>
                 {request.preview_wav ? "关闭预览 WAV" : "开启预览 WAV"}
               </button>
-              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setAdvancedOpen((value) => !value); setNotice(advancedOpen ? "已收起高级参数" : "已展开高级参数"); }}>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); const next = !advancedOpen; setAdvancedOpen(next); setNotice(next ? "已展开高级参数" : "已收起高级参数"); }}>
                 {advancedOpen ? "收起高级参数" : "展开高级参数"}
               </button>
             </div>
@@ -1313,14 +1423,8 @@ function App() {
                     key={revision.id}
                     title={`${revision.kind} · ${revision.id}`}
                     onClick={async () => {
-                      try {
-                        await openPath(
-                          await join(parentPath(projectPath), revision.relative_path),
-                        );
-                        setNotice(`已打开 revision：${revision.kind}`);
-                      } catch (reason) {
-                        setError(String(reason));
-                      }
+                      const path = await join(parentPath(projectPath), revision.relative_path);
+                      await openLocalPath(path, `revision：${revision.kind}`);
                     }}
                   >
                     <strong>{revision.kind}</strong>
@@ -2118,7 +2222,7 @@ function App() {
                 </button>
                 <button
                   className="ghost-button"
-                  onClick={() => void openPath(result.result.output_dir)}
+                  onClick={() => void openLocalPath(result.result.output_dir, "结果目录")}
                 >
                   打开结果目录
                 </button>
@@ -2161,16 +2265,17 @@ function App() {
                 <FilterPreviewCanvas
                   notes={candidateNotes}
                   rules={filterRules}
-                  onPitchLineChange={(ruleIndex, bound, pitch) =>
-                    updateRule(
-                      ruleIndex,
-                      bound === "min" ? "pitchMin" : "pitchMax",
-                      String(pitch),
-                    )
-                  }
+                  activeRuleIndex={activeFilterRule}
+                  onActiveRuleChange={setActiveFilterRule}
+                  onRangeChange={updateRuleMetricRange}
+                  onClearRange={clearRuleMetric}
                 />
                 {filterRules.map((rule, index) => (
-                  <div className="filter-rule" key={index}>
+                  <div
+                    className={`filter-rule ${activeFilterRule === index ? "active" : ""}`}
+                    key={index}
+                    onPointerDownCapture={() => setActiveFilterRule(index)}
+                  >
                     <div className="filter-rule-title">
                       <label className="switch">
                         <input
@@ -2249,7 +2354,7 @@ function App() {
                   {filterRules.length < 4 && (
                     <button
                       className="ghost-button"
-                      onClick={() => setFilterRules((current) => [...current, { ...EMPTY_RULE }])}
+                      onClick={addFilterRule}
                     >
                       添加横向阈值组
                     </button>
@@ -2328,7 +2433,12 @@ function App() {
                 {result.result.artifacts.map((artifact) => (
                   <button
                     key={`${artifact.kind}-${artifact.relative_path}`}
-                    onClick={() => void openPath(`${result.result.output_dir}\\${artifact.relative_path}`)}
+                    onClick={() =>
+                      void openLocalPath(
+                        `${result.result.output_dir}\\${artifact.relative_path}`,
+                        `产物 ${artifact.relative_path}`,
+                      )
+                    }
                   >
                     <span>{artifact.kind}</span>
                     <strong>{artifact.relative_path}</strong>
@@ -2341,8 +2451,13 @@ function App() {
         )}
       </main>
       {toast && (
-        <div className="interaction-toast" role="status" aria-live="polite">
-          {toast}
+        <div
+          key={toast.id}
+          className={`interaction-toast ${toast.kind}`}
+          role={toast.kind === "error" ? "alert" : "status"}
+          aria-live={toast.kind === "error" ? "assertive" : "polite"}
+        >
+          {toast.message}
         </div>
       )}
     </div>

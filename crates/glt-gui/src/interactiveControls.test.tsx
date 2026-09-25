@@ -47,10 +47,18 @@ describe("interactive controls", () => {
 
   it("renders the candidate distribution canvas", () => {
     const html = renderToStaticMarkup(
-      <FilterPreviewCanvas notes={[]} rules={[]} onPitchLineChange={() => undefined} />,
+      <FilterPreviewCanvas
+        notes={[]}
+        rules={[]}
+        activeRuleIndex={0}
+        onActiveRuleChange={() => undefined}
+        onRangeChange={() => undefined}
+        onClearRange={() => undefined}
+      />,
     );
-    expect(html).toContain('候选音符筛选分布图');
-    expect(html).toContain('当前阈值保留');
+    expect(html).toContain("候选音符 MIDI pitch / 音高 分布图");
+    expect(html).toContain("画横向范围");
+    expect(html).toContain("当前规则横线");
   });
 
   it("renders draggable and precise numeric controls", () => {
