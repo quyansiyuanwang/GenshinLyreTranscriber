@@ -36,6 +36,7 @@ import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import FilterRangeSlider from "./FilterRangeSlider";
 import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPreview";
 import ParameterSlider from "./ParameterSlider";
+import { addRecentPath, parseRecentPaths } from "./recentPaths";
 import { shouldLoopSeek } from "./playbackLoop";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
@@ -204,8 +205,19 @@ function stemLabel(role: string): string {
   return labels[role] ?? role;
 }
 
+function loadRecentPaths(key: string): string[] {
+  if (typeof window === "undefined") return [];
+  return parseRecentPaths(window.localStorage.getItem(key));
+}
+
 function App() {
   const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
+  const [recentInputs, setRecentInputs] = useState<string[]>(() =>
+    loadRecentPaths("glt.recentInputs"),
+  );
+  const [recentOutputs, setRecentOutputs] = useState<string[]>(() =>
+    loadRecentPaths("glt.recentOutputs"),
+  );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<DraftFilterRule[]>([{ ...EMPTY_RULE }]);
@@ -310,6 +322,15 @@ function App() {
   const hasActiveAbSource = abOptions.some((option) => option.id === abSource && option.path);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem("glt.recentInputs", JSON.stringify(recentInputs));
+      window.localStorage.setItem("glt.recentOutputs", JSON.stringify(recentOutputs));
+    } catch {
+      // Recent paths are a convenience; storage failure must not block work.
+    }
+  }, [recentInputs, recentOutputs]);
+
+  useEffect(() => {
     invoke<ProjectDocument | null>("project_current")
       .then((document) => {
         setProject(document);
@@ -376,6 +397,7 @@ function App() {
       setFraction(1);
       setStage("completed");
       setResult(payload);
+      setRecentOutputs((current) => addRecentPath(current, payload.result.output_dir));
       setPlayback("idle");
       setNotice("转换完成");
       void invoke<ReportDocument>("read_report", { resultDir: payload.result.output_dir })
@@ -613,6 +635,7 @@ function App() {
   async function applyInput(path: string, analyze = true) {
     const operation = operationForPath(path);
     const output = request.output || (await defaultOutputFor(path));
+    setRecentInputs((current) => addRecentPath(current, path));
     setRequest((current) => ({
       ...current,
       input: path,
@@ -635,6 +658,7 @@ function App() {
       title: "选择输出目录",
     });
     if (typeof selected === "string") {
+      setRecentOutputs((current) => addRecentPath(current, selected));
       setRequest((current) => ({ ...current, output: selected }));
     }
   }
@@ -649,6 +673,7 @@ function App() {
     try {
       const opened = await invoke<ReportDocument>("read_report", { resultDir: selected });
       setReport(opened);
+      setRecentOutputs((current) => addRecentPath(current, selected));
       setResult({
         job_id: "opened-result",
         result: {
@@ -1367,7 +1392,21 @@ function App() {
                   }
                   placeholder="结果目录"
                 />
-                <button onClick={chooseOutput}>浏览</button>
+                <button
+                  type="button"
+                  disabled={!request.input}
+                  onClick={() =>
+                    setRequest((current) => ({
+                      ...current,
+                      output: parentPath(current.input),
+                    }))
+                  }
+                >
+                  同目录
+                </button>
+                <button type="button" onClick={() => void chooseOutput()}>
+                  浏览
+                </button>
               </div>
             </label>
           </div>
@@ -1375,6 +1414,39 @@ function App() {
             <span className="pill">{operationLabel}</span>
             <span>输入 MIDI 会自动切换到 preserve，避免覆盖已有 tempo map。</span>
           </div>
+
+          {recentInputs.length > 0 && (
+            <div className="recent-path-strip">
+              <span>最近素材</span>
+              <div>
+                {recentInputs.slice(0, 5).map((path) => (
+                  <button type="button" key={path} title={path} onClick={() => void applyInput(path)}>
+                    {path.split(/[/\\]/).pop() || path}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setRecentInputs([])}>清空</button>
+            </div>
+          )}
+
+          {recentOutputs.length > 0 && (
+            <div className="recent-path-strip">
+              <span>最近输出</span>
+              <div>
+                {recentOutputs.slice(0, 5).map((path) => (
+                  <button
+                    type="button"
+                    key={path}
+                    title={path}
+                    onClick={() => setRequest((current) => ({ ...current, output: path }))}
+                  >
+                    {path.split(/[/\\]/).pop() || path}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setRecentOutputs([])}>清空</button>
+            </div>
+          )}
         </section>
 
         {analysisManifest && analysisWaveform && (

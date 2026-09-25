@@ -907,7 +907,7 @@ select {
 
 .joined-input {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .joined-input input {
@@ -932,6 +932,45 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: 5px;
+}
+
+.recent-path-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.recent-path-strip > span {
+  color: var(--dim);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.recent-path-strip > div {
+  display: flex;
+  min-width: 0;
+  gap: 3px;
+  overflow-x: auto;
+}
+
+.recent-path-strip button {
+  min-height: 23px;
+  padding: 0 7px;
+  border: 1px solid #465055;
+  color: #c8d0d0;
+  background: #293135;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.recent-path-strip button:hover {
+  border-color: #687478;
+  color: #f1f4f3;
+  background: #364044;
 }
 
 .hint-row {
