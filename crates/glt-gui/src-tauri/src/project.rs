@@ -287,7 +287,8 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     let file = File::open(path).map_err(|error| format!("cannot open source: {error}"))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
+    // Project commands may run on Tauri worker threads; avoid a one-megabyte stack frame.
+    let mut buffer = vec![0_u8; 64 * 1024];
     loop {
         let count = reader
             .read(&mut buffer)
