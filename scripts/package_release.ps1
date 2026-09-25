@@ -19,9 +19,12 @@ function Copy-PackageDocs {
 function Copy-FfmpegRuntime {
     param([string]$Destination)
     $resourceRoot = Join-Path $Root "artifacts/resources/ffmpeg"
-    $bin = Get-ChildItem $resourceRoot -Directory -Filter "ffmpeg-*-win64-lgpl-shared-*" |
-        Select-Object -First 1 |
-        ForEach-Object { Join-Path $_.FullName "bin" }
+    $bin = $null
+    if (Test-Path -LiteralPath $resourceRoot -PathType Container) {
+        $bin = Get-ChildItem $resourceRoot -Directory -Filter "ffmpeg-*-win64-lgpl-shared-*" |
+            Select-Object -First 1 |
+            ForEach-Object { Join-Path $_.FullName "bin" }
+    }
     if (-not $bin -or -not (Test-Path -LiteralPath $bin -PathType Container)) {
         uv run --project python python scripts/fetch_resources.py ffmpeg
         if ($LASTEXITCODE -ne 0) {
