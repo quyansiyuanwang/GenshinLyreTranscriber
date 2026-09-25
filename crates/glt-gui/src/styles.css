@@ -1229,6 +1229,49 @@ select {
   font-weight: 500;
 }
 
+.routing-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 9px;
+  border: 1px solid #414b4f;
+  background: #414b4f;
+}
+
+.routing-mode-grid button {
+  display: grid;
+  min-height: 52px;
+  align-content: center;
+  gap: 3px;
+  padding: 6px;
+  border: 0;
+  color: #aeb8ba;
+  background: #252c2f;
+  text-align: left;
+}
+
+.routing-mode-grid button:hover {
+  color: #edf1f0;
+  background: #30383c;
+}
+
+.routing-mode-grid button.active {
+  color: #fff3e2;
+  background: linear-gradient(145deg, #9b5a20, #6f3e17);
+  box-shadow: inset 0 2px #f3a347;
+}
+
+.routing-mode-grid strong {
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.routing-mode-grid small {
+  color: inherit;
+  font-size: 7px;
+  opacity: 0.72;
+}
+
 .routing-row {
   display: flex;
   align-items: flex-end;
@@ -1530,6 +1573,48 @@ select {
   display: grid;
   gap: 7px;
   margin-top: 8px;
+}
+
+.filter-live-preview {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid #4b5559;
+  background: #20272a;
+}
+
+.filter-live-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.filter-live-copy span,
+.filter-live-preview small {
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.filter-live-copy strong {
+  color: #dce2e1;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.filter-live-track {
+  height: 7px;
+  overflow: hidden;
+  border: 1px solid #111517;
+  background: #171c1f;
+}
+
+.filter-live-track i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #79a86b, #a9cc75);
+  transition: width 90ms linear;
 }
 
 .filter-rule {

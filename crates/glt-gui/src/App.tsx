@@ -172,6 +172,44 @@ function rulesToFilter(rules: DraftFilterRule[]): FilterSpec | null {
   return converted.length ? { format_version: 1, rules: converted } : null;
 }
 
+function within(value: number, range: { min: number; max: number } | undefined): boolean {
+  return range === undefined || (value >= range.min && value <= range.max);
+}
+
+export function matchesDraftRule(note: CandidateNote, rule: DraftFilterRule): boolean {
+  if (!rule.enabled || !hasRuleValue(rule)) return false;
+  const durationMs = (note.end_us - note.start_us) / 1000;
+  const confidence = rule.confidenceMin || rule.confidenceMax
+    ? range(rule.confidenceMin, rule.confidenceMax, 0, 1)
+    : undefined;
+  if (confidence && note.confidence === null) return false;
+  return (
+    within(note.confidence ?? -1, confidence) &&
+    within(durationMs, range(rule.durationMin, rule.durationMax, 0, 3_600_000)) &&
+    within(note.velocity, range(rule.velocityMin, rule.velocityMax, 1, 127)) &&
+    within(note.pitch, range(rule.pitchMin, rule.pitchMax, 0, 127))
+  );
+}
+
+export function liveFilterStats(
+  notes: CandidateNote[],
+  rules: DraftFilterRule[],
+): { total: number; matched: number; removed: number; perRule: number[] } {
+  const activeRules = rules.filter((rule) => rule.enabled && hasRuleValue(rule));
+  const perRule = rules.map((rule) =>
+    rule.enabled && hasRuleValue(rule)
+      ? notes.filter((note) => matchesDraftRule(note, rule)).length
+      : 0,
+  );
+  if (activeRules.length === 0) {
+    return { total: notes.length, matched: notes.length, removed: 0, perRule };
+  }
+  const matched = notes.filter((note) =>
+    activeRules.some((rule) => matchesDraftRule(note, rule)),
+  ).length;
+  return { total: notes.length, matched, removed: notes.length - matched, perRule };
+}
+
 function isMidi(path: string): boolean {
   return /\.(mid|midi)$/i.test(path);
 }
@@ -276,6 +314,10 @@ function App() {
   );
 
   const counts = useMemo(() => Object.entries(report?.counts ?? {}), [report]);
+  const filterPreview = useMemo(
+    () => liveFilterStats(candidateNotes, filterRules),
+    [candidateNotes, filterRules],
+  );
   const abOptions = useMemo(() => {
     const options = [
       {
@@ -1403,25 +1445,36 @@ function App() {
               </div>
             </div>
             {stemSet && (
-              <div className="routing-row">
-                <label className="field">
-                  <span>演奏模板</span>
-                  <select value={routingMode} onChange={(event) => setRoutingMode(event.target.value)}>
-                    <option value="solo">Solo</option>
-                    <option value="melody_chords">Melody + Chords</option>
-                    <option value="two_voice">Two Voice</option>
-                    <option value="full">Full</option>
-                  </select>
-                </label>
-                <button
-                  className="primary-button"
-                  onClick={() => void startRouting()}
-                  disabled={routingRunning}
-                >
-                  {routingRunning ? "路由中" : "生成路由试听"}
-                </button>
-                {routedAudioPath && <span className="pill">A/B 已加入“路由”来源</span>}
-              </div>
+              <>
+                <div className="routing-mode-grid">
+                  {[
+                    { value: "solo", title: "SOLO", detail: "主旋律单声部" },
+                    { value: "melody_chords", title: "MELODY + CHORDS", detail: "旋律与和声" },
+                    { value: "two_voice", title: "TWO VOICE", detail: "旋律 + 低音" },
+                    { value: "full", title: "FULL", detail: "保留完整织体" },
+                  ].map((mode) => (
+                    <button
+                      type="button"
+                      key={mode.value}
+                      className={routingMode === mode.value ? "active" : ""}
+                      onClick={() => setRoutingMode(mode.value)}
+                    >
+                      <strong>{mode.title}</strong>
+                      <small>{mode.detail}</small>
+                    </button>
+                  ))}
+                </div>
+                <div className="routing-row">
+                  <button
+                    className="primary-button"
+                    onClick={() => void startRouting()}
+                    disabled={routingRunning}
+                  >
+                    {routingRunning ? "路由中" : "生成所选路由试听"}
+                  </button>
+                  {routedAudioPath && <span className="pill">A/B 已加入“路由”来源</span>}
+                </div>
+              </>
             )}
           </section>
         )}
@@ -1740,6 +1793,24 @@ function App() {
 
             {filterOpen && (
               <div className="filter-editor">
+                <div className="filter-live-preview">
+                  <div className="filter-live-copy">
+                    <span>即时筛选预览</span>
+                    <strong>
+                      {filterPreview.total === 0
+                        ? "没有候选缓存"
+                        : `保留 ${filterPreview.matched} · 删除 ${filterPreview.removed} · ${Math.round((filterPreview.matched / Math.max(1, filterPreview.total)) * 100)}%`}
+                    </strong>
+                  </div>
+                  <div className="filter-live-track">
+                    <i
+                      style={{
+                        width: `${filterPreview.total ? (filterPreview.matched / filterPreview.total) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <small>拖动阈值即时重算；“应用横向阈值”后才生成新的不可变结果目录。</small>
+                </div>
                 {filterRules.map((rule, index) => (
                   <div className="filter-rule" key={index}>
                     <div className="filter-rule-title">
@@ -1749,7 +1820,10 @@ function App() {
                           checked={rule.enabled}
                           onChange={(event) => updateRule(index, "enabled", event.target.checked)}
                         />
-                        <span>规则 {index + 1}</span>
+                        <span>
+                          规则 {index + 1}
+                          {filterPreview.total > 0 && ` · ${filterPreview.perRule[index] ?? 0} 命中`}
+                        </span>
                       </label>
                       {filterRules.length > 1 && (
                         <button
