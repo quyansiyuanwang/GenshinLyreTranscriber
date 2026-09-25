@@ -1,0 +1,44 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import ParameterSlider from "./ParameterSlider";
+import SegmentedControl from "./SegmentedControl";
+
+describe("interactive controls", () => {
+  it("renders segmented choices as accessible radio buttons", () => {
+    const html = renderToStaticMarkup(
+      <SegmentedControl
+        label="时序模式"
+        value="auto"
+        options={[
+          { value: "auto", label: "AUTO", hint: "自动分析" },
+          { value: "straight", label: "1/16", hint: "直拍" },
+        ]}
+        onChange={() => undefined}
+      />,
+    );
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-checked="false"');
+    expect(html).toContain("自动分析");
+  });
+
+  it("renders draggable and precise numeric controls", () => {
+    const html = renderToStaticMarkup(
+      <ParameterSlider
+        label="最低置信度"
+        minimum={0}
+        maximum={1}
+        step={0.01}
+        value={null}
+        fallback={0.2}
+        precision={2}
+        unsetLabel="跟随档位"
+        onChange={() => undefined}
+      />,
+    );
+    expect(html).toContain('type="range"');
+    expect(html).toContain('type="number"');
+    expect(html).toContain("跟随档位");
+  });
+});
