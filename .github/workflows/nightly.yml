@@ -96,9 +96,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $release = gh release view nightly --json assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'cannot inspect nightly release assets' }
+          $existing = @($release.assets | ForEach-Object { $_.name })
           foreach ($name in @('glt-nightly-windows-x64.zip', 'glt-nightly-windows-x64.sha256')) {
-            gh release delete-asset nightly $name --yes 2>$null
+            if ($existing -contains $name) {
+              gh release delete-asset nightly $name --yes
+              if ($LASTEXITCODE -ne 0) { throw "cannot remove legacy nightly asset: $name" }
+            }
           }
+          Write-Host 'legacy nightly assets checked'
 
       - name: Upload nightly diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
