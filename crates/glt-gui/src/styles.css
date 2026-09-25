@@ -1208,6 +1208,53 @@ select {
 }
 
 .analysis-header,
+.analysis-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 29px;
+  padding: 4px 7px;
+  border: 1px solid #3a4448;
+  background: #20272a;
+}
+
+.analysis-selection > span {
+  overflow: hidden;
+  color: #aeb9bb;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysis-selection-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.analysis-selection-actions button {
+  min-height: 23px;
+  padding: 0 7px;
+  border: 1px solid #505b5f;
+  color: #e1e6e5;
+  background: linear-gradient(#3b4448, #30373b);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.analysis-selection-actions button:hover {
+  border-color: #6c777b;
+  background: linear-gradient(#475156, #363e42);
+}
+
+.analysis-selection-actions .primary-button {
+  border-color: #b56c21;
+  color: #fff8ec;
+  background: linear-gradient(#efa13d, #cd721a);
+}
+
 .analysis-grid {
   display: flex;
   align-items: center;

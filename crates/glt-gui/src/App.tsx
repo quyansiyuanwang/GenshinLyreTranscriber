@@ -1189,7 +1189,26 @@ function App() {
               spectrogram={analysisSpectrogram}
               spectrum={analysisSpectrum}
               positionUs={positionUs}
+              selectionStartUs={
+                request.start_seconds === null
+                  ? null
+                  : Math.round(request.start_seconds * 1_000_000)
+              }
+              selectionEndUs={
+                request.end_seconds === null
+                  ? null
+                  : Math.round(request.end_seconds * 1_000_000)
+              }
               onSeek={(position) => void seekAnalysis(position)}
+              onSelectionChange={(startUs, endUs) =>
+                setRequest((current) => ({
+                  ...current,
+                  start_seconds: startUs === null ? null : startUs / 1_000_000,
+                  end_seconds: endUs === null ? null : endUs / 1_000_000,
+                }))
+              }
+              onAnalyzeSelection={() => void startAnalysis(request.input, request.output)}
+              onTranscribeSelection={() => void startJob({ ...request })}
             />
           </section>
         )}
