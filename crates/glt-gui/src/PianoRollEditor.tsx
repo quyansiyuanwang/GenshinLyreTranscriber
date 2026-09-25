@@ -237,17 +237,17 @@ export default function PianoRollEditor({
       gl.viewport(0, 0, canvas.width, canvas.height);
     }
     gl.viewport(0, 0, canvas.width, canvas.height);
-    gl.clearColor(0.055, 0.071, 0.059, 1);
+    gl.clearColor(0.09, 0.11, 0.125, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     const vertices: number[] = [];
     for (let lane = 0; lane < count; lane += 1) {
       const y = 12 + lane * laneHeight;
-      rectangle(vertices, 0, y, width, laneHeight - 1, lane % 2 ? [0.075, 0.094, 0.079] : [0.066, 0.085, 0.07]);
+      rectangle(vertices, 0, y, width, laneHeight - 1, lane % 2 ? [0.105, 0.13, 0.145] : [0.095, 0.117, 0.132]);
     }
     const divisions = 10;
     for (let division = 0; division <= divisions; division += 1) {
-      rectangle(vertices, (division / divisions) * width, 0, 1, height, [0.13, 0.16, 0.135]);
+      rectangle(vertices, (division / divisions) * width, 0, 1, height, [0.19, 0.23, 0.255]);
     }
     for (const note of visibleDocument.notes) {
       const lane = KEYBOARD_ORDER.indexOf(note.key);
@@ -258,10 +258,10 @@ export default function PianoRollEditor({
       if (x + noteWidth < 0 || x > width) continue;
       const isSelected = selected.has(note.id);
       const color: [number, number, number] = isSelected
-        ? [0.97, 0.79, 0.38]
+        ? [1.0, 0.77, 0.25]
         : note.source_stem === "edit"
-          ? [0.5, 0.82, 0.62]
-          : [0.36, 0.67, 0.47];
+          ? [0.52, 0.72, 0.86]
+          : [0.37, 0.58, 0.72];
       rectangle(
         vertices,
         Math.max(-2, x),
@@ -309,8 +309,8 @@ export default function PianoRollEditor({
     context.scale(ratio, ratio);
     context.clearRect(0, 0, width, height);
     const laneHeight = (height - 24) / 21;
-    context.fillStyle = "rgba(222, 158, 79, 0.18)";
-    context.strokeStyle = "rgba(231, 173, 92, 0.48)";
+    context.fillStyle = "rgba(118, 169, 207, 0.20)";
+    context.strokeStyle = "rgba(118, 169, 207, 0.65)";
     for (const candidate of candidates) {
       const lane = KEYBOARD_ORDER.indexOf(keyForPitch(candidate.pitch));
       const x = ((candidate.start_us - viewStartUs) / viewDurationUs) * width;
@@ -324,12 +324,12 @@ export default function PianoRollEditor({
       const lane = KEYBOARD_ORDER.indexOf(note.key);
       const x = ((note.start_us - viewStartUs) / viewDurationUs) * width;
       const noteWidth = ((note.end_us - note.start_us) / viewDurationUs) * width;
-      context.strokeStyle = "#ffe09a";
+      context.strokeStyle = "#ffd35d";
       context.lineWidth = 2;
       context.strokeRect(x, 15 + lane * laneHeight, Math.max(2, noteWidth), laneHeight - 5);
       if (note.pitch_bends.length >= 2) {
         context.beginPath();
-        context.strokeStyle = "#79c9d7";
+        context.strokeStyle = "#f39a32";
         context.lineWidth = 1.5;
         note.pitch_bends.forEach((point, index) => {
           const bendX = ((point.at_us - viewStartUs) / viewDurationUs) * width;
@@ -355,9 +355,9 @@ export default function PianoRollEditor({
     if (!context) return;
     context.scale(ratio, ratio);
     context.clearRect(0, 0, width, VELOCITY_HEIGHT);
-    context.fillStyle = "#0d130f";
+    context.fillStyle = "#191e21";
     context.fillRect(0, 0, width, VELOCITY_HEIGHT);
-    context.strokeStyle = "#273229";
+    context.strokeStyle = "#364044";
     for (let value = 32; value <= 127; value += 32) {
       const y = VELOCITY_HEIGHT - (value / 127) * (VELOCITY_HEIGHT - 14);
       context.beginPath();
@@ -368,7 +368,7 @@ export default function PianoRollEditor({
     for (const note of visibleDocument.notes) {
       const x = ((note.start_us - viewStartUs) / viewDurationUs) * width;
       const height = (note.velocity / 127) * (VELOCITY_HEIGHT - 14);
-      context.fillStyle = selected.has(note.id) ? "#f2cf78" : "#5caa73";
+      context.fillStyle = selected.has(note.id) ? "#ffd35d" : "#6b9fc7";
       context.fillRect(x, VELOCITY_HEIGHT - height, 2, height);
     }
   }, [selected, viewDurationUs, viewStartUs, visibleDocument]);

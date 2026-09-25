@@ -164,6 +164,14 @@ function countLabel(key: string): string {
   return labels[key] ?? key;
 }
 
+function formatClock(valueUs: number): string {
+  const totalSeconds = Math.max(0, valueUs) / 1_000_000;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const milliseconds = Math.floor((totalSeconds % 1) * 1000);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
 function App() {
   const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -894,42 +902,80 @@ function App() {
 
   const operationLabel = request.operation === "convert_midi" ? "MIDI" : "音频 / 视频";
 
+  const reportTempo =
+    typeof report?.parameters?.bpm === "number" ? report.parameters.bpm : null;
+  const tempoLabel = request.bpm ?? reportTempo;
+  const sourceName = request.input
+    ? request.input.split(/[/\\]/).pop() || request.input
+    : "未载入素材";
+
   return (
     <div className="app-shell">
+      <header className="daw-menubar">
+        <div className="daw-app-mark">
+          <span>GLT</span>
+          <strong>Lyre Studio</strong>
+        </div>
+        <nav className="daw-menus" aria-label="应用菜单">
+          <span>文件</span>
+          <span>编辑</span>
+          <span>操作</span>
+          <span>视图</span>
+          <span>选项</span>
+          <span>帮助</span>
+        </nav>
+        <div className="daw-view-tab">
+          <span>ARRANGEMENT</span>
+          <strong>{project?.name ?? "Untitled Session"}</strong>
+        </div>
+        <div className="daw-menubar-meta">
+          <span className={doctor ? "online" : ""}>
+            <i />
+            {doctor ? "ENGINE READY" : "ENGINE CHECK"}
+          </span>
+          <span>{doctor ? `MODEL ${doctor.model_version}` : "NO WORKER"}</span>
+        </div>
+      </header>
+
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">琴</div>
+          <div className="brand-mark">GLT</div>
           <div>
-            <strong>Genshin Lyre</strong>
-            <span>Transcriber</span>
+            <strong>Lyre Studio</strong>
+            <span>Professional Workspace</span>
           </div>
+        </div>
+
+        <div className="browser-heading">
+          <span>BROWSER</span>
+          <strong>工作站</strong>
         </div>
 
         <nav>
           <a href="#source" className="nav-item active">
-            <span>01</span> 输入与输出
+            <span>01</span> 输入与编曲
           </a>
           <a href="#tuning" className="nav-item">
-            <span>02</span> 音质与演奏
+            <span>02</span> 音质检查器
           </a>
           <a href="#timing" className="nav-item">
             <span>03</span> 节奏与移调
           </a>
           <a href="#result" className="nav-item">
-            <span>04</span> 结果与试听
+            <span>04</span> 结果与钢琴卷帘
           </a>
         </nav>
 
         <div className="worker-card">
           <span className={`status-dot ${doctor ? "online" : "offline"}`} />
           <div>
-            <strong>{doctor ? "Worker 可用" : "Worker 检查中"}</strong>
+            <strong>{doctor ? "Worker 在线" : "Worker 检查中"}</strong>
             <small>{doctor ? `模型 ${doctor.model_version}` : notice}</small>
           </div>
         </div>
 
         <div className="project-card">
-          <span>PROJECT</span>
+          <span>PROJECT FILE</span>
           <strong>{project?.name ?? "未命名工程"}</strong>
           <small>{project?.source?.path ?? "尚未绑定源文件"}</small>
           <div className="project-actions">
@@ -948,7 +994,7 @@ function App() {
         </div>
 
         <div className="separator-card">
-          <span>SEPARATOR</span>
+          <span>SEPARATOR COMPONENT</span>
           <strong>
             {separatorStatus?.installed
               ? `Demucs ${separatorStatus.component_version}`
@@ -972,14 +1018,76 @@ function App() {
 
       <main className="workspace">
         <header className="hero">
-          <div>
-            <p className="eyebrow">DESKTOP WORKSPACE</p>
-            <h1>把音乐调到能弹，而不是只把文件转出来。</h1>
-            <p>本地转录、节奏校正、21 键映射、筛选和试听都在一个窗口中完成。</p>
+          <div className="transport-strip" aria-label="播放传输控制">
+            <button
+              className="transport-button"
+              onClick={() => void seekAnalysis(0)}
+              disabled={!analysisManifest}
+              title="回到开头"
+            >
+              |◀
+            </button>
+            <button className="transport-button" onClick={() => void stopPreview()} title="停止">
+              ■
+            </button>
+            <button
+              className="transport-button play"
+              onClick={() => void playSource()}
+              disabled={!request.input}
+              title="播放原音"
+            >
+              ▶
+            </button>
+            <button
+              className="transport-button"
+              onClick={() => void pausePreview()}
+              disabled={!hasActiveAbSource}
+              title="暂停"
+            >
+              Ⅱ
+            </button>
           </div>
+
+          <div className="transport-readout">
+            <span>TIME</span>
+            <strong>{formatClock(positionUs)}</strong>
+          </div>
+
+          <div className="transport-readout compact">
+            <span>TEMPO</span>
+            <strong>{tempoLabel ? `${Number(tempoLabel).toFixed(3)} BPM` : "AUTO BPM"}</strong>
+          </div>
+
+          <div className="transport-readout compact">
+            <span>GRID</span>
+            <strong>{request.timing.toUpperCase()}</strong>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="tool-cluster">
+            <button className="ghost-button" onClick={chooseInput}>
+              载入素材
+            </button>
+            <button className="ghost-button" onClick={() => void openResult()}>
+              打开结果
+            </button>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="tool-context">
+            <span>ACTIVE SOURCE</span>
+            <strong title={request.input}>{sourceName}</strong>
+          </div>
+
           <div className={`run-state ${running ? "running" : ""}`}>
             <span />
             {running ? stage : notice}
+          </div>
+
+          <div className="toolbar-progress" aria-hidden="true">
+            <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? (running ? 0 : 1)) * 100))}%` }} />
           </div>
         </header>
 
@@ -992,6 +1100,18 @@ function App() {
             <button className="ghost-button" onClick={chooseInput}>
               选择文件
             </button>
+          </div>
+
+          <div className="arrange-ruler" aria-hidden="true">
+            {["1", "2", "3", "4", "5", "6", "7", "8"].map((beat) => (
+              <span key={beat}>{beat}</span>
+            ))}
+          </div>
+
+          <div className="lane-header">
+            <span>TRACK 01</span>
+            <strong>TRANSCRIPTION INPUT</strong>
+            <i className={request.input ? "loaded" : ""}>{request.input ? "LOADED" : "EMPTY"}</i>
           </div>
 
           <button className="dropzone" onClick={chooseInput} onDragOver={(event) => event.preventDefault()}>

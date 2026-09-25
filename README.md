@@ -70,8 +70,9 @@ pnpm --dir crates/glt-gui tauri dev
 ./scripts/package_release.ps1 -AssetPrefix glt-local
 ```
 
-桌面端可拖入音频、查看分析、分离四轨、切换路由试听、转录、编辑钢琴卷帘并导出新的
-`edit-NN` 版本。源码构建和发布包均不包含可选 Demucs 运行时。
+桌面端采用紧凑的 DAW 工作区布局：顶部菜单与传输栏、左侧素材浏览器、中央编曲/分析区、
+右侧参数检查器和底部任务状态。可拖入音频、查看分析、分离四轨、切换路由试听、转录、
+编辑钢琴卷帘并导出新的 `edit-NN` 版本。源码构建和发布包均不包含可选 Demucs 运行时。
 
 ### 使用 CLI
 

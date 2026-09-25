@@ -40,12 +40,16 @@ function setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null
 
 function intensityToColor(value: number): [number, number, number] {
   const normalized = value / 255;
-  if (normalized < 0.5) {
-    const blend = normalized * 2;
-    return [Math.round(8 + blend * 24), Math.round(20 + blend * 58), Math.round(31 + blend * 71)];
+  if (normalized < 0.42) {
+    const blend = normalized / 0.42;
+    return [Math.round(18 + blend * 18), Math.round(23 + blend * 57), Math.round(29 + blend * 73)];
   }
-  const blend = (normalized - 0.5) * 2;
-  return [Math.round(32 + blend * 209), Math.round(78 + blend * 133), Math.round(102 + blend * 35)];
+  if (normalized < 0.78) {
+    const blend = (normalized - 0.42) / 0.36;
+    return [Math.round(36 + blend * 194), Math.round(80 + blend * 63), Math.round(102 + blend * 7)];
+  }
+  const blend = (normalized - 0.78) / 0.22;
+  return [Math.round(230 + blend * 25), Math.round(143 + blend * 77), Math.round(109 + blend * 30)];
 }
 
 function WaveformCanvas({
@@ -70,9 +74,9 @@ function WaveformCanvas({
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     context.clearRect(0, 0, width, height);
-    context.fillStyle = "#0d130f";
+    context.fillStyle = "#191e21";
     context.fillRect(0, 0, width, height);
-    context.strokeStyle = "#e5c36c";
+    context.strokeStyle = "#78a9d0";
     context.globalAlpha = 0.82;
     context.lineWidth = 1;
     context.beginPath();
@@ -87,7 +91,7 @@ function WaveformCanvas({
     context.stroke();
     context.globalAlpha = 1;
     const playhead = durationUs > 0 ? Math.min(1, positionUs / durationUs) : 0;
-    context.strokeStyle = "#f5eee0";
+    context.strokeStyle = "#f39a32";
     context.lineWidth = 2;
     context.beginPath();
     context.moveTo(playhead * width, 0);
@@ -140,7 +144,7 @@ function SpectrogramCanvas({
     context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     context.drawImage(buffer, 0, 0, canvas.clientWidth, canvas.clientHeight);
     const playhead = durationUs > 0 ? Math.min(1, positionUs / durationUs) : 0;
-    context.strokeStyle = "#ffffff";
+    context.strokeStyle = "#f39a32";
     context.globalAlpha = 0.9;
     context.lineWidth = 1.5;
     context.beginPath();
@@ -166,7 +170,7 @@ function SpectrumCanvas({ spectrum }: { spectrum: SpectrumFrame | null }) {
     if (!context) return;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
-    context.fillStyle = "#0a0f0c";
+    context.fillStyle = "#191e21";
     context.fillRect(0, 0, width, height);
     const history = waterfall.current;
     if (history.length === 0) return;
