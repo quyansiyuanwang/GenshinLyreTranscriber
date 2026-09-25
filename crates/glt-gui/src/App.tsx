@@ -42,6 +42,7 @@ import { shouldLoopSeek } from "./playbackLoop";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
 import { buildCustomRoutingPlan, defaultStemRoute, type StemRouteControl, type StemTarget } from "./routingPlan";
+import { BUILTIN_PRESETS, loadCustomPresets, nextCustomPresetName, presetFromRequest } from "./desktopPresets";
 import { estimateBpm, recentTapTimes } from "./tempoTap";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
@@ -213,6 +214,11 @@ function loadRecentPaths(key: string): string[] {
 
 function App() {
   const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
+  const [customPresets, setCustomPresets] = useState(() =>
+    loadCustomPresets(
+      typeof window === "undefined" ? null : window.localStorage.getItem("glt.customPresets"),
+    ),
+  );
   const [recentInputs, setRecentInputs] = useState<string[]>(() =>
     loadRecentPaths("glt.recentInputs"),
   );
@@ -329,10 +335,11 @@ function App() {
     try {
       window.localStorage.setItem("glt.recentInputs", JSON.stringify(recentInputs));
       window.localStorage.setItem("glt.recentOutputs", JSON.stringify(recentOutputs));
+      window.localStorage.setItem("glt.customPresets", JSON.stringify(customPresets));
     } catch {
       // Recent paths are a convenience; storage failure must not block work.
     }
-  }, [recentInputs, recentOutputs]);
+  }, [customPresets, recentInputs, recentOutputs]);
 
   useEffect(() => {
     invoke<ProjectDocument | null>("project_current")
@@ -1001,6 +1008,23 @@ function App() {
       [role]: { ...(current[role] ?? defaultStemRoute(role)), ...patch },
     }));
     setRoutingMode("custom");
+  }
+
+  function applyDesktopPreset(preset: (typeof BUILTIN_PRESETS)[number] | (typeof customPresets)[number]) {
+    setRequest((current) => ({ ...current, ...preset.values }));
+    setNotice(`已应用预设：${preset.name}`);
+  }
+
+  function saveDesktopPreset() {
+    const name = nextCustomPresetName(customPresets);
+    const preset = {
+      id: `custom-${Date.now().toString(36)}`,
+      name,
+      builtin: false as const,
+      values: presetFromRequest(request),
+    };
+    setCustomPresets((current) => [...current, preset]);
+    setNotice(`已保存预设：${name}`);
   }
 
   function tapTempo() {
@@ -1698,6 +1722,40 @@ function App() {
             <div>
               <span className="section-number">02</span>
               <h2>音质与演奏</h2>
+            </div>
+          </div>
+
+          <div className="desktop-preset-bar">
+            <span>参数预设</span>
+            <div>
+              {[...BUILTIN_PRESETS, ...customPresets].map((preset) => (
+                <div className="desktop-preset-card" key={preset.id}>
+                  <button
+                    type="button"
+                    title={preset.builtin ? "内置预设" : "自定义预设"}
+                    onClick={() => applyDesktopPreset(preset)}
+                  >
+                    {preset.name}
+                  </button>
+                  {!preset.builtin && (
+                    <button
+                      type="button"
+                      className="remove"
+                      title="删除预设"
+                      onClick={() =>
+                        setCustomPresets((current) =>
+                          current.filter((candidate) => candidate.id !== preset.id),
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button type="button" className="save" onClick={saveDesktopPreset}>
+                + 保存当前
+              </button>
             </div>
           </div>
 
