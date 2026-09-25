@@ -20,6 +20,8 @@ interface AnalysisViewProps {
   onSelectionChange: (startUs: number | null, endUs: number | null) => void;
   onAnalyzeSelection: () => void;
   onTranscribeSelection: () => void;
+  loopEnabled: boolean;
+  onToggleLoop: () => void;
 }
 
 interface DragState {
@@ -291,6 +293,8 @@ export default function AnalysisView({
   onSelectionChange,
   onAnalyzeSelection,
   onTranscribeSelection,
+  loopEnabled,
+  onToggleLoop,
 }: AnalysisViewProps) {
   const durationUs = manifest.decode.duration_us;
   const selection = selectionRange(selectionStartUs, selectionEndUs, durationUs);
@@ -325,6 +329,13 @@ export default function AnalysisView({
               分析选区
             </button>
             <button onClick={onTranscribeSelection}>转录选区</button>
+            <button
+              className={loopEnabled ? "active-loop" : ""}
+              aria-pressed={loopEnabled}
+              onClick={onToggleLoop}
+            >
+              {loopEnabled ? "循环中" : "循环选区"}
+            </button>
             <button onClick={() => onSelectionChange(null, null)}>清除</button>
           </div>
         )}

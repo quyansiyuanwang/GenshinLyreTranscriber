@@ -36,6 +36,7 @@ import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import FilterRangeSlider from "./FilterRangeSlider";
 import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPreview";
 import ParameterSlider from "./ParameterSlider";
+import { shouldLoopSeek } from "./playbackLoop";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
 import { buildCustomRoutingPlan, defaultStemRoute, type StemRouteControl, type StemTarget } from "./routingPlan";
@@ -247,6 +248,8 @@ function App() {
   const [analysisFraction, setAnalysisFraction] = useState<number | null>(null);
   const [positionUs, setPositionUs] = useState(0);
   const [playback, setPlayback] = useState("idle");
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const loopSeekingRef = useRef(false);
   const [volume, setVolume] = useState(0.8);
   const jobRequestRef = useRef(request);
   jobRequestRef.current = request;
@@ -478,6 +481,34 @@ function App() {
       void invoke<PlaybackStatus>("playback_status")
         .then(async (status) => {
           setPositionUs(status.position_us);
+          const range =
+            request.start_seconds !== null && request.end_seconds !== null
+              ? {
+                  startUs: Math.round(request.start_seconds * 1_000_000),
+                  endUs: Math.round(request.end_seconds * 1_000_000),
+                }
+              : null;
+          if (
+            !loopSeekingRef.current &&
+            shouldLoopSeek(
+              status.position_us,
+              range,
+              loopEnabled,
+              status.paused,
+              status.available,
+            )
+          ) {
+            loopSeekingRef.current = true;
+            try {
+              await invoke("seek_playback", { positionUs: range!.startUs });
+              setPositionUs(range!.startUs);
+              setNotice("循环选区：已回到起点");
+            } finally {
+              window.setTimeout(() => {
+                loopSeekingRef.current = false;
+              }, 120);
+            }
+          }
           if (status.paused || !status.available) return;
           const frame = Math.min(
             analysisManifest.spectral!.frames - 1,
@@ -499,7 +530,13 @@ function App() {
         .catch(() => undefined);
     }, 50);
     return () => window.clearInterval(timer);
-  }, [analysisDirectory, analysisManifest]);
+  }, [
+    analysisDirectory,
+    analysisManifest,
+    loopEnabled,
+    request.end_seconds,
+    request.start_seconds,
+  ]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1391,6 +1428,11 @@ function App() {
               }
               onAnalyzeSelection={() => void startAnalysis(request.input, request.output)}
               onTranscribeSelection={() => void startJob({ ...request })}
+              loopEnabled={loopEnabled}
+              onToggleLoop={() => {
+                setLoopEnabled((value) => !value);
+                setNotice(loopEnabled ? "已关闭选区循环" : "已开启选区循环");
+              }}
             />
           </section>
         )}

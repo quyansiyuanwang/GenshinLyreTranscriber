@@ -1452,6 +1452,12 @@ select {
   background: linear-gradient(#475156, #363e42);
 }
 
+.analysis-selection-actions button.active-loop {
+  border-color: #8fbf6e;
+  color: #efffe7;
+  background: linear-gradient(#6a9f4c, #477834);
+}
+
 .analysis-selection-actions .primary-button {
   border-color: #b56c21;
   color: #fff8ec;
