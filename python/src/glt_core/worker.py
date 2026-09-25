@@ -56,6 +56,7 @@ from glt_core.performance import (
     read_performance,
     render_performance_bundle,
 )
+from glt_core.probe_cli import main as probe_main
 from glt_core.processing import (
     ArrangementConfig,
     CleanConfig,
@@ -2136,6 +2137,8 @@ def _mapping_config(options: dict[str, Any]) -> MappingConfig:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "probe":
+        return probe_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "analyze":
         return analysis_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "separate":

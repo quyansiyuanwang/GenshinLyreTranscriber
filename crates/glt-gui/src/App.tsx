@@ -16,6 +16,7 @@ import type {
   JobEvent,
   JobRequest,
   JobResult,
+  MediaProbeDocument,
   Operation,
   CandidateNote,
   PerformanceDocument,
@@ -247,6 +248,9 @@ function App() {
   const [tapCount, setTapCount] = useState(0);
   const [routedAudioPath, setRoutedAudioPath] = useState<string | null>(null);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
+  const [mediaProbe, setMediaProbe] = useState<MediaProbeDocument | null>(null);
+  const [mediaProbeError, setMediaProbeError] = useState<string | null>(null);
+  const [mediaProbeRunning, setMediaProbeRunning] = useState(false);
   const [project, setProject] = useState<ProjectDocument | null>(null);
   const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
   const [separatorDirectory, setSeparatorDirectory] = useState<string | null>(null);
@@ -359,6 +363,40 @@ function App() {
     const timer = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    if (!request.input || isMidi(request.input)) {
+      setMediaProbe(null);
+      setMediaProbeError(null);
+      setMediaProbeRunning(false);
+      return;
+    }
+    let disposed = false;
+    setMediaProbeRunning(true);
+    setMediaProbeError(null);
+    const timer = window.setTimeout(() => {
+      void invoke<MediaProbeDocument>("probe_media", {
+        input: request.input,
+        workerPath: request.worker_path,
+      })
+        .then((document) => {
+          if (!disposed) setMediaProbe(document);
+        })
+        .catch((reason) => {
+          if (!disposed) {
+            setMediaProbe(null);
+            setMediaProbeError(String(reason));
+          }
+        })
+        .finally(() => {
+          if (!disposed) setMediaProbeRunning(false);
+        });
+    }, 250);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [request.input, request.worker_path]);
 
   useEffect(() => {
     const directory = result?.result.output_dir;
@@ -1830,22 +1868,51 @@ function App() {
               ))}
             </div>
           </div>
+          <div className="audio-track-picker">
+            <div className="audio-track-heading">
+              <span>音轨选择</span>
+              <small>
+                {mediaProbeRunning
+                  ? "正在探测媒体…"
+                  : mediaProbe
+                    ? `${mediaProbe.format_name} · ${(mediaProbe.duration_us / 1_000_000).toFixed(1)}s`
+                    : "选择素材后自动显示音轨"}
+              </small>
+            </div>
+            <div className="audio-track-grid">
+              <button
+                type="button"
+                className={request.audio_track === null ? "active" : ""}
+                onClick={() => setRequest((current) => ({ ...current, audio_track: null }))}
+              >
+                <strong>DEFAULT</strong>
+                <small>默认音轨</small>
+              </button>
+              {(mediaProbe?.audio_streams ?? []).map((stream) => (
+                <button
+                  type="button"
+                  key={stream.position}
+                  className={request.audio_track === stream.position ? "active" : ""}
+                  onClick={() =>
+                    setRequest((current) => ({ ...current, audio_track: stream.position }))
+                  }
+                >
+                  <strong>
+                    #{stream.position}
+                    {stream.is_default ? " ★" : ""}
+                  </strong>
+                  <small>
+                    {stream.codec_name}
+                    {stream.channels ? ` · ${stream.channels}ch` : ""}
+                    {stream.sample_rate ? ` · ${(stream.sample_rate / 1000).toFixed(1)}k` : ""}
+                  </small>
+                  <small>{stream.title || stream.language || `stream ${stream.index}`}</small>
+                </button>
+              ))}
+            </div>
+            {mediaProbeError && <small className="media-probe-error">{mediaProbeError}</small>}
+          </div>
           <div className="control-grid compact-row">
-            <label className="field">
-              <span>音轨编号</span>
-              <input
-                type="number"
-                min="0"
-                value={request.audio_track ?? ""}
-                placeholder="默认音轨"
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    audio_track: parseOptionalNumber(event.target.value),
-                  }))
-                }
-              />
-            </label>
             <label className="field">
               <span>起点秒</span>
               <input

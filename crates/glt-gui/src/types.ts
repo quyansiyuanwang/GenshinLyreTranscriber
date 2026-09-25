@@ -72,6 +72,25 @@ export type JobEvent =
   | { type: "progress"; stage: string; fraction: number | null }
   | { type: "warning"; code: string; message: string };
 
+export interface MediaAudioStream {
+  position: number;
+  index: number;
+  codec_name: string;
+  sample_rate: number | null;
+  channels: number | null;
+  language: string | null;
+  title: string | null;
+  is_default: boolean;
+}
+
+export interface MediaProbeDocument {
+  type: "result";
+  path: string;
+  format_name: string;
+  duration_us: number;
+  audio_streams: MediaAudioStream[];
+}
+
 export interface DoctorInfo {
   worker_version: string;
   application_version: string;

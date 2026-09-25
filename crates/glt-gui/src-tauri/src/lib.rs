@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -473,6 +474,44 @@ fn set_preview_volume(state: State<'_, GuiState>, volume: f32) -> Result<(), Str
 }
 
 #[tauri::command]
+fn probe_media(input: PathBuf, worker_path: Option<PathBuf>) -> Result<Value, String> {
+    if !input.is_file() {
+        return Err(format!("input media does not exist: {}", input.display()));
+    }
+    let spec = glt::desktop::worker_spec(worker_path)?;
+    let mut command = Command::new(&spec.program);
+    command.args(&spec.args).envs(spec.env);
+    if let Some(directory) = spec.working_directory {
+        command.current_dir(directory);
+    }
+    command.arg("probe").arg("--input").arg(&input);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if message.is_empty() {
+            format!("media probe failed with status {}", output.status)
+        } else {
+            message
+        });
+    }
+    let document: Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    if document.get("type").and_then(Value::as_str) == Some("error") {
+        return Err(document
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("media probe failed")
+            .to_owned());
+    }
+    Ok(document)
+}
+
+#[tauri::command]
 fn playback_status(state: State<'_, GuiState>) -> Result<analysis::PlaybackStatus, String> {
     let playback = state.lock_playback()?;
     Ok(match playback.as_ref() {
@@ -558,6 +597,7 @@ pub fn run() {
             set_preview_volume,
             playback_status,
             seek_playback,
+            probe_media,
         ])
         .run(tauri::generate_context!())
         .expect("error while running GenshinLyreTranscriber desktop");

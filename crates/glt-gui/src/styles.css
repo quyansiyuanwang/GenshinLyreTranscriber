@@ -2215,5 +2215,70 @@ select {
 
 .compact-row {
   margin-top: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.audio-track-picker {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.audio-track-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audio-track-heading span {
+  color: #8f9a9d;
+  font-size: 8px;
+}
+
+.audio-track-heading small,
+.media-probe-error {
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.media-probe-error {
+  color: #e28b86;
+}
+
+.audio-track-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  border: 1px solid #414b4f;
+  background: #414b4f;
+}
+
+.audio-track-grid button {
+  display: grid;
+  min-height: 48px;
+  align-content: center;
+  gap: 2px;
+  padding: 5px 7px;
+  border: 0;
+  color: #aeb8ba;
+  background: #252c2f;
+  text-align: left;
+}
+
+.audio-track-grid button:hover,
+.audio-track-grid button.active {
+  color: #fff1dc;
+  background: #77451c;
+}
+
+.audio-track-grid strong {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 9px;
+}
+
+.audio-track-grid small {
+  color: inherit;
+  font-size: 7px;
+  opacity: 0.75;
 }
