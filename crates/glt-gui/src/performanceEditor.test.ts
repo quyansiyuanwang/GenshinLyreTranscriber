@@ -74,6 +74,19 @@ describe("performance edits", () => {
     expect(moved[0].key).toBe("S");
   });
 
+  it("snaps move and resize operations to real beat times", () => {
+    const moved = moveNotes(original, new Set(["a"]), 40_000, 0, 2_000_000, [0, 250_000, 500_000]);
+    expect(moved[0].start_us).toBe(250_000);
+    const resized = resizeNotes(
+      [{ ...original[0], end_us: 480_000 }],
+      new Set(["a"]),
+      40_000,
+      2_000_000,
+      [0, 250_000, 500_000],
+    );
+    expect(resized[0].end_us).toBe(500_000);
+  });
+
   it("resizes, splits, merges and deletes without touching other notes", () => {
     const resized = resizeNotes(original, new Set(["a"]), 100_000, 2_000_000);
     expect(resized[0].end_us).toBe(600_000);

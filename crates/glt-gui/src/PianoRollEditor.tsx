@@ -143,6 +143,7 @@ export default function PianoRollEditor({
   const [history, setHistory] = useState(emptyHistory);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tool, setTool] = useState<"select" | "add">("select");
+  const [snapToBeat, setSnapToBeat] = useState(true);
   const [viewStartUs, setViewStartUs] = useState(0);
   const [viewDurationUs, setViewDurationUs] = useState(
     Math.max(MIN_VIEW_US, Math.min(document.duration_us, 30_000_000)),
@@ -155,6 +156,10 @@ export default function PianoRollEditor({
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const velocityRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const snapTimes = useMemo(
+    () => localDocument.beat_grid.map((point) => point.at_us),
+    [localDocument.beat_grid],
+  );
 
   const visibleDocument = useMemo(() => {
     if (!dragPreview.deltaUs && !dragPreview.deltaPitch) return localDocument;
@@ -166,9 +171,10 @@ export default function PianoRollEditor({
         dragPreview.deltaUs,
         dragPreview.deltaPitch,
         localDocument.duration_us,
+        snapToBeat ? snapTimes : [],
       ),
     );
-  }, [dragPreview, localDocument, selected]);
+  }, [dragPreview, localDocument, selected, snapTimes, snapToBeat]);
 
   function commit(notes: PerformanceNote[], nextSelected?: Set<string>) {
     const next = withNotes(localDocument, notes);
@@ -249,6 +255,19 @@ export default function PianoRollEditor({
     for (let division = 0; division <= divisions; division += 1) {
       rectangle(vertices, (division / divisions) * width, 0, 1, height, [0.19, 0.23, 0.255]);
     }
+    localDocument.beat_grid.forEach((point, index) => {
+      const x = ((point.at_us - viewStartUs) / viewDurationUs) * width;
+      if (x < 0 || x > width) return;
+      const isBar = index % 4 === 0;
+      rectangle(
+        vertices,
+        x,
+        0,
+        isBar ? 2 : 1,
+        height,
+        isBar ? [0.33, 0.43, 0.48] : [0.24, 0.31, 0.35],
+      );
+    });
     for (const note of visibleDocument.notes) {
       const lane = KEYBOARD_ORDER.indexOf(note.key);
       if (lane < 0) continue;
@@ -459,8 +478,21 @@ export default function PianoRollEditor({
       ? 0
       : -Math.round((current.y - drag.startY) / ((CANVAS_HEIGHT - 24) / 21));
     const notes = drag.mode === "resize"
-      ? resizeNotes(drag.baseNotes, drag.selected, deltaUs, localDocument.duration_us)
-      : moveNotes(drag.baseNotes, drag.selected, deltaUs, deltaPitch, localDocument.duration_us);
+      ? resizeNotes(
+          drag.baseNotes,
+          drag.selected,
+          deltaUs,
+          localDocument.duration_us,
+          snapToBeat ? snapTimes : [],
+        )
+      : moveNotes(
+          drag.baseNotes,
+          drag.selected,
+          deltaUs,
+          deltaPitch,
+          localDocument.duration_us,
+          snapToBeat ? snapTimes : [],
+        );
     dragRef.current = null;
     setDragPreview({ deltaUs: 0, deltaPitch: 0 });
     if (deltaUs || deltaPitch) commit(notes);
@@ -488,6 +520,13 @@ export default function PianoRollEditor({
           <button onClick={redo} disabled={!history.future.length}>重做</button>
           <button onClick={() => setViewDurationUs((value) => Math.max(MIN_VIEW_US, value * 0.75))}>放大</button>
           <button onClick={() => setViewDurationUs((value) => Math.min(localDocument.duration_us, value * 1.35))}>缩小</button>
+          <button
+            className={snapToBeat ? "primary-button" : "ghost-button"}
+            aria-pressed={snapToBeat}
+            onClick={() => setSnapToBeat((value) => !value)}
+          >
+            吸附节拍
+          </button>
         </div>
         <span>{selectionLabel}</span>
       </div>

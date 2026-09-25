@@ -91,20 +91,39 @@ export function withNotes(
   };
 }
 
+function nearestGridTime(valueUs: number, snapTimes: readonly number[]): number {
+  if (snapTimes.length === 0) return valueUs;
+  let nearest = snapTimes[0];
+  let distance = Math.abs(nearest - valueUs);
+  for (const candidate of snapTimes) {
+    const candidateDistance = Math.abs(candidate - valueUs);
+    if (candidateDistance < distance) {
+      nearest = candidate;
+      distance = candidateDistance;
+    }
+  }
+  return nearest;
+}
+
 export function moveNotes(
   notes: PerformanceNote[],
   selected: ReadonlySet<string>,
   deltaUs: number,
   deltaPitch: number,
   durationUs: number,
+  snapTimes: readonly number[] = [],
 ): PerformanceNote[] {
+  const anchor = notes.find((note) => selected.has(note.id));
+  const snappedDelta = anchor
+    ? nearestGridTime(anchor.start_us + deltaUs, snapTimes) - anchor.start_us
+    : deltaUs;
   return notes.map((note) => {
     if (!selected.has(note.id)) return note;
     const length = note.end_us - note.start_us;
     const pitch = Math.max(0, Math.min(127, note.pitch + deltaPitch));
     const key = keyForPitch(pitch);
     const mappedPitch = pitchForKey(key);
-    const start = Math.max(0, Math.min(durationUs - length, note.start_us + deltaUs));
+    const start = Math.max(0, Math.min(durationUs - length, note.start_us + snappedDelta));
     return {
       ...note,
       id: note.id,
@@ -123,10 +142,13 @@ export function resizeNotes(
   selected: ReadonlySet<string>,
   deltaUs: number,
   durationUs: number,
+  snapTimes: readonly number[] = [],
 ): PerformanceNote[] {
   return notes.map((note) => {
     if (!selected.has(note.id)) return note;
-    const end = Math.max(note.start_us + 10_000, Math.min(durationUs, note.end_us + deltaUs));
+    const desired = Math.min(durationUs, note.end_us + deltaUs);
+    const snapped = nearestGridTime(desired, snapTimes);
+    const end = Math.max(note.start_us + 10_000, Math.min(durationUs, snapped));
     return { ...note, end_us: end };
   });
 }
