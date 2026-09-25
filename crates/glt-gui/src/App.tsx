@@ -37,7 +37,10 @@ import type {
   WaveformPayload,
 } from "./types";
 import AnalysisView from "./AnalysisView";
+import FilterRangeSlider from "./FilterRangeSlider";
 import PianoRollEditor from "./PianoRollEditor";
+
+type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
 
 const MEDIA_FILTERS = [
   {
@@ -59,6 +62,53 @@ const EMPTY_RULE: DraftFilterRule = {
   pitchMin: "",
   pitchMax: "",
 };
+
+const FILTER_FIELDS = [
+  {
+    minimumKey: "confidenceMin",
+    maximumKey: "confidenceMax",
+    label: "confidence",
+    minimum: 0,
+    maximum: 1,
+    step: 0.01,
+    lowerFallback: 0,
+    upperFallback: 1,
+    unit: "",
+  },
+  {
+    minimumKey: "durationMin",
+    maximumKey: "durationMax",
+    label: "duration",
+    minimum: 0,
+    maximum: 10000,
+    step: 50,
+    lowerFallback: 0,
+    upperFallback: 10000,
+    unit: "ms",
+  },
+  {
+    minimumKey: "velocityMin",
+    maximumKey: "velocityMax",
+    label: "velocity",
+    minimum: 1,
+    maximum: 127,
+    step: 1,
+    lowerFallback: 1,
+    upperFallback: 127,
+    unit: "",
+  },
+  {
+    minimumKey: "pitchMin",
+    maximumKey: "pitchMax",
+    label: "MIDI pitch",
+    minimum: 0,
+    maximum: 127,
+    step: 1,
+    lowerFallback: 0,
+    upperFallback: 127,
+    unit: "",
+  },
+] as const;
 
 const DEFAULT_REQUEST: JobRequest = {
   input: "",
@@ -900,6 +950,24 @@ function App() {
     );
   }
 
+  function updateRuleRange(
+    index: number,
+    minimumKey: NumericDraftFilterKey,
+    maximumKey: NumericDraftFilterKey,
+    lower: number,
+    upper: number,
+    step: number,
+  ) {
+    const format = (value: number) => (step < 1 ? value.toFixed(2) : String(Math.round(value)));
+    setFilterRules((current) =>
+      current.map((rule, ruleIndex) =>
+        ruleIndex === index
+          ? { ...rule, [minimumKey]: format(lower), [maximumKey]: format(upper) }
+          : rule,
+      ),
+    );
+  }
+
   const operationLabel = request.operation === "convert_midi" ? "MIDI" : "音频 / 视频";
 
   const reportTempo =
@@ -917,12 +985,86 @@ function App() {
           <strong>Lyre Studio</strong>
         </div>
         <nav className="daw-menus" aria-label="应用菜单">
-          <span>文件</span>
-          <span>编辑</span>
-          <span>操作</span>
-          <span>视图</span>
-          <span>选项</span>
-          <span>帮助</span>
+          <details className="daw-menu">
+            <summary>文件</summary>
+            <div className="daw-menu-popover">
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void createProject(); }}>新建工程</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void openProject(); }}>打开工程</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void chooseInput(); }}>载入素材</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void openResult(); }}>打开结果目录</button>
+            </div>
+          </details>
+          <details className="daw-menu">
+            <summary>编辑</summary>
+            <div className="daw-menu-popover">
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setRequest((current) => ({ ...current, start_seconds: null, end_seconds: null })); setNotice("已清除波形选区"); }}>清除波形选区</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setWarnings([]); setError(null); setNotice("已清除提示信息"); }}>清除提示信息</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setFilterRules([{ ...EMPTY_RULE }]); setNotice("已重置筛选规则"); }}>重置筛选规则</button>
+            </div>
+          </details>
+          <details className="daw-menu">
+            <summary>操作</summary>
+            <div className="daw-menu-popover">
+              <button
+                disabled={!request.input || !request.output}
+                onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void startAnalysis(request.input, request.output); }}
+              >
+                分析当前范围
+              </button>
+              <button
+                disabled={!request.input || !request.output}
+                onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void startJob({ ...request }); }}
+              >
+                转录当前范围
+              </button>
+              <button
+                disabled={!request.input || separationRunning || !separatorStatus?.installed}
+                onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void startSeparation(); }}
+              >
+                分离为四轨
+              </button>
+            </div>
+          </details>
+          <details className="daw-menu">
+            <summary>视图</summary>
+            <div className="daw-menu-popover">
+              {[
+                ["输入与编曲", "#source"],
+                ["音质检查器", "#tuning"],
+                ["节奏与片段", "#timing"],
+                ["结果与钢琴卷帘", "#result"],
+              ].map(([label, target]) => (
+                <button
+                  key={target}
+                  onClick={(event) => {
+                    event.currentTarget.closest("details")?.removeAttribute("open");
+                    document.querySelector(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    setNotice(`已定位：${label}`);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </details>
+          <details className="daw-menu">
+            <summary>选项</summary>
+            <div className="daw-menu-popover">
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setRequest((current) => ({ ...current, preview_wav: !current.preview_wav })); setNotice(request.preview_wav ? "已关闭预览 WAV" : "已开启预览 WAV"); }}>
+                {request.preview_wav ? "关闭预览 WAV" : "开启预览 WAV"}
+              </button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setAdvancedOpen((value) => !value); setNotice(advancedOpen ? "已收起高级参数" : "已展开高级参数"); }}>
+                {advancedOpen ? "收起高级参数" : "展开高级参数"}
+              </button>
+            </div>
+          </details>
+          <details className="daw-menu">
+            <summary>帮助</summary>
+            <div className="daw-menu-popover">
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setNotice("波形拖动可选择区间；右侧起止秒可精确输入"); }}>选区操作提示</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setNotice("GLT Lyre Studio · local-only desktop workspace"); }}>关于本机版本</button>
+            </div>
+          </details>
         </nav>
         <div className="daw-view-tab">
           <span>ARRANGEMENT</span>
@@ -1627,29 +1769,53 @@ function App() {
                         </button>
                       )}
                     </div>
-                    {(
-                      [
-                        ["confidenceMin", "confidenceMax", "confidence"],
-                        ["durationMin", "durationMax", "duration ms"],
-                        ["velocityMin", "velocityMax", "velocity"],
-                        ["pitchMin", "pitchMax", "MIDI pitch"],
-                      ] as const
-                    ).map(([minimumKey, maximumKey, label]) => (
-                      <div className="range-row" key={label}>
-                        <span>{label}</span>
-                        <input
-                          value={rule[minimumKey]}
-                          placeholder="min"
-                          onChange={(event) => updateRule(index, minimumKey, event.target.value)}
-                        />
-                        <span>—</span>
-                        <input
-                          value={rule[maximumKey]}
-                          placeholder="max"
-                          onChange={(event) => updateRule(index, maximumKey, event.target.value)}
-                        />
-                      </div>
-                    ))}
+                    {FILTER_FIELDS.map((field) => {
+                      const lower =
+                        parseOptionalNumber(rule[field.minimumKey]) ?? field.lowerFallback;
+                      const upper =
+                        parseOptionalNumber(rule[field.maximumKey]) ?? field.upperFallback;
+                      return (
+                        <div className="filter-threshold" key={field.label}>
+                          <FilterRangeSlider
+                            label={field.label}
+                            minimum={field.minimum}
+                            maximum={field.maximum}
+                            step={field.step}
+                            lower={lower}
+                            upper={upper}
+                            unit={field.unit}
+                            onChange={(nextLower, nextUpper) =>
+                              updateRuleRange(
+                                index,
+                                field.minimumKey,
+                                field.maximumKey,
+                                nextLower,
+                                nextUpper,
+                                field.step,
+                              )
+                            }
+                          />
+                          <div className="range-row">
+                            <span>{field.label}</span>
+                            <input
+                              value={rule[field.minimumKey]}
+                              placeholder="min"
+                              onChange={(event) =>
+                                updateRule(index, field.minimumKey, event.target.value)
+                              }
+                            />
+                            <span>—</span>
+                            <input
+                              value={rule[field.maximumKey]}
+                              placeholder="max"
+                              onChange={(event) =>
+                                updateRule(index, field.maximumKey, event.target.value)
+                              }
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ))}
                 <div className="button-row">
@@ -1658,7 +1824,7 @@ function App() {
                       className="ghost-button"
                       onClick={() => setFilterRules((current) => [...current, { ...EMPTY_RULE }])}
                     >
-                      添加规则组
+                      添加横向阈值组
                     </button>
                   )}
                   <button className="primary-button" onClick={() => void applyManualFilter()}>
