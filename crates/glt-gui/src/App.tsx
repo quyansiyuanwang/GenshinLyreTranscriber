@@ -1711,6 +1711,14 @@ function App() {
                             </button>
                           ))}
                         </div>
+                        <button
+                          type="button"
+                          className="stem-load-button"
+                          disabled={!option?.path}
+                          onClick={() => option?.path && void applyInput(option.path)}
+                        >
+                          载入此轨转录
+                        </button>
                       </div>
                     );
                   })}

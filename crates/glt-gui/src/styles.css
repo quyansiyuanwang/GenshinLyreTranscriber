@@ -1407,6 +1407,20 @@ select {
   background: #6d5726;
 }
 
+.stem-load-button {
+  min-height: 24px;
+  border: 1px solid #735531;
+  color: #f0bd7c;
+  background: #342b22;
+  font-size: 8px;
+}
+
+.stem-load-button:hover:not(:disabled) {
+  border-color: #c07d32;
+  color: #fff0d8;
+  background: #4a3521;
+}
+
 .stem-gain {
   display: grid;
   gap: 2px;
