@@ -8,6 +8,7 @@ import pathlib
 from collections.abc import Sequence
 
 from glt_core.processing.routing import (
+    load_routing_plan,
     route_stem_audio,
     routing_plan_from_template,
     write_routing_plan,
@@ -19,11 +20,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="glt-worker route")
     parser.add_argument("--stem-set", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--mode",
         choices=("solo", "melody_chords", "two_voice", "full", "custom"),
-        default="solo",
     )
+    source.add_argument("--plan-json")
     parser.add_argument("--max-voices", type=int)
     args = parser.parse_args(argv)
     stem_set_path = pathlib.Path(args.stem_set).expanduser().resolve()
@@ -31,7 +33,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         document = json.loads(stem_set_path.read_text(encoding="utf-8"))
         stem_set = validate_stem_set(document, stem_set_path.parent)
-        plan = routing_plan_from_template(args.mode, max_voices=args.max_voices)
+        if args.plan_json:
+            plan_document = json.loads(args.plan_json)
+            if not isinstance(plan_document, dict):
+                raise ValueError("routing plan JSON must decode to an object")
+            plan = load_routing_plan(plan_document)
+        else:
+            plan = routing_plan_from_template(args.mode or "solo", max_voices=args.max_voices)
         output.mkdir(parents=True, exist_ok=True)
         stem_paths = {
             stem.role: stem_set_path.parent / stem.relative_path for stem in stem_set.stems

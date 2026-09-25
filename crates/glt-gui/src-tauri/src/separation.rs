@@ -44,6 +44,7 @@ pub struct RoutingRequest {
     pub output: PathBuf,
     pub mode: String,
     pub max_voices: Option<u8>,
+    pub plan: Option<Value>,
     pub worker_path: Option<PathBuf>,
 }
 
@@ -107,11 +108,15 @@ pub fn start_routing(
         .arg("--stem-set")
         .arg(&request.stem_set)
         .arg("--output")
-        .arg(&request.output)
-        .arg("--mode")
-        .arg(&request.mode);
-    if let Some(max_voices) = request.max_voices {
-        command.arg("--max-voices").arg(max_voices.to_string());
+        .arg(&request.output);
+    if let Some(plan) = request.plan {
+        let encoded = serde_json::to_string(&plan).map_err(|error| error.to_string())?;
+        command.arg("--plan-json").arg(encoded);
+    } else {
+        command.arg("--mode").arg(&request.mode);
+        if let Some(max_voices) = request.max_voices {
+            command.arg("--max-voices").arg(max_voices.to_string());
+        }
     }
     spawn_json_process(app, &state, command, "routing")
 }

@@ -38,6 +38,7 @@ import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPre
 import ParameterSlider from "./ParameterSlider";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
+import { buildCustomRoutingPlan, defaultStemRoute, type StemRouteControl, type StemTarget } from "./routingPlan";
 import { estimateBpm, recentTapTimes } from "./tempoTap";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
@@ -109,6 +110,14 @@ const FILTER_FIELDS = [
     unit: "",
   },
 ] as const;
+
+const STEM_TARGETS: Array<{ value: StemTarget; label: string; title: string }> = [
+  { value: "melody", label: "旋", title: "旋律 melody" },
+  { value: "harmony", label: "和", title: "和声 harmony" },
+  { value: "bass", label: "低", title: "低音 bass" },
+  { value: "percussion", label: "打", title: "打击乐 percussion" },
+  { value: "ignore", label: "×", title: "忽略 ignore" },
+];
 
 const DEFAULT_REQUEST: JobRequest = {
   input: "",
@@ -220,6 +229,7 @@ function App() {
   const [stemSet, setStemSet] = useState<StemSetDocument | null>(null);
   const [routingRunning, setRoutingRunning] = useState(false);
   const [routingMode, setRoutingMode] = useState("solo");
+  const [stemRoutes, setStemRoutes] = useState<Record<string, StemRouteControl>>({});
   const tapTimesRef = useRef<number[]>([]);
   const [tapCount, setTapCount] = useState(0);
   const [routedAudioPath, setRoutedAudioPath] = useState<string | null>(null);
@@ -405,6 +415,11 @@ function App() {
       void invoke<StemSetDocument>("read_stem_set", { path: payload.stem_set_path })
         .then((document) => {
           setStemSet(document);
+          setStemRoutes(
+            Object.fromEntries(
+              document.stems.map((stem) => [stem.role, defaultStemRoute(stem.role)]),
+            ),
+          );
           void recordRevision("stems", parentPath(payload.stem_set_path), null);
         })
         .catch((reason) => setError(String(reason)));
@@ -880,6 +895,14 @@ function App() {
     }
   }
 
+  function updateStemRoute(role: string, patch: Partial<StemRouteControl>) {
+    setStemRoutes((current) => ({
+      ...current,
+      [role]: { ...(current[role] ?? defaultStemRoute(role)), ...patch },
+    }));
+    setRoutingMode("custom");
+  }
+
   function tapTempo() {
     const now = globalThis.performance.now();
     const recent = recentTapTimes(tapTimesRef.current, now);
@@ -904,6 +927,14 @@ function App() {
       "routing",
       routingMode,
     );
+    const customPlan =
+      routingMode === "custom" && stemSet
+        ? buildCustomRoutingPlan(
+            stemSet.stems.map((stem) => stem.role),
+            stemRoutes,
+            request.max_voices,
+          )
+        : null;
     setRoutingRunning(true);
     try {
       await invoke("start_routing", {
@@ -912,6 +943,7 @@ function App() {
           output,
           mode: routingMode,
           maxVoices: request.max_voices,
+          plan: customPlan,
           workerPath: request.worker_path,
         },
       });
@@ -1408,19 +1440,70 @@ function App() {
                   {stemSet.stems.map((stem) => {
                     const sourceId = `stem-${stem.role}`;
                     const option = abOptions.find((entry) => entry.id === sourceId);
+                    const control = stemRoutes[stem.role] ?? defaultStemRoute(stem.role);
                     return (
-                      <button
-                        type="button"
+                      <div
+                        className={`stem-channel-card ${abSource === sourceId ? "active" : ""}`}
                         key={stem.role}
-                        className={abSource === sourceId ? "active" : ""}
-                        aria-pressed={abSource === sourceId}
-                        disabled={!option?.path}
-                        onClick={() => void switchAbSource(sourceId)}
                       >
-                        <span>{stemLabel(stem.role)}</span>
-                        <strong>{(stem.duration_us / 1_000_000).toFixed(1)}s</strong>
-                        <small>{stem.sample_rate / 1000} kHz · 点击试听</small>
-                      </button>
+                        <button
+                          type="button"
+                          className="stem-play-button"
+                          aria-pressed={abSource === sourceId}
+                          disabled={!option?.path}
+                          onClick={() => void switchAbSource(sourceId)}
+                        >
+                          <span>{stemLabel(stem.role)}</span>
+                          <strong>{(stem.duration_us / 1_000_000).toFixed(1)}s</strong>
+                          <small>{stem.sample_rate / 1000} kHz · 试听</small>
+                        </button>
+                        <div className="stem-toggle-row">
+                          <button
+                            type="button"
+                            className={control.muted ? "active mute" : ""}
+                            aria-pressed={control.muted}
+                            onClick={() => updateStemRoute(stem.role, { muted: !control.muted })}
+                          >
+                            M
+                          </button>
+                          <button
+                            type="button"
+                            className={control.solo ? "active solo" : ""}
+                            aria-pressed={control.solo}
+                            onClick={() => updateStemRoute(stem.role, { solo: !control.solo })}
+                          >
+                            S
+                          </button>
+                        </div>
+                        <label className="stem-gain">
+                          <span>Gain {control.gainDb.toFixed(1)} dB</span>
+                          <input
+                            type="range"
+                            min="-24"
+                            max="12"
+                            step="1"
+                            value={control.gainDb}
+                            onChange={(event) =>
+                              updateStemRoute(stem.role, { gainDb: Number(event.target.value) })
+                            }
+                          />
+                        </label>
+                        <div className="stem-target-row">
+                          {STEM_TARGETS.map((target) => (
+                            <button
+                              type="button"
+                              key={target.value}
+                              title={target.title}
+                              className={control.target === target.value ? "active" : ""}
+                              onClick={() =>
+                                updateStemRoute(stem.role, { target: target.value })
+                              }
+                            >
+                              {target.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1430,6 +1513,7 @@ function App() {
                     { value: "melody_chords", title: "MELODY + CHORDS", detail: "旋律与和声" },
                     { value: "two_voice", title: "TWO VOICE", detail: "旋律 + 低音" },
                     { value: "full", title: "FULL", detail: "保留完整织体" },
+                    { value: "custom", title: "CUSTOM", detail: "手动 M/S/音量/角色" },
                   ].map((mode) => (
                     <button
                       type="button"

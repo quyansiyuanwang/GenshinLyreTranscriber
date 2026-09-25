@@ -1231,51 +1231,120 @@ select {
 
 .stem-audition-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 5px;
   margin-top: 9px;
-  border: 1px solid #414b4f;
-  background: #414b4f;
 }
 
-.stem-audition-grid button {
+.stem-channel-card {
   display: grid;
-  min-height: 54px;
-  align-content: center;
-  gap: 2px;
+  gap: 5px;
   padding: 6px;
+  border: 1px solid #414b4f;
+  background: #232a2d;
+}
+
+.stem-channel-card.active {
+  border-color: #b66d25;
+  box-shadow: inset 0 0 0 1px rgb(243 154 50 / 28%);
+}
+
+.stem-play-button {
+  display: grid;
+  min-height: 38px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 1px 6px;
+  padding: 4px 6px;
   border: 0;
-  color: #b7c1c2;
-  background: linear-gradient(#293135, #232a2d);
+  color: #d4dcdb;
+  background: linear-gradient(#30383c, #252c2f);
   text-align: left;
 }
 
-.stem-audition-grid button:hover:not(:disabled) {
-  color: #f0f4f3;
-  background: linear-gradient(#364044, #2b3235);
-}
-
-.stem-audition-grid button.active {
+.stem-play-button:hover:not(:disabled) {
   color: #fff1dc;
-  background: linear-gradient(145deg, #8e5220, #653915);
-  box-shadow: inset 0 2px #f3a347;
+  background: linear-gradient(#3c464a, #2b3235);
 }
 
-.stem-audition-grid span {
+.stem-play-button span {
   font-size: 10px;
   font-weight: 600;
 }
 
-.stem-audition-grid strong {
-  color: inherit;
+.stem-play-button strong {
+  grid-row: 1 / span 2;
+  color: var(--selection);
   font-family: "Cascadia Mono", "Consolas", monospace;
   font-size: 9px;
 }
 
-.stem-audition-grid small {
-  color: inherit;
+.stem-play-button small {
+  color: var(--dim);
   font-size: 7px;
-  opacity: 0.7;
+}
+
+.stem-toggle-row,
+.stem-target-row {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 1px;
+}
+
+.stem-toggle-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.stem-target-row {
+  grid-auto-columns: minmax(0, 1fr);
+}
+
+.stem-toggle-row button,
+.stem-target-row button {
+  min-height: 23px;
+  padding: 0 3px;
+  border: 1px solid #495357;
+  color: #aeb8ba;
+  background: #2b3235;
+  font-size: 8px;
+}
+
+.stem-toggle-row button.active,
+.stem-target-row button.active {
+  border-color: #b66d25;
+  color: #fff1dc;
+  background: #77451c;
+}
+
+.stem-toggle-row button.mute.active {
+  border-color: #a5524d;
+  background: #743c39;
+}
+
+.stem-toggle-row button.solo.active {
+  border-color: #a88437;
+  background: #6d5726;
+}
+
+.stem-gain {
+  display: grid;
+  gap: 2px;
+}
+
+.stem-gain span {
+  color: var(--dim);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 7px;
+}
+
+.stem-gain input {
+  height: 7px;
+  min-height: 7px;
+  padding: 0;
+  border: 1px solid #3d474b;
+  accent-color: var(--accent);
+  box-shadow: none;
 }
 
 .routing-mode-grid {
