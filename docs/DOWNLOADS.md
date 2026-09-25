@@ -91,8 +91,8 @@ gh workflow run separator-component.yml `
 组件 ZIP 与独立 SHA256 文件会附加到 `nightly` Pre-release。首次安装时，在桌面端
 “分离与路由”区域选择该 ZIP；程序只读取本地包，不会静默下载模型。
 
-Nightly 用于测试最新 `main`，不是正式离线发行包。音频/视频转录仍可能要求可用的
-FFmpeg/ffprobe；稳定发布包会额外完成媒体工具、模型、许可证、断网和干净 Windows 验收。
+Nightly 用于测试最新 `main`，不是正式稳定发行包。基础包已包含模型和固定 LGPL
+FFmpeg/ffprobe；稳定发布仍会在相同内容上补充人工听评、版本说明和最终许可审查。
 
 ## 稳定版本
 

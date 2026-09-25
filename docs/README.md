@@ -7,6 +7,7 @@
 
 - [命令行使用](USAGE.md)：TUI 操作、CLI 参数、筛选规则、输出文件和退出码。
 - [Nightly 下载](DOWNLOADS.md)：从固定 `nightly` tag 的 Pre-release 获取 Windows 制品。
+- [发布候选检查表](RELEASE_CHECKLIST.md)：稳定版本之前的自动与人工门禁。
 - [故障排查](TROUBLESHOOTING.md)：环境、模型、FFmpeg、试听和输出问题。
 - [参考播放器兼容契约](REFERENCE_PLAYER_CONTRACT.md)：兼容谱的固定解析与调度基线。
 - [第三方组件与许可](THIRD_PARTY.md)：模型、FFmpeg 和 Python 依赖的许可证说明。

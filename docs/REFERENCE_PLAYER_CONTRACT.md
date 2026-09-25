@@ -36,3 +36,13 @@ uv run --project python python scripts/verify_reference_player_contract.py `
 
 不传 `--compat-score` 和 `--events-json` 时使用内置前导休止、相邻槽与和弦样例。
 脚本记录参考提交、解析器/播放器源码 SHA256、解析告警和逐槽虚拟调度结果。
+
+## Lyre Events v1
+
+除兼容 TXT 外，生产者还会输出 `score.events.json`，其结构由
+[`events-v1.schema.json`](../schemas/events-v1.schema.json) 冻结。共享结构、排序、资源上限、
+错误案例和虚拟时钟期望位于 `tests/fixtures/protocol/v1/`。CI 同时验证 Rust/Python 生产者、
+参考播放器契约和真实生产输出的 JSON 解析。
+
+播放器适配应把 JSON 转换成独立的绝对时间调度事件；不得把 JSON 时间重新塞进固定
+`INTERVAL_RATING` 文本循环。协议不携带 note-off、力度、路径或可执行内容。
