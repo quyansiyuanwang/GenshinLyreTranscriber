@@ -83,6 +83,15 @@ def test_auto_transpose_selects_stable_global_shift() -> None:
     assert [note.pitch for note in first.mapped.notes] == [60, 62, 64, 65, 67, 69, 71]
 
 
+def test_auto_transpose_prefers_a_global_octave_with_fewer_folds() -> None:
+    sequence = _sequence([40, 35, 40, 35])
+    result = map_note_sequence(sequence, MappingConfig(layout=default_mapping_layout()))
+    assert result.stats.transpose_semitones == 13
+    assert result.stats.replaced_semitones == 0
+    assert result.stats.octave_folds == 0
+    assert [note.pitch for note in result.mapped.notes] == [53, 48, 53, 48]
+
+
 def test_manual_transpose_is_respected() -> None:
     result = map_note_sequence(
         _sequence([60]),
@@ -97,7 +106,7 @@ def test_transpose_preview_is_complete_and_deterministic() -> None:
     first = preview_transpositions(sequence)
     second = preview_transpositions(sequence)
     assert first == second
-    assert len(first) == 25
+    assert len(first) == 49
     selected = [item for item in first if item.selected]
     assert len(selected) == 1
     assert selected[0].transpose == -1

@@ -12,6 +12,9 @@ NATURAL_PITCH_CLASSES = frozenset({0, 2, 4, 5, 7, 9, 11})
 DEFAULT_LOW_PITCH = 48  # C3
 DEFAULT_HIGH_PITCH = 83  # B5
 TransposeSelection = Literal["auto"] | int
+AUTO_TRANSPOSE_MIN = -24
+AUTO_TRANSPOSE_MAX = 24
+AUTO_TRANSPOSES = tuple(range(AUTO_TRANSPOSE_MIN, AUTO_TRANSPOSE_MAX + 1))
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,7 +212,7 @@ def preview_transpositions(
     sequence.validate()
     selected_layout = layout or default_mapping_layout()
     selected_layout.validate()
-    candidates = transposes or tuple(range(-12, 13))
+    candidates = transposes or AUTO_TRANSPOSES
     if any(isinstance(value, bool) or not isinstance(value, int) for value in candidates):
         raise ValueError("transpose candidates must be integers")
     config = MappingConfig(layout=selected_layout)
@@ -253,7 +256,7 @@ def _select_transpose(sequence: NoteSequence, config: MappingConfig) -> tuple[in
     if isinstance(config.transpose, int):
         return config.transpose, _evaluate(sequence, config, config.transpose)
     candidates: list[tuple[tuple[float, int, int], int, _Candidate]] = []
-    for transpose in range(-12, 13):
+    for transpose in AUTO_TRANSPOSES:
         candidate = _evaluate(sequence, config, transpose)
         candidates.append((candidate.score(transpose), transpose, candidate))
     _score, transpose, candidate = min(candidates, key=lambda item: item[0])
