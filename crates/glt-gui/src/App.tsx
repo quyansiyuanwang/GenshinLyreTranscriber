@@ -10,7 +10,6 @@ import type {
   AnalysisFinished,
   AnalysisManifest,
   AnalysisProgress,
-  CleaningProfile,
   DoctorInfo,
   DraftFilterRule,
   FilterPreset,
@@ -32,13 +31,13 @@ import type {
   StemSetDocument,
   SpectrogramImage,
   SpectrumFrame,
-  Timing,
-  Transpose,
   WaveformPayload,
 } from "./types";
 import AnalysisView from "./AnalysisView";
 import FilterRangeSlider from "./FilterRangeSlider";
+import ParameterSlider from "./ParameterSlider";
 import PianoRollEditor from "./PianoRollEditor";
+import SegmentedControl from "./SegmentedControl";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
 
@@ -1435,127 +1434,99 @@ function App() {
             </div>
           </div>
 
-          <div className="control-grid">
-            <label className="field">
-              <span>清理档位</span>
-              <select
-                value={request.cleaning_profile}
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    cleaning_profile: event.target.value as CleaningProfile,
-                  }))
-                }
-              >
-                <option value="auto">auto · 自动平衡</option>
-                <option value="solo">solo · 独奏优先</option>
-                <option value="mix">mix · 混音降噪</option>
-                <option value="strict">strict · 严格筛选</option>
-              </select>
-            </label>
-
-            <label className="field">
-              <span>可演奏性编排</span>
-              <select
-                value={request.arrangement}
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    arrangement: event.target.value as "balanced" | "off",
-                  }))
-                }
-              >
-                <option value="balanced">balanced · 自动二声部</option>
-                <option value="off">off · 保留全部候选</option>
-              </select>
-            </label>
-
-            <label className="field">
-              <span>最小置信度</span>
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                value={request.min_confidence ?? ""}
-                placeholder="跟随档位"
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    min_confidence: parseOptionalNumber(event.target.value),
-                  }))
-                }
-              />
-            </label>
-
-            <label className="field">
-              <span>最短时值 ms</span>
-              <input
-                type="number"
-                min="0"
-                max="60000"
-                value={request.min_duration_ms ?? ""}
-                placeholder="跟随档位"
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    min_duration_ms: parseOptionalNumber(event.target.value),
-                  }))
-                }
-              />
-            </label>
+          <SegmentedControl
+            label="清理档位"
+            value={request.cleaning_profile}
+            options={[
+              { value: "auto", label: "AUTO", hint: "自动平衡" },
+              { value: "solo", label: "SOLO", hint: "独奏优先" },
+              { value: "mix", label: "MIX", hint: "混音降噪" },
+              { value: "strict", label: "STRICT", hint: "严格筛选" },
+            ]}
+            onChange={(value) =>
+              setRequest((current) => ({ ...current, cleaning_profile: value }))
+            }
+          />
+          <SegmentedControl
+            label="可演奏性编排"
+            value={request.arrangement}
+            options={[
+              { value: "balanced", label: "BALANCED", hint: "自动二声部" },
+              { value: "off", label: "RAW", hint: "保留全部候选" },
+            ]}
+            onChange={(value) =>
+              setRequest((current) => ({ ...current, arrangement: value }))
+            }
+          />
+          <div className="parameter-grid">
+            <ParameterSlider
+              label="最低置信度"
+              minimum={0}
+              maximum={1}
+              step={0.01}
+              value={request.min_confidence}
+              fallback={0.2}
+              precision={2}
+              unsetLabel="跟随档位"
+              onChange={(value) =>
+                setRequest((current) => ({ ...current, min_confidence: value }))
+              }
+            />
+            <ParameterSlider
+              label="最短时值"
+              minimum={0}
+              maximum={1000}
+              step={10}
+              value={request.min_duration_ms}
+              fallback={50}
+              unit="ms"
+              unsetLabel="跟随档位"
+              onChange={(value) =>
+                setRequest((current) => ({ ...current, min_duration_ms: value }))
+              }
+            />
           </div>
           <button className="text-button" onClick={() => setAdvancedOpen((value) => !value)}>
             {advancedOpen ? "收起高级清理" : "展开高级清理"}
           </button>
           {advancedOpen && (
-            <div className="control-grid advanced">
-              <label className="field">
-                <span>重触发间隔 ms</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="60000"
-                  value={request.retrigger_gap_ms ?? ""}
-                  placeholder="30"
-                  onChange={(event) =>
-                    setRequest((current) => ({
-                      ...current,
-                      retrigger_gap_ms: parseOptionalNumber(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>近同时窗口 ms</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={request.onset_window_ms}
-                  onChange={(event) =>
-                    setRequest((current) => ({
-                      ...current,
-                      onset_window_ms: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>最大同时声部</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="21"
-                  value={request.max_voices}
-                  onChange={(event) =>
-                    setRequest((current) => ({
-                      ...current,
-                      max_voices: Number(event.target.value),
-                    }))
-                  }
-                />
-              </label>
+            <div className="parameter-grid advanced">
+              <ParameterSlider
+                label="重触发间隔"
+                minimum={0}
+                maximum={300}
+                step={5}
+                value={request.retrigger_gap_ms}
+                fallback={30}
+                unit="ms"
+                unsetLabel="默认 30 ms"
+                onChange={(value) =>
+                  setRequest((current) => ({ ...current, retrigger_gap_ms: value }))
+                }
+              />
+              <ParameterSlider
+                label="近同时窗口"
+                minimum={20}
+                maximum={500}
+                step={10}
+                value={request.onset_window_ms}
+                fallback={150}
+                unit="ms"
+                onChange={(value) =>
+                  setRequest((current) => ({ ...current, onset_window_ms: value ?? 150 }))
+                }
+              />
+              <ParameterSlider
+                label="最大同时声部"
+                minimum={1}
+                maximum={6}
+                step={1}
+                value={request.max_voices}
+                fallback={2}
+                onChange={(value) =>
+                  setRequest((current) => ({ ...current, max_voices: value ?? 2 }))
+                }
+              />
             </div>
           )}
         </section>
@@ -1567,49 +1538,64 @@ function App() {
               <h2>节奏、移调与片段</h2>
             </div>
           </div>
-          <div className="control-grid">
-            <label className="field">
-              <span>时序模式</span>
-              <select
-                value={request.timing}
-                onChange={(event) =>
-                  setRequest((current) => ({ ...current, timing: event.target.value as Timing }))
-                }
-              >
-                <option value="auto">auto · 自动分析</option>
-                <option value="preserve">preserve · 保留原时序</option>
-                <option value="straight">straight · 十六分直拍</option>
-                <option value="triplet">triplet · 三连音</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>BPM 覆盖</span>
-              <input
-                type="number"
-                min="1"
-                max="1000"
-                value={request.bpm ?? ""}
-                placeholder="自动"
-                onChange={(event) =>
-                  setRequest((current) => ({
-                    ...current,
-                    bpm: parseOptionalNumber(event.target.value),
-                  }))
-                }
-              />
-            </label>
-            <label className="field">
-              <span>整体移调</span>
-              <input
-                value={String(request.transpose)}
-                onChange={(event) => {
-                  const raw = event.target.value.trim();
-                  const transpose: Transpose = raw === "auto" ? "auto" : Number(raw);
-                  setRequest((current) => ({ ...current, transpose }));
-                }}
-                placeholder="auto 或半音数"
-              />
-            </label>
+          <SegmentedControl
+            label="时序模式"
+            value={request.timing}
+            options={[
+              { value: "auto", label: "AUTO", hint: "自动分析" },
+              { value: "preserve", label: "RAW", hint: "保留原时序" },
+              { value: "straight", label: "1/16", hint: "十六分直拍" },
+              { value: "triplet", label: "TRIPLET", hint: "三连音" },
+            ]}
+            onChange={(value) => setRequest((current) => ({ ...current, timing: value }))}
+          />
+          <div className="parameter-grid">
+            <ParameterSlider
+              label="BPM 覆盖"
+              minimum={40}
+              maximum={240}
+              step={0.1}
+              value={request.bpm}
+              fallback={tempoLabel ?? 120}
+              precision={1}
+              unsetLabel="自动 BPM"
+              onChange={(value) => setRequest((current) => ({ ...current, bpm: value }))}
+            />
+            <ParameterSlider
+              label="整体移调"
+              minimum={-24}
+              maximum={24}
+              step={1}
+              value={request.transpose === "auto" ? null : request.transpose}
+              fallback={0}
+              unit="st"
+              unsetLabel="自动移调"
+              onChange={(value) =>
+                setRequest((current) => ({ ...current, transpose: value ?? "auto" }))
+              }
+            />
+          </div>
+          <div className="segmented-field transpose-shortcuts">
+            <span>移调快捷</span>
+            <div className="segmented-control">
+              {(["auto", -12, -1, 0, 1, 12] as const).map((value) => (
+                <button
+                  type="button"
+                  key={String(value)}
+                  className={String(request.transpose) === String(value) ? "active" : ""}
+                  onClick={() =>
+                    setRequest((current) => ({
+                      ...current,
+                      transpose: value,
+                    }))
+                  }
+                >
+                  <strong>{value === "auto" ? "AUTO" : value > 0 ? `+${value}` : value}</strong>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="control-grid compact-row">
             <label className="field">
               <span>音轨编号</span>
               <input

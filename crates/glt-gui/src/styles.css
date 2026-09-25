@@ -1758,3 +1758,133 @@ select {
     transform: translateY(0);
   }
 }
+
+.segmented-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.segmented-field > span {
+  color: #8f9a9d;
+  font-size: 8px;
+  letter-spacing: 0.03em;
+}
+
+.segmented-control {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
+  border: 1px solid #4a5559;
+  background: #161b1e;
+}
+
+.segmented-control button {
+  display: grid;
+  min-height: 34px;
+  place-content: center;
+  gap: 2px;
+  padding: 3px 5px;
+  border: 0;
+  color: #9da8aa;
+  background: linear-gradient(#353d41, #2b3235);
+  text-align: center;
+}
+
+.segmented-control button:hover:not(:disabled) {
+  color: #eef2f1;
+  background: linear-gradient(#424c50, #333b3f);
+}
+
+.segmented-control button.active {
+  color: #fff4e6;
+  background: linear-gradient(#e79332, #bf681c);
+  box-shadow: inset 0 1px rgb(255 255 255 / 22%);
+}
+
+.segmented-control strong {
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.segmented-control small {
+  color: inherit;
+  font-size: 7px;
+  opacity: 0.72;
+}
+
+.parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 9px;
+}
+
+.parameter-slider {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.parameter-slider-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.parameter-slider-heading span {
+  color: #8f9a9d;
+  font-size: 8px;
+}
+
+.parameter-slider-heading strong {
+  overflow: hidden;
+  color: #e4e9e8;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parameter-slider-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.parameter-slider-row input[type="range"] {
+  height: 7px;
+  min-height: 7px;
+  padding: 0;
+  border: 1px solid #3d474b;
+  accent-color: var(--accent);
+  box-shadow: none;
+}
+
+.parameter-slider-row .parameter-number {
+  min-height: 25px;
+  padding: 3px 5px;
+  font-size: 9px;
+}
+
+.parameter-reset {
+  min-height: 25px;
+  padding: 0 6px;
+  border: 1px solid #566165;
+  color: #cbd2d2;
+  background: #30373b;
+  font-size: 8px;
+}
+
+.transpose-shortcuts {
+  margin-top: 9px;
+}
+
+.compact-row {
+  margin-top: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
