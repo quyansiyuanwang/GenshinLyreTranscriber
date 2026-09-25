@@ -130,7 +130,13 @@ export default function FilterPreviewCanvas({
     currentTarget: HTMLCanvasElement;
   }): number {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
+    const plotTop = 8;
+    const plotBottom = 22;
+    const plotHeight = Math.max(1, bounds.height - plotTop - plotBottom);
+    const ratio = Math.min(
+      1,
+      Math.max(0, (event.clientY - bounds.top - plotTop) / plotHeight),
+    );
     return quantizeMetric(metric, domainMaximum - ratio * (domainMaximum - domainMinimum));
   }
 
