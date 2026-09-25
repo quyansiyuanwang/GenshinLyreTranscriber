@@ -162,6 +162,29 @@ export function setVelocities(
   return notes.map((note) => (selected.has(note.id) ? { ...note, velocity: bounded } : note));
 }
 
+export function duplicateNotes(
+  notes: PerformanceNote[],
+  selected: ReadonlySet<string>,
+  offsetUs: number,
+  durationUs: number,
+): PerformanceNote[] {
+  const chosen = notes.filter((note) => selected.has(note.id));
+  if (chosen.length === 0) return notes;
+  const duplicates = chosen.map((note, index) => {
+    const length = note.end_us - note.start_us;
+    const start = Math.max(0, Math.min(durationUs - length, note.start_us + offsetUs));
+    return {
+      ...note,
+      id: `${note.id}-copy-${index}`,
+      start_us: start,
+      end_us: start + length,
+      source_stem: "edit",
+      candidate_id: null,
+    };
+  });
+  return [...notes, ...duplicates];
+}
+
 export function deleteNotes(
   notes: PerformanceNote[],
   selected: ReadonlySet<string>,

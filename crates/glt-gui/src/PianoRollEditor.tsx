@@ -5,6 +5,7 @@ import {
   addNote,
   commitHistory,
   deleteNotes,
+  duplicateNotes,
   emptyHistory,
   keyForPitch,
   mergeNotes,
@@ -243,6 +244,17 @@ export default function PianoRollEditor({
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
         event.preventDefault();
         redo();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        setSelected(new Set(localDocument.notes.map((note) => note.id)));
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        if (selected.size) {
+          commit(duplicateNotes(localDocument.notes, selected, 100_000, localDocument.duration_us));
+        }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setSelected(new Set());
       } else if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         commit(deleteNotes(localDocument.notes, selected));
@@ -613,6 +625,15 @@ export default function PianoRollEditor({
             onClick={() => setSnapToBeat((value) => !value)}
           >
             吸附节拍
+          </button>
+          <button
+            onClick={() =>
+              commit(duplicateNotes(localDocument.notes, selected, 100_000, localDocument.duration_us))
+            }
+            disabled={!selected.size}
+            title="Ctrl+D"
+          >
+            复制选择
           </button>
         </div>
         <span>{selectionLabel}</span>

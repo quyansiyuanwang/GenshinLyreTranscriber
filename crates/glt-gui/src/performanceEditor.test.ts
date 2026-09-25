@@ -4,6 +4,7 @@ import {
   HISTORY_LIMIT,
   commitHistory,
   deleteNotes,
+  duplicateNotes,
   emptyHistory,
   mergeNotes,
   moveNotes,
@@ -72,6 +73,15 @@ describe("performance edits", () => {
     expect(moved[0].start_us).toBe(200_000);
     expect(moved[0].pitch).toBe(62);
     expect(moved[0].key).toBe("S");
+  });
+
+  it("duplicates selected notes with unique ids and bounded timing", () => {
+    const copied = duplicateNotes(original, new Set(["a"]), 100_000, 2_000_000);
+    expect(copied).toHaveLength(3);
+    expect(copied[2].start_us).toBe(200_000);
+    expect(copied[2].id).not.toBe(original[0].id);
+    const second = duplicateNotes(copied, new Set([copied[2].id]), 100_000, 2_000_000);
+    expect(new Set(second.map((note) => note.id)).size).toBe(second.length);
   });
 
   it("snaps move and resize operations to real beat times", () => {
