@@ -73,7 +73,8 @@ gh run list --workflow nightly.yml --limit 5
 ## 包内容与边界
 
 Nightly 当前提供三个 Windows x64 资产：NSIS 安装器、GUI 便携 ZIP 和 CLI/TUI 便携 ZIP。
-每个包都包含匹配的 `glt-worker/`、`README.md`、`docs/` 和 `LICENSE`。统一
+每个包都包含匹配的 `glt-worker/`、固定 LGPL FFmpeg/ffprobe、`README.md`、`docs/` 和
+`LICENSE`。统一
 `glt-nightly-SHA256SUMS` 校验最终压缩包/安装器。
 
 可选 Demucs 分离运行时体积较大，不进入基础包，由独立组件工作流构建并记录模型、运行时和

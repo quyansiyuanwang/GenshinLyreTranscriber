@@ -264,8 +264,8 @@ pnpm --dir crates/glt-gui install --frozen-lockfile
 ```
 
 脚本会生成 CLI/TUI ZIP、GUI 便携 ZIP、NSIS 安装器和 SHA256 清单。Tauri 安装包把 worker
-作为资源目录内容发布，GUI 启动时自动定位 `glt-worker`。基础 worker 明确排除
-`torch`、`torchaudio` 和 `demucs`。
+作为资源目录内容发布，GUI 启动时自动定位 `glt-worker`。基础包附带固定 LGPL
+FFmpeg/ffprobe，基础 worker 明确排除 `torch`、`torchaudio` 和 `demucs`。
 
 当前宿主没有可用的管理员级网络隔离环境，因此只能在发布候选包上完成真正的断网门禁。
 

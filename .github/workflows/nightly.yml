@@ -123,7 +123,7 @@ jobs:
             - 提交：`${{ steps.revision.outputs.sha }}`
             - 日期：`${{ steps.revision.outputs.date }}`
             - 包含：GUI 安装器、GUI 便携 ZIP、CLI/TUI ZIP 和统一 SHA256 清单
-            - 音频/视频转录仍可能要求可用的 FFmpeg/ffprobe
+            - 包含固定 LGPL FFmpeg/ffprobe，不要求用户另行安装
             - 可选 Demucs 分离组件通过独立工作流生成，不进入基础包
 
             请先核对 `glt-nightly-SHA256SUMS`，再运行安装器或解压。

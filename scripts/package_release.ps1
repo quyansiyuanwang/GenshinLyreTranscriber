@@ -16,6 +16,31 @@ function Copy-PackageDocs {
     Copy-Item (Join-Path $Root "docs") $Destination -Recurse -Force
 }
 
+function Copy-FfmpegRuntime {
+    param([string]$Destination)
+    $resourceRoot = Join-Path $Root "artifacts/resources/ffmpeg"
+    $bin = Get-ChildItem $resourceRoot -Directory -Filter "ffmpeg-*-win64-lgpl-shared-*" |
+        Select-Object -First 1 |
+        ForEach-Object { Join-Path $_.FullName "bin" }
+    if (-not $bin -or -not (Test-Path -LiteralPath $bin -PathType Container)) {
+        uv run --project python python scripts/fetch_resources.py ffmpeg
+        if ($LASTEXITCODE -ne 0) {
+            throw "FFmpeg resource download failed with exit code $LASTEXITCODE"
+        }
+        $bin = Get-ChildItem $resourceRoot -Directory -Filter "ffmpeg-*-win64-lgpl-shared-*" |
+            Select-Object -First 1 |
+            ForEach-Object { Join-Path $_.FullName "bin" }
+    }
+    if (-not $bin) { throw "FFmpeg LGPL runtime directory is missing" }
+    $target = Join-Path $Destination "glt-worker/_internal/ffmpeg/bin"
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    Copy-Item (Join-Path $bin "*") $target -Recurse -Force
+    $license = Join-Path (Split-Path -Parent $bin) "LICENSE.txt"
+    if (Test-Path -LiteralPath $license) {
+        Copy-Item $license (Join-Path $Destination "FFMPEG-LICENSE.txt")
+    }
+}
+
 function Write-FileHashList {
     param([string]$Directory, [string]$Destination)
     Get-ChildItem -LiteralPath $Directory -Recurse -File |
@@ -60,6 +85,7 @@ try {
 
     Copy-Item (Join-Path $Root "target/release/glt.exe") $CliStage
     Copy-Item (Join-Path $Root "artifacts/worker/glt-worker") $CliStage -Recurse -Force
+    Copy-FfmpegRuntime -Destination $CliStage
     Copy-PackageDocs $CliStage
     Write-FileHashList -Directory $CliStage -Destination (Join-Path $CliStage "SHA256SUMS")
 
@@ -69,6 +95,7 @@ try {
     }
     Copy-Item $GuiExecutable (Join-Path $GuiStage "GenshinLyreTranscriber.exe")
     Copy-Item (Join-Path $Root "artifacts/worker/glt-worker") $GuiStage -Recurse -Force
+    Copy-FfmpegRuntime -Destination $GuiStage
     Copy-PackageDocs $GuiStage
     Write-FileHashList -Directory $GuiStage -Destination (Join-Path $GuiStage "SHA256SUMS")
 
