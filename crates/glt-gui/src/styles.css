@@ -1731,3 +1731,30 @@ select {
     grid-row: 2;
   }
 }
+
+.interaction-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 300;
+  max-width: min(420px, calc(100vw - 36px));
+  padding: 8px 11px;
+  border: 1px solid #8f5a24;
+  color: #fff1dc;
+  background: rgb(52 43 34 / 96%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 42%);
+  font-size: 10px;
+  pointer-events: none;
+  animation: toast-in 140ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

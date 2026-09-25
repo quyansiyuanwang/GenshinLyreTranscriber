@@ -233,6 +233,7 @@ function App() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("准备就绪");
+  const [toast, setToast] = useState<string | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [report, setReport] = useState<ReportDocument | null>(null);
   const [performance, setPerformance] = useState<PerformanceDocument | null>(null);
@@ -332,6 +333,13 @@ function App() {
       })
       .catch((reason) => setNotice(`separator: ${String(reason)}`));
   }, []);
+
+  useEffect(() => {
+    setToast(notice);
+    if (!notice) return;
+    const timer = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     const directory = result?.result.output_dir;
@@ -509,6 +517,7 @@ function App() {
 
   async function startAnalysis(path: string, output: string) {
     if (isMidi(path)) return;
+    setNotice("正在分析当前范围");
     const directory = await join(output, "analysis");
     setAnalysisRunning(true);
     setAnalysisStage("validating");
@@ -1828,7 +1837,7 @@ function App() {
                     </button>
                   )}
                   <button className="primary-button" onClick={() => void applyManualFilter()}>
-                    应用筛选
+                    应用横向阈值
                   </button>
                 </div>
               </div>
@@ -1913,6 +1922,11 @@ function App() {
           </section>
         )}
       </main>
+      {toast && (
+        <div className="interaction-toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
