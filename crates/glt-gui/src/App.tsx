@@ -258,6 +258,7 @@ function App() {
   const [mediaProbeError, setMediaProbeError] = useState<string | null>(null);
   const [mediaProbeRunning, setMediaProbeRunning] = useState(false);
   const [project, setProject] = useState<ProjectDocument | null>(null);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
   const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
   const [separatorDirectory, setSeparatorDirectory] = useState<string | null>(null);
   const [analysisManifest, setAnalysisManifest] = useState<AnalysisManifest | null>(null);
@@ -350,6 +351,7 @@ function App() {
         }
       })
       .catch((reason) => setNotice(`project: ${String(reason)}`));
+    invoke<string | null>("project_path").then(setProjectPath).catch(() => setProjectPath(null));
     invoke<DoctorInfo>("doctor")
       .then(setDoctor)
       .catch((reason) => setNotice(`worker: ${String(reason)}`));
@@ -773,6 +775,7 @@ function App() {
         source: request.input || null,
       });
       setProject(document);
+      setProjectPath(path);
       setNotice("工程已创建");
     } catch (reason) {
       setError(String(reason));
@@ -790,6 +793,7 @@ function App() {
     try {
       const document = await invoke<ProjectDocument>("project_open", { path: selected });
       setProject(document);
+      setProjectPath(selected);
       if (document.source?.path) {
         await applyInput(document.source.path);
       }
@@ -812,6 +816,7 @@ function App() {
   async function closeProject() {
     await invoke("project_close");
     setProject(null);
+    setProjectPath(null);
     setNotice("工程已关闭");
   }
 
@@ -1297,6 +1302,33 @@ function App() {
               </>
             )}
           </div>
+          {project && projectPath && project.revisions.length > 0 && (
+            <div className="revision-timeline">
+              {project.revisions
+                .slice(-4)
+                .reverse()
+                .map((revision) => (
+                  <button
+                    type="button"
+                    key={revision.id}
+                    title={`${revision.kind} · ${revision.id}`}
+                    onClick={async () => {
+                      try {
+                        await openPath(
+                          await join(parentPath(projectPath), revision.relative_path),
+                        );
+                        setNotice(`已打开 revision：${revision.kind}`);
+                      } catch (reason) {
+                        setError(String(reason));
+                      }
+                    }}
+                  >
+                    <strong>{revision.kind}</strong>
+                    <small>{new Date(revision.created_at).toLocaleTimeString()}</small>
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
 
         <div className="separator-card">

@@ -115,6 +115,9 @@ impl OpenProject {
     pub fn document(&self) -> &ProjectDocument {
         &self.document
     }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 pub fn create(path: &Path, name: String, source: Option<PathBuf>) -> Result<OpenProject, String> {

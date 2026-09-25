@@ -95,6 +95,15 @@ fn project_current(state: State<'_, GuiState>) -> Result<Option<ProjectDocument>
 }
 
 #[tauri::command]
+fn project_path(state: State<'_, GuiState>) -> Option<String> {
+    state.lock_project().ok().and_then(|project| {
+        project
+            .as_ref()
+            .map(|value| value.path().to_string_lossy().into_owned())
+    })
+}
+
+#[tauri::command]
 fn project_save(
     state: State<'_, GuiState>,
     name: Option<String>,
@@ -576,6 +585,7 @@ pub fn run() {
             project_open,
             project_current,
             project_save,
+            project_path,
             project_relink_source,
             project_add_revision,
             project_add_revision_path,

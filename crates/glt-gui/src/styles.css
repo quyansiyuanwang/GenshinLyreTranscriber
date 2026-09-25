@@ -422,6 +422,47 @@ a:focus-visible {
   font-size: 8px;
 }
 
+.revision-timeline {
+  display: grid;
+  gap: 2px;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.revision-timeline button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid #3f494d;
+  color: #cbd2d2;
+  background: #293135;
+  text-align: left;
+}
+
+.revision-timeline button:hover {
+  border-color: #6a7579;
+  color: #fff1dc;
+  background: #364044;
+}
+
+.revision-timeline strong,
+.revision-timeline small {
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-timeline small {
+  color: var(--dim);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+}
+
 .project-actions {
   display: flex;
   gap: 3px;
