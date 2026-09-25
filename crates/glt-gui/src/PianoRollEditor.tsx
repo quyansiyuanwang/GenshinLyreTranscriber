@@ -28,7 +28,7 @@ interface DragState {
   pointerId: number;
   startX: number;
   startY: number;
-  mode: "move" | "resize";
+  mode: "move" | "resize" | "marquee";
   baseNotes: PerformanceNote[];
   selected: Set<string>;
 }
@@ -40,6 +40,36 @@ interface Props {
   applying: boolean;
   onDocumentChange: (document: PerformanceDocument) => void;
   onApply: () => void;
+}
+
+export interface MarqueeRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export function notesInMarquee(
+  notes: PerformanceNote[],
+  rect: MarqueeRect,
+  viewStartUs: number,
+  viewDurationUs: number,
+  width: number,
+): PerformanceNote[] {
+  const left = Math.min(rect.x1, rect.x2);
+  const right = Math.max(rect.x1, rect.x2);
+  const top = Math.min(rect.y1, rect.y2);
+  const bottom = Math.max(rect.y1, rect.y2);
+  const laneHeight = (CANVAS_HEIGHT - 24) / 21;
+  return notes.filter((note) => {
+    const lane = KEYBOARD_ORDER.indexOf(note.key);
+    if (lane < 0) return false;
+    const noteLeft = ((note.start_us - viewStartUs) / viewDurationUs) * width;
+    const noteRight = ((note.end_us - viewStartUs) / viewDurationUs) * width;
+    const noteTop = 15 + lane * laneHeight;
+    const noteBottom = noteTop + laneHeight - 5;
+    return noteRight >= left && noteLeft <= right && noteBottom >= top && noteTop <= bottom;
+  });
 }
 
 function formatTime(us: number): string {
@@ -152,6 +182,7 @@ export default function PianoRollEditor({
     deltaUs: 0,
     deltaPitch: 0,
   });
+  const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const velocityRef = useRef<HTMLCanvasElement>(null);
@@ -361,7 +392,18 @@ export default function PianoRollEditor({
         context.stroke();
       }
     }
-  }, [candidates, selected, viewDurationUs, viewStartUs, visibleDocument]);
+    if (marquee) {
+      const left = Math.min(marquee.x1, marquee.x2);
+      const top = Math.min(marquee.y1, marquee.y2);
+      const width = Math.abs(marquee.x2 - marquee.x1);
+      const height = Math.abs(marquee.y2 - marquee.y1);
+      context.fillStyle = "rgba(118, 169, 207, 0.16)";
+      context.strokeStyle = "#76a9cf";
+      context.lineWidth = 1;
+      context.fillRect(left, top, width, height);
+      context.strokeRect(left + 0.5, top + 0.5, width, height);
+    }
+  }, [candidates, marquee, selected, viewDurationUs, viewStartUs, visibleDocument]);
 
   useEffect(() => {
     const canvas = velocityRef.current;
@@ -433,7 +475,22 @@ export default function PianoRollEditor({
     }
     const hit = hitTest(selectedPoint.x, selectedPoint.y);
     if (!hit) {
-      if (!event.shiftKey) setSelected(new Set());
+      const rect = {
+        x1: selectedPoint.x,
+        y1: selectedPoint.y,
+        x2: selectedPoint.x,
+        y2: selectedPoint.y,
+      };
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startX: selectedPoint.x,
+        startY: selectedPoint.y,
+        mode: "marquee",
+        baseNotes: localDocument.notes,
+        selected: new Set(event.shiftKey ? selected : []),
+      };
+      setMarquee(rect);
+      event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
     const nextSelected = new Set(event.shiftKey ? selected : []);
@@ -459,6 +516,15 @@ export default function PianoRollEditor({
     const canvas = overlayRef.current;
     if (!canvas) return;
     const current = point(event);
+    if (drag.mode === "marquee") {
+      setMarquee({
+        x1: drag.startX,
+        y1: drag.startY,
+        x2: Math.max(0, Math.min(canvas.clientWidth, current.x)),
+        y2: Math.max(0, Math.min(CANVAS_HEIGHT, current.y)),
+      });
+      return;
+    }
     const rawDeltaUs = ((current.x - drag.startX) / Math.max(1, canvas.clientWidth)) * viewDurationUs;
     const deltaUs = Math.round(rawDeltaUs / 10_000) * 10_000;
     const deltaPitch = -Math.round((current.y - drag.startY) / ((CANVAS_HEIGHT - 24) / 21));
@@ -471,6 +537,27 @@ export default function PianoRollEditor({
     const canvas = overlayRef.current;
     if (!canvas) return;
     const current = point(event);
+    if (drag.mode === "marquee") {
+      const moved = Math.abs(current.x - drag.startX) >= 4 || Math.abs(current.y - drag.startY) >= 4;
+      const next = new Set(drag.selected);
+      if (moved) {
+        const matches = notesInMarquee(
+          localDocument.notes,
+          { x1: drag.startX, y1: drag.startY, x2: current.x, y2: current.y },
+          viewStartUs,
+          viewDurationUs,
+          canvas.clientWidth,
+        );
+        for (const note of matches) next.add(note.id);
+      }
+      setSelected(next);
+      setMarquee(null);
+      dragRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
     const deltaUs = Math.round(
       ((((current.x - drag.startX) / Math.max(1, canvas.clientWidth)) * viewDurationUs) / 10_000),
     ) * 10_000;
@@ -541,6 +628,7 @@ export default function PianoRollEditor({
           onPointerCancel={() => {
             dragRef.current = null;
             setDragPreview({ deltaUs: 0, deltaPitch: 0 });
+            setMarquee(null);
           }}
         />
       </div>
