@@ -209,12 +209,22 @@ function SpectrogramCanvas({
   image,
   durationUs,
   positionUs,
+  selection,
+  onSeek,
+  onSelectionChange,
 }: {
   image: SpectrogramImage;
   durationUs: number;
   positionUs: number;
+  selection: TimeRangeUs | null;
+  onSeek: (positionUs: number) => void;
+  onSelectionChange: (startUs: number | null, endUs: number | null) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const [previewSelection, setPreviewSelection] = useState<TimeRangeUs | null>(null);
+  const visibleSelection = previewSelection ?? selection;
+
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -236,6 +246,21 @@ function SpectrogramCanvas({
     buffer.getContext("2d")?.putImageData(pixels, 0, 0);
     context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     context.drawImage(buffer, 0, 0, canvas.clientWidth, canvas.clientHeight);
+    if (visibleSelection && durationUs > 0) {
+      const width = canvas.clientWidth;
+      const startX = (visibleSelection.startUs / durationUs) * width;
+      const endX = (visibleSelection.endUs / durationUs) * width;
+      context.fillStyle = "rgba(243, 154, 50, 0.20)";
+      context.fillRect(startX, 0, Math.max(1, endX - startX), canvas.clientHeight);
+      context.strokeStyle = "#f39a32";
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(startX + 0.5, 0);
+      context.lineTo(startX + 0.5, canvas.clientHeight);
+      context.moveTo(endX - 0.5, 0);
+      context.lineTo(endX - 0.5, canvas.clientHeight);
+      context.stroke();
+    }
     const playhead = durationUs > 0 ? Math.min(1, positionUs / durationUs) : 0;
     context.strokeStyle = "#f39a32";
     context.globalAlpha = 0.9;
@@ -245,9 +270,52 @@ function SpectrogramCanvas({
     context.lineTo(playhead * canvas.clientWidth, canvas.clientHeight);
     context.stroke();
     context.globalAlpha = 1;
-  }, [durationUs, image, positionUs]);
+  }, [durationUs, image, positionUs, visibleSelection]);
 
-  return <canvas ref={ref} className="spectrogram-canvas" />;
+  function finishSelection(event: React.PointerEvent<HTMLCanvasElement>): void {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const focusUs = pointerTime(event, durationUs);
+    const range = normalizeRangeUs(drag.anchorUs, focusUs, durationUs, 10_000);
+    const moved = Math.abs(event.clientX - drag.startX) >= 4;
+    dragRef.current = null;
+    setPreviewSelection(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (moved) onSelectionChange(range.startUs, range.endUs);
+    else onSeek(focusUs);
+  }
+
+  return (
+    <canvas
+      ref={ref}
+      className="spectrogram-canvas"
+      aria-label="频谱图；拖动选择区间，单击定位"
+      onPointerDown={(event) => {
+        if (durationUs <= 0 || event.button !== 0) return;
+        const anchorUs = pointerTime(event, durationUs);
+        dragRef.current = { pointerId: event.pointerId, startX: event.clientX, anchorUs };
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setPreviewSelection({ startUs: anchorUs, endUs: anchorUs });
+      }}
+      onPointerMove={(event) => {
+        const drag = dragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        setPreviewSelection(
+          normalizeRangeUs(drag.anchorUs, pointerTime(event, durationUs), durationUs, 10_000),
+        );
+      }}
+      onPointerUp={finishSelection}
+      onPointerCancel={(event) => {
+        dragRef.current = null;
+        setPreviewSelection(null);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+    />
+  );
 }
 
 function SpectrumCanvas({ spectrum }: { spectrum: SpectrumFrame | null }) {
@@ -348,6 +416,9 @@ export default function AnalysisView({
               image={spectrogram}
               durationUs={durationUs}
               positionUs={positionUs}
+              selection={selection}
+              onSeek={onSeek}
+              onSelectionChange={onSelectionChange}
             />
           ) : (
             <div className="analysis-placeholder">生成频谱缓存中…</div>
