@@ -25,7 +25,7 @@ function Get-FfmpegBin {
             ForEach-Object { Join-Path $_.FullName "bin" }
     }
     if (-not $bin -or -not (Test-Path -LiteralPath $bin -PathType Container)) {
-        uv run --project python python scripts/fetch_resources.py ffmpeg
+        uv run --project python python scripts/fetch_resources.py ffmpeg | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "FFmpeg resource download failed with exit code $LASTEXITCODE"
         }
