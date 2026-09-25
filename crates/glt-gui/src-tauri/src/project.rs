@@ -377,4 +377,16 @@ mod tests {
         let _ = fs::remove_dir_all(assets_directory(&path));
         let _ = fs::remove_dir_all(revisions_directory(&path));
     }
+
+    #[test]
+    fn hashes_large_file_without_large_stack_frame() {
+        let source = std::env::temp_dir().join(format!("glt-large-hash-{}.bin", Uuid::new_v4()));
+        let payload = vec![0x5a_u8; 2 * 1024 * 1024];
+        fs::write(&source, &payload).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&payload);
+        let expected = format!("{:x}", hasher.finalize());
+        assert_eq!(sha256_file(&source).unwrap(), expected);
+        let _ = fs::remove_file(source);
+    }
 }
