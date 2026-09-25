@@ -79,8 +79,12 @@ jobs:
           $gui = Get-ChildItem $installDir -Recurse -Filter 'glt-gui.exe' | Select-Object -First 1
           if (-not $gui) { $gui = Get-ChildItem $installDir -Recurse -Filter 'GenshinLyreTranscriber.exe' | Select-Object -First 1 }
           $worker = Get-ChildItem $installDir -Recurse -Filter 'glt-worker.exe' | Select-Object -First 1
+          $ffmpeg = Get-ChildItem $installDir -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1
+          $ffprobe = Get-ChildItem $installDir -Recurse -Filter 'ffprobe.exe' | Select-Object -First 1
           if (-not $gui) { throw 'installed GUI executable is missing' }
           if (-not $worker) { throw 'installed worker executable is missing' }
+          if (-not $ffmpeg) { throw 'installed FFmpeg runtime is missing' }
+          if (-not $ffprobe) { throw 'installed FFprobe runtime is missing' }
           $process = Start-Process -FilePath $gui.FullName -PassThru -WindowStyle Hidden
           Start-Sleep -Seconds 8
           if ($process.HasExited) { throw "installed GUI exited early with $($process.ExitCode)" }

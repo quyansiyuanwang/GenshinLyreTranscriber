@@ -16,8 +16,7 @@ function Copy-PackageDocs {
     Copy-Item (Join-Path $Root "docs") $Destination -Recurse -Force
 }
 
-function Copy-FfmpegRuntime {
-    param([string]$Destination)
+function Get-FfmpegBin {
     $resourceRoot = Join-Path $Root "artifacts/resources/ffmpeg"
     $bin = $null
     if (Test-Path -LiteralPath $resourceRoot -PathType Container) {
@@ -35,9 +34,26 @@ function Copy-FfmpegRuntime {
             ForEach-Object { Join-Path $_.FullName "bin" }
     }
     if (-not $bin) { throw "FFmpeg LGPL runtime directory is missing" }
-    $target = Join-Path $Destination "glt-worker/_internal/ffmpeg/bin"
+    return $bin
+}
+
+function Copy-FfmpegRuntimeToWorker {
+    param([string]$WorkerRoot)
+    $bin = Get-FfmpegBin
+    $target = Join-Path $WorkerRoot "_internal/ffmpeg/bin"
     New-Item -ItemType Directory -Path $target -Force | Out-Null
     Copy-Item (Join-Path $bin "*") $target -Recurse -Force
+    $license = Join-Path (Split-Path -Parent $bin) "LICENSE.txt"
+    if (Test-Path -LiteralPath $license) {
+        Copy-Item $license (Join-Path $WorkerRoot "FFMPEG-LICENSE.txt")
+    }
+}
+
+function Copy-FfmpegRuntime {
+    param([string]$Destination)
+    $targetRoot = Join-Path $Destination "glt-worker"
+    Copy-FfmpegRuntimeToWorker -WorkerRoot $targetRoot
+    $bin = Get-FfmpegBin
     $license = Join-Path (Split-Path -Parent $bin) "LICENSE.txt"
     if (Test-Path -LiteralPath $license) {
         Copy-Item $license (Join-Path $Destination "FFMPEG-LICENSE.txt")
@@ -60,6 +76,7 @@ function Write-FileHashList {
 Push-Location $Root
 try {
     ./scripts/build_worker.ps1
+    Copy-FfmpegRuntimeToWorker -WorkerRoot (Join-Path $Root "artifacts/worker/glt-worker")
     cargo build --release --locked
     if ($LASTEXITCODE -ne 0) {
         throw "Rust release build failed with exit code $LASTEXITCODE"
@@ -90,6 +107,12 @@ try {
     Copy-Item (Join-Path $Root "artifacts/worker/glt-worker") $CliStage -Recurse -Force
     Copy-FfmpegRuntime -Destination $CliStage
     Copy-PackageDocs $CliStage
+    foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe')) {
+        $toolPath = Join-Path $CliStage "glt-worker/_internal/ffmpeg/bin/$tool"
+        if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+            throw "CLI package is missing FFmpeg runtime: $tool"
+        }
+    }
     Write-FileHashList -Directory $CliStage -Destination (Join-Path $CliStage "SHA256SUMS")
 
     $GuiExecutable = Join-Path $Root "target/release/glt-gui.exe"
@@ -100,6 +123,12 @@ try {
     Copy-Item (Join-Path $Root "artifacts/worker/glt-worker") $GuiStage -Recurse -Force
     Copy-FfmpegRuntime -Destination $GuiStage
     Copy-PackageDocs $GuiStage
+    foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe')) {
+        $toolPath = Join-Path $GuiStage "glt-worker/_internal/ffmpeg/bin/$tool"
+        if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+            throw "GUI package is missing FFmpeg runtime: $tool"
+        }
+    }
     Write-FileHashList -Directory $GuiStage -Destination (Join-Path $GuiStage "SHA256SUMS")
 
     $CliZip = Join-Path $ReleaseRoot "$AssetPrefix-cli-tui-windows-x64.zip"
