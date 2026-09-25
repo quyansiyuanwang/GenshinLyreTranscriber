@@ -38,6 +38,7 @@ import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPre
 import ParameterSlider from "./ParameterSlider";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
+import { estimateBpm, recentTapTimes } from "./tempoTap";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
 
@@ -182,6 +183,17 @@ function formatClock(valueUs: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
 
+function stemLabel(role: string): string {
+  const labels: Record<string, string> = {
+    vocals: "人声",
+    drums: "鼓组",
+    bass: "低音",
+    other: "其他",
+    instrumental: "伴奏",
+  };
+  return labels[role] ?? role;
+}
+
 function App() {
   const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -208,6 +220,8 @@ function App() {
   const [stemSet, setStemSet] = useState<StemSetDocument | null>(null);
   const [routingRunning, setRoutingRunning] = useState(false);
   const [routingMode, setRoutingMode] = useState("solo");
+  const tapTimesRef = useRef<number[]>([]);
+  const [tapCount, setTapCount] = useState(0);
   const [routedAudioPath, setRoutedAudioPath] = useState<string | null>(null);
   const [doctor, setDoctor] = useState<DoctorInfo | null>(null);
   const [project, setProject] = useState<ProjectDocument | null>(null);
@@ -262,6 +276,13 @@ function App() {
       }
     }
     if (stemSet && stemSetPath) {
+      for (const stem of stemSet.stems) {
+        options.push({
+          id: `stem-${stem.role}`,
+          label: stemLabel(stem.role),
+          path: `${parentPath(stemSetPath)}\\${stem.relative_path}`,
+        });
+      }
       options.push({
         id: "instrumental",
         label: "Instrumental",
@@ -859,6 +880,20 @@ function App() {
     }
   }
 
+  function tapTempo() {
+    const now = globalThis.performance.now();
+    const recent = recentTapTimes(tapTimesRef.current, now);
+    tapTimesRef.current = recent;
+    setTapCount(recent.length);
+    const bpm = estimateBpm(recent);
+    if (bpm === null) {
+      setNotice(recent.length < 2 ? "TAP：继续跟随节拍点击" : "TAP：节拍不稳定，请重新点击");
+      return;
+    }
+    setRequest((current) => ({ ...current, bpm }));
+    setNotice(`TAP 检测 BPM：${bpm.toFixed(1)}`);
+  }
+
   async function startRouting() {
     if (!stemSetPath) {
       setError("请先完成 stem 分离");
@@ -1369,6 +1404,26 @@ function App() {
             </div>
             {stemSet && (
               <>
+                <div className="stem-audition-grid">
+                  {stemSet.stems.map((stem) => {
+                    const sourceId = `stem-${stem.role}`;
+                    const option = abOptions.find((entry) => entry.id === sourceId);
+                    return (
+                      <button
+                        type="button"
+                        key={stem.role}
+                        className={abSource === sourceId ? "active" : ""}
+                        aria-pressed={abSource === sourceId}
+                        disabled={!option?.path}
+                        onClick={() => void switchAbSource(sourceId)}
+                      >
+                        <span>{stemLabel(stem.role)}</span>
+                        <strong>{(stem.duration_us / 1_000_000).toFixed(1)}s</strong>
+                        <small>{stem.sample_rate / 1000} kHz · 点击试听</small>
+                      </button>
+                    );
+                  })}
+                </div>
                 <div className="routing-mode-grid">
                   {[
                     { value: "solo", title: "SOLO", detail: "主旋律单声部" },
@@ -1526,17 +1581,23 @@ function App() {
             onChange={(value) => setRequest((current) => ({ ...current, timing: value }))}
           />
           <div className="parameter-grid">
-            <ParameterSlider
-              label="BPM 覆盖"
-              minimum={40}
-              maximum={240}
-              step={0.1}
-              value={request.bpm}
-              fallback={tempoLabel ?? 120}
-              precision={1}
-              unsetLabel="自动 BPM"
-              onChange={(value) => setRequest((current) => ({ ...current, bpm: value }))}
-            />
+            <div className="parameter-with-action">
+              <ParameterSlider
+                label="BPM 覆盖"
+                minimum={40}
+                maximum={240}
+                step={0.1}
+                value={request.bpm}
+                fallback={tempoLabel ?? 120}
+                precision={1}
+                unsetLabel="自动 BPM"
+                onChange={(value) => setRequest((current) => ({ ...current, bpm: value }))}
+              />
+              <button type="button" className="tap-tempo-button" onClick={tapTempo}>
+                <strong>TAP</strong>
+                <small>{tapCount ? `${tapCount} 次` : "跟随节拍点击"}</small>
+              </button>
+            </div>
             <ParameterSlider
               label="整体移调"
               minimum={-24}

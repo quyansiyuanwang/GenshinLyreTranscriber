@@ -1229,6 +1229,55 @@ select {
   font-weight: 500;
 }
 
+.stem-audition-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 9px;
+  border: 1px solid #414b4f;
+  background: #414b4f;
+}
+
+.stem-audition-grid button {
+  display: grid;
+  min-height: 54px;
+  align-content: center;
+  gap: 2px;
+  padding: 6px;
+  border: 0;
+  color: #b7c1c2;
+  background: linear-gradient(#293135, #232a2d);
+  text-align: left;
+}
+
+.stem-audition-grid button:hover:not(:disabled) {
+  color: #f0f4f3;
+  background: linear-gradient(#364044, #2b3235);
+}
+
+.stem-audition-grid button.active {
+  color: #fff1dc;
+  background: linear-gradient(145deg, #8e5220, #653915);
+  box-shadow: inset 0 2px #f3a347;
+}
+
+.stem-audition-grid span {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.stem-audition-grid strong {
+  color: inherit;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 9px;
+}
+
+.stem-audition-grid small {
+  color: inherit;
+  font-size: 7px;
+  opacity: 0.7;
+}
+
 .routing-mode-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1942,6 +1991,42 @@ select {
   color: inherit;
   font-size: 7px;
   opacity: 0.72;
+}
+
+.parameter-with-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tap-tempo-button {
+  display: grid;
+  min-width: 58px;
+  min-height: 47px;
+  align-content: center;
+  gap: 2px;
+  border: 1px solid #6c512c;
+  color: #ffd7a2;
+  background: linear-gradient(#4d3a27, #33291f);
+  text-align: center;
+}
+
+.tap-tempo-button:hover {
+  border-color: #d88a35;
+  color: #fff0d8;
+  background: linear-gradient(#6b4726, #402b1d);
+}
+
+.tap-tempo-button strong {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 10px;
+}
+
+.tap-tempo-button small {
+  font-size: 7px;
+  opacity: 0.78;
 }
 
 .parameter-grid {
