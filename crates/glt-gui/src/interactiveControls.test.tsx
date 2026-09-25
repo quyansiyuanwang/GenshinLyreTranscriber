@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import ParameterSlider from "./ParameterSlider";
 import SegmentedControl from "./SegmentedControl";
 
@@ -21,6 +22,14 @@ describe("interactive controls", () => {
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-checked="false"');
     expect(html).toContain("自动分析");
+  });
+
+  it("renders the candidate distribution canvas", () => {
+    const html = renderToStaticMarkup(
+      <FilterPreviewCanvas notes={[]} rules={[]} onPitchLineChange={() => undefined} />,
+    );
+    expect(html).toContain('候选音符筛选分布图');
+    expect(html).toContain('当前阈值保留');
   });
 
   it("renders draggable and precise numeric controls", () => {

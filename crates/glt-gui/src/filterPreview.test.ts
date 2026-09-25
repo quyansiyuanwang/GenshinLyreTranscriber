@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { liveFilterStats, matchesDraftRule } from "./App";
+import { activePitchLines, liveFilterStats, matchesDraftRule } from "./filterPreview";
 import type { CandidateNote, DraftFilterRule } from "./types";
 
 function note(overrides: Partial<CandidateNote> = {}): CandidateNote {
@@ -42,9 +42,15 @@ describe("live filter preview", () => {
     expect(matchesDraftRule(note({ confidence: null }), rule({ confidenceMin: "0.5" }))).toBe(false);
   });
 
+  it("exposes pitch bounds for horizontal preview lines", () => {
+    expect(activePitchLines([rule({ pitchMin: "48", pitchMax: "72" })])).toEqual([
+      { ruleIndex: 0, min: 48, max: 72 },
+    ]);
+  });
+
   it("uses OR semantics across groups and reports removal", () => {
     const candidates = [note({ pitch: 60 }), note({ pitch: 70 }), note({ pitch: 80 })];
     const stats = liveFilterStats(candidates, [rule({ pitchMax: "64" }), rule({ pitchMin: "76" })]);
-    expect(stats).toEqual({ total: 3, matched: 2, removed: 1, perRule: [1, 1] });
+    expect(stats).toEqual({ total: 3, matched: 2, removed: 1, perRule: [1, 1], matches: [true, false, true] });
   });
 });

@@ -1617,6 +1617,51 @@ select {
   transition: width 90ms linear;
 }
 
+.filter-preview-canvas-wrap {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid #4b5559;
+  background: #171c1f;
+}
+
+.filter-preview-canvas {
+  width: 100%;
+  height: 178px;
+  border: 1px solid #111517;
+  background: #171c1f;
+}
+
+.filter-preview-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.filter-preview-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-preview-legend i {
+  width: 12px;
+  height: 4px;
+  background: #8fc46c;
+}
+
+.filter-preview-legend i.removed {
+  background: #d66d68;
+}
+
+.filter-preview-legend i.threshold {
+  height: 1px;
+  border-top: 1px dashed #f3a347;
+  background: transparent;
+}
+
 .filter-rule {
   padding: 8px;
   border: 1px solid var(--line-soft);

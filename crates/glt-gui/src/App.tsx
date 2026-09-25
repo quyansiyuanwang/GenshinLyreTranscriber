@@ -13,8 +13,6 @@ import type {
   DoctorInfo,
   DraftFilterRule,
   FilterPreset,
-  FilterRule,
-  FilterSpec,
   JobEvent,
   JobRequest,
   JobResult,
@@ -34,7 +32,9 @@ import type {
   WaveformPayload,
 } from "./types";
 import AnalysisView from "./AnalysisView";
+import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import FilterRangeSlider from "./FilterRangeSlider";
+import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPreview";
 import ParameterSlider from "./ParameterSlider";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
@@ -132,83 +132,6 @@ const DEFAULT_REQUEST: JobRequest = {
   filter_preset: null,
   worker_path: null,
 };
-
-function parseOptionalNumber(value: string): number | null {
-  const normalized = value.trim();
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function hasRuleValue(rule: DraftFilterRule): boolean {
-  return Object.entries(rule).some(([key, value]) => key !== "enabled" && value !== "");
-}
-
-function range(
-  minimum: string,
-  maximum: string,
-  fallbackMin: number,
-  fallbackMax: number,
-): { min: number; max: number } | undefined {
-  if (!minimum.trim() && !maximum.trim()) return undefined;
-  return {
-    min: parseOptionalNumber(minimum) ?? fallbackMin,
-    max: parseOptionalNumber(maximum) ?? fallbackMax,
-  };
-}
-
-function rulesToFilter(rules: DraftFilterRule[]): FilterSpec | null {
-  const converted: FilterRule[] = [];
-  for (const rule of rules) {
-    if (!rule.enabled || !hasRuleValue(rule)) continue;
-    converted.push({
-      enabled: true,
-      confidence: range(rule.confidenceMin, rule.confidenceMax, 0, 1),
-      duration_ms: range(rule.durationMin, rule.durationMax, 0, 3_600_000),
-      velocity: range(rule.velocityMin, rule.velocityMax, 1, 127),
-      pitch: range(rule.pitchMin, rule.pitchMax, 0, 127),
-    });
-  }
-  return converted.length ? { format_version: 1, rules: converted } : null;
-}
-
-function within(value: number, range: { min: number; max: number } | undefined): boolean {
-  return range === undefined || (value >= range.min && value <= range.max);
-}
-
-export function matchesDraftRule(note: CandidateNote, rule: DraftFilterRule): boolean {
-  if (!rule.enabled || !hasRuleValue(rule)) return false;
-  const durationMs = (note.end_us - note.start_us) / 1000;
-  const confidence = rule.confidenceMin || rule.confidenceMax
-    ? range(rule.confidenceMin, rule.confidenceMax, 0, 1)
-    : undefined;
-  if (confidence && note.confidence === null) return false;
-  return (
-    within(note.confidence ?? -1, confidence) &&
-    within(durationMs, range(rule.durationMin, rule.durationMax, 0, 3_600_000)) &&
-    within(note.velocity, range(rule.velocityMin, rule.velocityMax, 1, 127)) &&
-    within(note.pitch, range(rule.pitchMin, rule.pitchMax, 0, 127))
-  );
-}
-
-export function liveFilterStats(
-  notes: CandidateNote[],
-  rules: DraftFilterRule[],
-): { total: number; matched: number; removed: number; perRule: number[] } {
-  const activeRules = rules.filter((rule) => rule.enabled && hasRuleValue(rule));
-  const perRule = rules.map((rule) =>
-    rule.enabled && hasRuleValue(rule)
-      ? notes.filter((note) => matchesDraftRule(note, rule)).length
-      : 0,
-  );
-  if (activeRules.length === 0) {
-    return { total: notes.length, matched: notes.length, removed: 0, perRule };
-  }
-  const matched = notes.filter((note) =>
-    activeRules.some((rule) => matchesDraftRule(note, rule)),
-  ).length;
-  return { total: notes.length, matched, removed: notes.length - matched, perRule };
-}
 
 function isMidi(path: string): boolean {
   return /\.(mid|midi)$/i.test(path);
@@ -1811,6 +1734,17 @@ function App() {
                   </div>
                   <small>拖动阈值即时重算；“应用横向阈值”后才生成新的不可变结果目录。</small>
                 </div>
+                <FilterPreviewCanvas
+                  notes={candidateNotes}
+                  rules={filterRules}
+                  onPitchLineChange={(ruleIndex, bound, pitch) =>
+                    updateRule(
+                      ruleIndex,
+                      bound === "min" ? "pitchMin" : "pitchMax",
+                      String(pitch),
+                    )
+                  }
+                />
                 {filterRules.map((rule, index) => (
                   <div className="filter-rule" key={index}>
                     <div className="filter-rule-title">
