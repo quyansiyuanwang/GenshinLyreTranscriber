@@ -2636,6 +2636,34 @@ select {
   background: rgb(64 34 34 / 97%);
 }
 
+.click-ack {
+  position: fixed;
+  left: 205px;
+  bottom: 18px;
+  z-index: 290;
+  max-width: min(360px, calc(100vw - 225px));
+  padding: 5px 8px;
+  border: 1px solid #3f5f6d;
+  color: #b9d9e6;
+  background: rgb(31 45 51 / 94%);
+  box-shadow: 0 5px 16px rgb(0 0 0 / 30%);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 8px;
+  pointer-events: none;
+  animation: click-ack-in 110ms ease-out;
+}
+
+@keyframes click-ack-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;

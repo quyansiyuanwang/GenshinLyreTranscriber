@@ -33,7 +33,7 @@ export interface QueueRunSummary {
 export interface RunQueueOptions {
   items: QueueItem[];
   ids: string[];
-  execute: (item: QueueItem) => Promise<void>;
+  execute: (item: QueueItem) => Promise<string | void>;
   update: (id: string, patch: Partial<QueueItem>) => void;
   stopRequested: () => boolean;
   consumeSkip: () => boolean;
@@ -185,11 +185,11 @@ export async function runQueuePlan({
       error: null,
     });
     try {
-      await execute(item);
+      const resolvedOutput = await execute(item);
       update(id, {
         status: "done",
         completed_at: now(),
-        result_dir: item.request.output,
+        result_dir: typeof resolvedOutput === "string" ? resolvedOutput : item.request.output,
         error: null,
       });
       summary.completed += 1;

@@ -291,6 +291,7 @@ function App() {
     message: string;
     kind: "info" | "error";
   } | null>(null);
+  const [clickAck, setClickAck] = useState<{ id: number; label: string } | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [report, setReport] = useState<ReportDocument | null>(null);
   const [performance, setPerformance] = useState<PerformanceDocument | null>(null);
@@ -340,6 +341,7 @@ function App() {
     reject: (error: Error) => void;
   } | null>(null);
   const toastSequenceRef = useRef(0);
+  const clickAckSequenceRef = useRef(0);
   jobRequestRef.current = request;
   queueItemsRef.current = queueItems;
   const pendingRevisionRef = useRef<{
@@ -370,6 +372,22 @@ function App() {
 
   function patchQueueItem(id: string, patch: Partial<QueueItem>) {
     replaceQueue((current) => updateQueueItem(current, id, patch));
+  }
+
+  function acknowledgeButtonClick(event: React.MouseEvent<HTMLDivElement>) {
+    const button = (event.target as HTMLElement).closest("button");
+    if (!button || button.disabled || button.dataset.noClickAck === "true") return;
+    const label = (
+      button.getAttribute("aria-label") ||
+      button.getAttribute("title") ||
+      button.textContent ||
+      "操作"
+    )
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 36);
+    clickAckSequenceRef.current += 1;
+    setClickAck({ id: clickAckSequenceRef.current, label });
   }
 
   const previewArtifact = result?.result.artifacts.find(
@@ -473,6 +491,15 @@ function App() {
     );
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!clickAck) return;
+    const timer = window.setTimeout(
+      () => setClickAck((current) => (current?.id === clickAck.id ? null : current)),
+      850,
+    );
+    return () => window.clearTimeout(timer);
+  }, [clickAck]);
 
   useEffect(() => {
     setActiveFilterRule((current) => Math.min(current, Math.max(0, filterRules.length - 1)));
@@ -933,13 +960,14 @@ function App() {
             ...item.request,
             worker_path: jobRequestRef.current.worker_path ?? item.request.worker_path,
           });
-          await startJob(
+          const resolvedOutput = await startJob(
             {
               ...item.request,
               worker_path: jobRequestRef.current.worker_path ?? item.request.worker_path,
             },
             true,
           );
+          return resolvedOutput ?? item.request.output;
         },
       });
       if (summary.stopped) {
@@ -1032,7 +1060,7 @@ function App() {
     }
   }
 
-  async function startJob(next = request, waitForCompletion = false) {
+  async function startJob(next = request, waitForCompletion = false): Promise<string | null> {
     setError(null);
     setWarnings([]);
     setResult(null);
@@ -1047,15 +1075,26 @@ function App() {
         })
       : null;
     if (!waitForCompletion) activeJobWaiterRef.current = null;
+    let effective = next;
     try {
-      await invoke("start_job", { request: next });
+      if (!next.overwrite) {
+        const available = await invoke<string>("next_available_output", { path: next.output });
+        if (available !== next.output) {
+          effective = { ...next, output: available };
+          setRequest(effective);
+          setNotice(`输出目录已存在，自动改用 ${available.split(/[/\\]/).pop()}`);
+        }
+      }
+      await invoke("start_job", { request: effective });
       if (completion) await completion;
+      return effective.output;
     } catch (reason) {
       activeJobWaiterRef.current = null;
       setRunning(false);
       setStage("failed");
       if (!(reason instanceof QueueCancelledError)) setError(String(reason));
       if (waitForCompletion) throw reason;
+      return null;
     }
   }
 
@@ -1574,7 +1613,7 @@ function App() {
     : "未载入素材";
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" onClickCapture={acknowledgeButtonClick}>
       <header className="daw-menubar">
         <div className="daw-app-mark">
           <span>GLT</span>
@@ -2976,6 +3015,11 @@ function App() {
           aria-live={toast.kind === "error" ? "assertive" : "polite"}
         >
           {toast.message}
+        </div>
+      )}
+      {clickAck && (
+        <div key={clickAck.id} className="click-ack" role="status" aria-live="polite">
+          已受理 · {clickAck.label}
         </div>
       )}
     </div>

@@ -297,6 +297,36 @@ fn next_filter_output(source: PathBuf) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+fn next_available_output(path: PathBuf) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Ok(path);
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "output directory has no parent".to_owned())?;
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "output directory name is not UTF-8".to_owned())?;
+    let (base, first_index) = if let Some(index) = name.rfind("-output-") {
+        let suffix = &name[index + 8..];
+        match suffix.parse::<u32>() {
+            Ok(value) => (&name[..index + 7], value + 1),
+            Err(_) => (name, 2),
+        }
+    } else {
+        (name, 2)
+    };
+    for index in first_index.max(2)..=999 {
+        let candidate = parent.join(format!("{base}-{index:02}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("no available output directory name remains".to_owned())
+}
+
+#[tauri::command]
 fn read_performance(result_dir: PathBuf) -> Result<Value, String> {
     let path = result_dir.join("performance.json");
     let text = fs::read_to_string(&path)
@@ -629,6 +659,7 @@ pub fn run() {
             cancel_job,
             read_report,
             next_filter_output,
+            next_available_output,
             read_performance,
             read_candidate_overlay,
             read_stem_set,
@@ -663,6 +694,18 @@ mod tests {
             next_edit_output_path(&source).unwrap(),
             root.join("result-edit-03")
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn available_output_versions_existing_directories() {
+        let root = std::env::temp_dir().join(format!("glt-output-name-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("song-output")).unwrap();
+        let next = next_available_output(root.join("song-output")).unwrap();
+        assert_eq!(next, root.join("song-output-02"));
+        fs::create_dir_all(&next).unwrap();
+        let next = next_available_output(root.join("song-output")).unwrap();
+        assert_eq!(next, root.join("song-output-03"));
         let _ = fs::remove_dir_all(root);
     }
 }
