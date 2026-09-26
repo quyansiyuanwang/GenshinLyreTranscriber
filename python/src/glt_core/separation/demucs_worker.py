@@ -111,17 +111,7 @@ def separate_demucs(
     torch.set_num_threads(max(1, min(8, os.cpu_count() or 1)))
     temporary_root = pathlib.Path(tempfile.mkdtemp(prefix=".glt-demucs-", dir=output))
     try:
-        arguments = [
-            "--out",
-            str(temporary_root),
-            "--name",
-            model_id,
-            "--device",
-            device,
-            "--shifts",
-            "0",
-            str(source),
-        ]
+        arguments = _demucs_arguments(temporary_root, model_id, device, source)
         with (
             _demucs_environment(model_paths, offline=offline),
             contextlib.redirect_stdout(sys.stderr),
@@ -171,6 +161,29 @@ def separate_demucs(
         return stem_set_path, elapsed, model_hash
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
+
+
+def _demucs_arguments(
+    temporary_root: pathlib.Path,
+    model_id: str,
+    device: str,
+    source: pathlib.Path,
+) -> list[str]:
+    # A single worker avoids a Demucs/job-pool deadlock on long files while
+    # still using the model's internal segment overlap for boundary quality.
+    return [
+        "--out",
+        str(temporary_root),
+        "--name",
+        model_id,
+        "--device",
+        device,
+        "--shifts",
+        "0",
+        "--jobs",
+        "1",
+        str(source),
+    ]
 
 
 def model_bundle_sha256(

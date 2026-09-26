@@ -21,6 +21,7 @@ from glt_core.separation import (
     load_component,
     verify_component,
 )
+from glt_core.separation.demucs_worker import _demucs_arguments
 from glt_core.separation.provider import run_component
 from glt_core.separation.stem_set import validate_stem_set as load_stem_set
 
@@ -81,6 +82,18 @@ def test_component_verification_and_hash_failure(tmp_path: pathlib.Path) -> None
     (root / "models" / "htdemucs.onnx").write_bytes(b"tampered")
     with pytest.raises(ComponentVerificationError, match="mismatch"):
         verify_component(root, model_id="htdemucs")
+
+
+def test_demucs_runs_with_one_worker_to_avoid_long_file_deadlock() -> None:
+    arguments = _demucs_arguments(
+        pathlib.Path("out"),
+        "htdemucs",
+        "cpu",
+        pathlib.Path("song.wav"),
+    )
+    jobs_index = arguments.index("--jobs")
+    assert arguments[jobs_index + 1] == "1"
+    assert arguments[-1] == "song.wav"
 
 
 def _write_stem(path: pathlib.Path, frequency: float, sample_rate: int = 44_100) -> None:
