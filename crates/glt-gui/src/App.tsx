@@ -45,6 +45,19 @@ import SegmentedControl from "./SegmentedControl";
 import { buildCustomRoutingPlan, defaultStemRoute, type StemRouteControl, type StemTarget } from "./routingPlan";
 import { BUILTIN_PRESETS, loadCustomPresets, nextCustomPresetName, presetFromRequest } from "./desktopPresets";
 import { estimateBpm, recentTapTimes } from "./tempoTap";
+import {
+  appendQueueRequests,
+  clearCompletedQueue,
+  parseQueue,
+  pendingQueueIds,
+  queueCounts,
+  removeQueueItem,
+  retryableQueueIds,
+  runQueuePlan,
+  syncPendingQueue,
+  updateQueueItem,
+  type QueueItem,
+} from "./jobQueue";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
 
@@ -208,10 +221,23 @@ function stemLabel(role: string): string {
   return labels[role] ?? role;
 }
 
+function queueStatusLabel(status: QueueItem["status"]): string {
+  const labels: Record<QueueItem["status"], string> = {
+    pending: "等待",
+    running: "处理中",
+    done: "完成",
+    failed: "失败",
+    cancelled: "已取消",
+  };
+  return labels[status];
+}
+
 function loadRecentPaths(key: string): string[] {
   if (typeof window === "undefined") return [];
   return parseRecentPaths(window.localStorage.getItem(key));
 }
+
+class QueueCancelledError extends Error {}
 
 function App() {
   const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
@@ -230,6 +256,11 @@ function App() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<DraftFilterRule[]>([{ ...EMPTY_RULE }]);
   const [activeFilterRule, setActiveFilterRule] = useState(0);
+  const [queueItems, setQueueItems] = useState<QueueItem[]>(() =>
+    parseQueue(typeof window === "undefined" ? null : window.localStorage.getItem("glt.jobQueue")),
+  );
+  const [queueRunning, setQueueRunning] = useState(false);
+  const [queueCurrentId, setQueueCurrentId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [stage, setStage] = useState("待机");
   const [fraction, setFraction] = useState<number | null>(null);
@@ -281,8 +312,17 @@ function App() {
   const loopSeekingRef = useRef(false);
   const [volume, setVolume] = useState(0.8);
   const jobRequestRef = useRef(request);
+  const queueItemsRef = useRef(queueItems);
+  const queueRunningRef = useRef(false);
+  const queueSkipCurrentRef = useRef(false);
+  const queueStopRef = useRef(false);
+  const activeJobWaiterRef = useRef<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   const toastSequenceRef = useRef(0);
   jobRequestRef.current = request;
+  queueItemsRef.current = queueItems;
   const pendingRevisionRef = useRef<{
     kind: string;
     path: string;
@@ -302,11 +342,23 @@ function App() {
     setToast({ id: toastSequenceRef.current, message, kind: "error" });
   }
 
+  function replaceQueue(updater: (current: QueueItem[]) => QueueItem[]) {
+    const next = updater(queueItemsRef.current);
+    queueItemsRef.current = next;
+    setQueueItems(next);
+    return next;
+  }
+
+  function patchQueueItem(id: string, patch: Partial<QueueItem>) {
+    replaceQueue((current) => updateQueueItem(current, id, patch));
+  }
+
   const previewArtifact = result?.result.artifacts.find(
     (artifact) => artifact.kind === "preview_wav",
   );
 
   const counts = useMemo(() => Object.entries(report?.counts ?? {}), [report]);
+  const queueSummary = useMemo(() => queueCounts(queueItems), [queueItems]);
   const filterPreview = useMemo(
     () => liveFilterStats(candidateNotes, filterRules),
     [candidateNotes, filterRules],
@@ -357,10 +409,11 @@ function App() {
       window.localStorage.setItem("glt.recentInputs", JSON.stringify(recentInputs));
       window.localStorage.setItem("glt.recentOutputs", JSON.stringify(recentOutputs));
       window.localStorage.setItem("glt.customPresets", JSON.stringify(customPresets));
+      window.localStorage.setItem("glt.jobQueue", JSON.stringify(queueItems));
     } catch {
       // Recent paths are a convenience; storage failure must not block work.
     }
-  }, [customPresets, recentInputs, recentOutputs]);
+  }, [customPresets, queueItems, recentInputs, recentOutputs]);
 
   useEffect(() => {
     invoke<ProjectDocument | null>("project_current")
@@ -481,6 +534,9 @@ function App() {
         pendingRevisionRef.current = null;
         void recordRevision(pending.kind, pending.path, pending.parentId);
       }
+      const waiter = activeJobWaiterRef.current;
+      activeJobWaiterRef.current = null;
+      waiter?.resolve();
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<string>("job-failed", ({ payload }) => {
@@ -489,6 +545,9 @@ function App() {
       setStage("failed");
       setNotice("任务失败");
       setError(payload);
+      const waiter = activeJobWaiterRef.current;
+      activeJobWaiterRef.current = null;
+      waiter?.reject(new Error(payload));
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen("job-cancelled", () => {
@@ -496,6 +555,9 @@ function App() {
       setEditApplying(false);
       setStage("cancelled");
       setNotice("任务已取消");
+      const waiter = activeJobWaiterRef.current;
+      activeJobWaiterRef.current = null;
+      waiter?.reject(new QueueCancelledError("job cancelled"));
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<SeparationProgress>("separation-progress", ({ payload }) => {
@@ -638,8 +700,11 @@ function App() {
     void getCurrentWebview()
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
-        const path = event.payload.paths[0];
-        void applyInput(path);
+        if (event.payload.paths.length > 1) {
+          void enqueueInputs(event.payload.paths);
+          return;
+        }
+        void applyInput(event.payload.paths[0]);
       })
       .then((handler) => {
         unlisten = handler;
@@ -746,6 +811,166 @@ function App() {
     }
   }
 
+  async function queueRequestsForPaths(paths: string[]): Promise<JobRequest[]> {
+    const unique = [...new Set(paths.filter((path) => path.trim().length > 0))];
+    return Promise.all(
+      unique.map(async (path) => {
+        const operation = operationForPath(path);
+        return {
+          ...jobRequestRef.current,
+          input: path,
+          output: await defaultOutputFor(path),
+          operation,
+          timing: operation === "convert_midi" ? "preserve" : jobRequestRef.current.timing,
+          filter: null,
+          filter_preset: null,
+          overwrite: false,
+        };
+      }),
+    );
+  }
+
+  async function enqueueInputs(paths: string[]) {
+    if (paths.length === 0) return;
+    try {
+      const requests = await queueRequestsForPaths(paths);
+      const next = appendQueueRequests(
+        queueItemsRef.current,
+        requests,
+        () => globalThis.crypto?.randomUUID?.() ?? `queue-${Date.now()}-${Math.random()}`,
+      );
+      const added = next.length - queueItemsRef.current.length;
+      replaceQueue(() => next);
+      setRecentInputs((current) =>
+        requests.reduce((items, item) => addRecentPath(items, item.input), current),
+      );
+      setNotice(
+        added > 0
+          ? `已加入 ${added} 个批量任务；旧配置不会覆盖已有输出`
+          : "这些素材已在队列中，未重复添加",
+      );
+    } catch (reason) {
+      setError(`加入批量队列失败：${String(reason)}`);
+    }
+  }
+
+  async function chooseQueueInputs() {
+    try {
+      const selected = await openDialog({
+        multiple: true,
+        directory: false,
+        title: "选择要批量转录的素材",
+        filters: MEDIA_FILTERS,
+      });
+      const paths = Array.isArray(selected) ? selected : typeof selected === "string" ? [selected] : [];
+      await enqueueInputs(paths);
+    } catch (reason) {
+      setError(`选择批量素材失败：${String(reason)}`);
+    }
+  }
+
+  async function runQueue(ids?: string[]) {
+    if (queueRunningRef.current) return;
+    if (running) {
+      setError("已有任务正在运行，请等待结束或先取消当前任务");
+      return;
+    }
+    const targetIds = ids ?? pendingQueueIds(queueItemsRef.current);
+    if (targetIds.length === 0) {
+      setNotice(ids ? "没有可重试的失败项" : "队列中没有待处理任务");
+      return;
+    }
+
+    queueStopRef.current = false;
+    queueSkipCurrentRef.current = false;
+    queueRunningRef.current = true;
+    setQueueRunning(true);
+    setError(null);
+    try {
+      const summary = await runQueuePlan({
+        items: queueItemsRef.current,
+        ids: targetIds,
+        update: patchQueueItem,
+        stopRequested: () => queueStopRef.current,
+        consumeSkip: () => {
+          const skip = queueSkipCurrentRef.current;
+          queueSkipCurrentRef.current = false;
+          return skip;
+        },
+        execute: async (item) => {
+          queueSkipCurrentRef.current = false;
+          setQueueCurrentId(item.id);
+          setNotice(
+            `批量队列 ${targetIds.indexOf(item.id) + 1}/${targetIds.length}：${item.request.input.split(/[/\\]/).pop()}`,
+          );
+          setRequest({
+            ...item.request,
+            worker_path: jobRequestRef.current.worker_path ?? item.request.worker_path,
+          });
+          await startJob(
+            {
+              ...item.request,
+              worker_path: jobRequestRef.current.worker_path ?? item.request.worker_path,
+            },
+            true,
+          );
+        },
+      });
+      if (summary.stopped) {
+        setNotice(`队列已停止：完成 ${summary.completed}，失败 ${summary.failed}`);
+      } else if (summary.failed > 0) {
+        setNotice(
+          `队列完成：成功 ${summary.completed}，跳过 ${summary.skipped}，失败 ${summary.failed}；可只重试失败项`,
+        );
+      } else {
+        setNotice(`批量队列完成：${summary.completed} 个任务，跳过 ${summary.skipped}`);
+      }
+    } finally {
+      setQueueCurrentId(null);
+      queueRunningRef.current = false;
+      setQueueRunning(false);
+    }
+  }
+
+  async function cancelQueue() {
+    queueStopRef.current = true;
+    setNotice("正在停止队列并取消当前任务");
+    try {
+      await invoke("cancel_job");
+    } catch (reason) {
+      setError(`停止队列失败：${String(reason)}`);
+    }
+  }
+
+  async function skipCurrentQueueItem() {
+    queueSkipCurrentRef.current = true;
+    setNotice("正在跳过当前队列项");
+    try {
+      await invoke("cancel_job");
+    } catch (reason) {
+      queueSkipCurrentRef.current = false;
+      setError(`跳过当前项失败：${String(reason)}`);
+    }
+  }
+
+  function syncPendingQueueParameters() {
+    replaceQueue((current) => syncPendingQueue(current, jobRequestRef.current));
+    setNotice("已将当前参数同步到所有待处理队列项");
+  }
+
+  function removeQueuedItem(id: string) {
+    if (queueRunning) return;
+    replaceQueue((current) => removeQueueItem(current, id));
+    setNotice("已从队列移除");
+  }
+
+  function clearFinishedQueueItems() {
+    const before = queueItemsRef.current;
+    const next = clearCompletedQueue(before);
+    replaceQueue(() => next);
+    setNotice(next.length === before.length ? "没有可清理的已完成项" : "已清理完成项");
+  }
+
   async function openLocalPath(path: string, label: string) {
     try {
       await openPath(path);
@@ -781,7 +1006,7 @@ function App() {
     }
   }
 
-  async function startJob(next = request) {
+  async function startJob(next = request, waitForCompletion = false) {
     setError(null);
     setWarnings([]);
     setResult(null);
@@ -790,12 +1015,21 @@ function App() {
     setStage("validating");
     setFraction(0);
     setNotice("正在启动 worker");
+    const completion = waitForCompletion
+      ? new Promise<void>((resolve, reject) => {
+          activeJobWaiterRef.current = { resolve, reject };
+        })
+      : null;
+    if (!waitForCompletion) activeJobWaiterRef.current = null;
     try {
       await invoke("start_job", { request: next });
+      if (completion) await completion;
     } catch (reason) {
+      activeJobWaiterRef.current = null;
       setRunning(false);
       setStage("failed");
-      setError(String(reason));
+      if (!(reason instanceof QueueCancelledError)) setError(String(reason));
+      if (waitForCompletion) throw reason;
     }
   }
 
@@ -1645,6 +1879,151 @@ function App() {
               <button type="button" onClick={() => setRecentOutputs([])}>清空</button>
             </div>
           )}
+
+          <section className="queue-workbench">
+            <div className="queue-heading">
+              <div>
+                <span>BATCH QUEUE</span>
+                <strong>批量转录队列</strong>
+                <small>单 worker 顺序执行，失败不会阻断后续素材。</small>
+              </div>
+              <div className="queue-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={queueRunning}
+                  onClick={() => void chooseQueueInputs()}
+                >
+                  添加多个
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={queueRunning || running || queueSummary.pending === 0}
+                  onClick={() => void runQueue()}
+                >
+                  {queueRunning ? "队列运行中" : "开始队列"}
+                </button>
+                <button
+                  type="button"
+                  disabled={queueRunning || queueSummary.failed + queueSummary.cancelled === 0}
+                  onClick={() => void runQueue(retryableQueueIds(queueItemsRef.current))}
+                >
+                  重试失败
+                </button>
+                <button
+                  type="button"
+                  disabled={!queueRunning}
+                  onClick={() => void skipCurrentQueueItem()}
+                >
+                  跳过当前
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={!queueRunning}
+                  onClick={() => void cancelQueue()}
+                >
+                  停止队列
+                </button>
+                <button
+                  type="button"
+                  disabled={queueRunning || queueSummary.pending === 0}
+                  onClick={syncPendingQueueParameters}
+                >
+                  同步当前参数
+                </button>
+                <button type="button" onClick={clearFinishedQueueItems}>
+                  清理完成
+                </button>
+              </div>
+            </div>
+            <div className="queue-summary">
+              {[
+                ["待处理", queueSummary.pending, "pending"],
+                ["处理中", queueSummary.running, "running"],
+                ["完成", queueSummary.done, "done"],
+                ["失败", queueSummary.failed, "failed"],
+                ["已取消", queueSummary.cancelled, "cancelled"],
+              ].map(([label, value, status]) => (
+                <span className={String(status)} key={String(status)}>
+                  <i />
+                  {label}
+                  <strong>{value}</strong>
+                </span>
+              ))}
+              <div className="queue-overall-track" title="队列完成比例">
+                <i
+                  style={{
+                    width: `${queueSummary.total ? ((queueSummary.done + queueSummary.failed + queueSummary.cancelled) / queueSummary.total) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+            {queueItems.length === 0 ? (
+              <button type="button" className="queue-empty" onClick={() => void chooseQueueInputs()}>
+                <strong>拖入多个文件，或点击这里批量添加</strong>
+                <small>每项使用独立输出目录；应用重启后会保留完成和失败状态。</small>
+              </button>
+            ) : (
+              <div className="queue-list">
+                {queueItems.map((item, index) => (
+                  <article className={`queue-item ${item.status}`} key={item.id}>
+                    <div className="queue-item-index">{String(index + 1).padStart(2, "0")}</div>
+                    <div className="queue-item-copy">
+                      <strong title={item.request.input}>
+                        {item.request.input.split(/[/\\]/).pop() || item.request.input}
+                      </strong>
+                      <small title={item.request.output}>输出：{item.request.output}</small>
+                      {item.error && <small className="queue-error">{item.error}</small>}
+                    </div>
+                    <div className="queue-item-state">
+                      <span>{queueStatusLabel(item.status)}</span>
+                      {item.status === "running" && queueCurrentId === item.id && (
+                        <div className="queue-item-progress">
+                          <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? 0) * 100))}%` }} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="queue-item-actions">
+                      <button
+                        type="button"
+                        disabled={queueRunning}
+                        onClick={() => void applyInput(item.request.input, false)}
+                      >
+                        载入
+                      </button>
+                      {(item.status === "failed" || item.status === "cancelled") && (
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={queueRunning || running}
+                          onClick={() => void runQueue([item.id])}
+                        >
+                          重试
+                        </button>
+                      )}
+                      {item.result_dir && (
+                        <button
+                          type="button"
+                          onClick={() => void openLocalPath(item.result_dir!, "队列结果目录")}
+                        >
+                          打开
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={queueRunning}
+                        onClick={() => removeQueuedItem(item.id)}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
         </section>
 
         {analysisManifest && analysisWaveform && (
