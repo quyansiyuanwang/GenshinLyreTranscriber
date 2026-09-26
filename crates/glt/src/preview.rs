@@ -5,7 +5,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use thiserror::Error;
 
 type BackendFactory =
@@ -213,6 +213,9 @@ impl PlaybackService {
 pub struct RodioBackend {
     player: Player,
     _device: MixerDeviceSink,
+    path: PathBuf,
+    volume: f32,
+    seek_offset: std::time::Duration,
 }
 
 impl RodioBackend {
@@ -230,6 +233,9 @@ impl RodioBackend {
         Ok(Self {
             player,
             _device: device,
+            path: path.to_path_buf(),
+            volume,
+            seek_offset: std::time::Duration::ZERO,
         })
     }
 }
@@ -251,6 +257,7 @@ impl PlaybackBackend for RodioBackend {
     }
 
     fn set_volume(&mut self, volume: f32) -> Result<(), PlaybackError> {
+        self.volume = volume;
         self.player.set_volume(volume);
         Ok(())
     }
@@ -260,13 +267,29 @@ impl PlaybackBackend for RodioBackend {
     }
 
     fn position(&self) -> std::time::Duration {
-        self.player.get_pos()
+        self.seek_offset + self.player.get_pos()
     }
 
     fn seek(&mut self, position: std::time::Duration) -> Result<(), PlaybackError> {
-        self.player
-            .try_seek(position)
-            .map_err(|error| PlaybackError::Backend(error.to_string()))
+        if position.is_zero() {
+            self.seek_offset = std::time::Duration::ZERO;
+            return Ok(());
+        }
+        if self.player.try_seek(position).is_ok() {
+            self.seek_offset = std::time::Duration::ZERO;
+            return Ok(());
+        }
+
+        let file =
+            File::open(&self.path).map_err(|error| PlaybackError::Decode(error.to_string()))?;
+        let source = Decoder::try_from(BufReader::new(file))
+            .map_err(|error| PlaybackError::Decode(error.to_string()))?;
+        self.player.stop();
+        self.player.set_volume(self.volume);
+        self.player.append(source.skip_duration(position));
+        self.player.pause();
+        self.seek_offset = position;
+        Ok(())
     }
 
     fn is_paused(&self) -> bool {

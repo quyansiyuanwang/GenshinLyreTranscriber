@@ -201,7 +201,7 @@ def route_stem_audio(
     partial = output.with_name(f".{output.name}.partial{output.suffix}")
     partial.unlink(missing_ok=True)
     try:
-        soundfile.write(partial, mixed, sample_rate, subtype="PCM_24")
+        soundfile.write(partial, mixed, sample_rate, subtype="PCM_16")
         os.replace(partial, output)
     except BaseException:
         partial.unlink(missing_ok=True)

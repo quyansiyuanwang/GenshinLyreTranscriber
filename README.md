@@ -75,6 +75,10 @@ pnpm --dir crates/glt-gui tauri dev
 右侧参数检查器和底部任务状态。可拖入音频、查看分析、分离四轨、切换路由试听、转录、
 编辑钢琴卷帘并导出新的 `edit-NN` 版本。源码构建和发布包均不包含可选 Demucs 运行时。
 
+安装 Demucs 时，在左侧 `SEPARATOR COMPONENT` 点击“安装组件”，选择本地
+`separator-component-windows-x64.zip`。组件会校验后安装到
+`%APPDATA%\com.quyansiyuanwang.genshinlyretranscriber\separator`，不会静默联网下载。
+
 ### 使用 CLI
 
 转录音频或视频并生成试听 WAV：

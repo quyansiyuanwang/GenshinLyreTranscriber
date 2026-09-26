@@ -59,6 +59,7 @@ def test_route_stem_audio_applies_gain_mute_and_solo(tmp_path: pathlib.Path) -> 
         2,
     )
     output = route_stem_audio(stems, plan, tmp_path / "routed.wav")
+    assert soundfile.info(output).subtype == "PCM_16"
     samples, sample_rate = soundfile.read(output, dtype="float32")
     assert sample_rate == 44_100
     assert len(samples) == 4_410

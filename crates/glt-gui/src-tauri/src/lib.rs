@@ -168,6 +168,11 @@ fn project_close(state: State<'_, GuiState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn path_is_directory(path: PathBuf) -> bool {
+    path.is_dir()
+}
+
+#[tauri::command]
 fn read_config_file(path: PathBuf) -> Result<String, String> {
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_CONFIG_FILE_BYTES {
@@ -188,17 +193,27 @@ fn write_config_file(path: PathBuf, content: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn prepare_playback_source(state: State<'_, GuiState>, input: PathBuf) -> Result<PathBuf, String> {
+async fn prepare_playback_source(
+    state: State<'_, GuiState>,
+    input: PathBuf,
+) -> Result<PathBuf, String> {
     let worker_path = state.lock_worker_path()?.clone();
-    playback_source::prepare(&input, worker_path.as_deref())
+    tauri::async_runtime::spawn_blocking(move || {
+        playback_source::prepare(&input, worker_path.as_deref())
+    })
+    .await
+    .map_err(|error| format!("playback preparation task failed: {error}"))?
 }
 
 #[tauri::command]
-fn doctor(
+async fn doctor(
     state: State<'_, GuiState>,
     worker_path: Option<PathBuf>,
 ) -> Result<desktop::DesktopDoctorInfo, String> {
-    desktop::doctor(worker_path.or(state.lock_worker_path()?.clone()))
+    let resolved = worker_path.or(state.lock_worker_path()?.clone());
+    tauri::async_runtime::spawn_blocking(move || desktop::doctor(resolved))
+        .await
+        .map_err(|error| format!("doctor task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -468,7 +483,17 @@ fn edit_export(
 }
 
 #[tauri::command]
-fn play_preview(state: State<'_, GuiState>, path: PathBuf, volume: f32) -> Result<(), String> {
+async fn play_preview(
+    state: State<'_, GuiState>,
+    path: PathBuf,
+    volume: f32,
+) -> Result<(), String> {
+    let worker_path = state.lock_worker_path()?.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        playback_source::prepare(&path, worker_path.as_deref())
+    })
+    .await
+    .map_err(|error| format!("playback preparation task failed: {error}"))??;
     let mut playback = state.lock_playback()?;
     let should_reopen = playback
         .as_ref()
@@ -486,12 +511,18 @@ fn play_preview(state: State<'_, GuiState>, path: PathBuf, volume: f32) -> Resul
 }
 
 #[tauri::command]
-fn play_ab_source(
+async fn play_ab_source(
     state: State<'_, GuiState>,
     path: PathBuf,
     volume: f32,
     position_us: u64,
 ) -> Result<(), String> {
+    let worker_path = state.lock_worker_path()?.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        playback_source::prepare(&path, worker_path.as_deref())
+    })
+    .await
+    .map_err(|error| format!("playback preparation task failed: {error}"))??;
     let position = std::time::Duration::from_micros(position_us);
     let mut playback = state.lock_playback()?;
     if let Some(service) = playback.as_mut() {
@@ -658,6 +689,7 @@ pub fn run() {
             project_add_revision,
             project_add_revision_path,
             project_close,
+            path_is_directory,
             read_config_file,
             write_config_file,
             prepare_playback_source,

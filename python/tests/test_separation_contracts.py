@@ -112,6 +112,7 @@ def test_stem_set_and_instrumental_validation(tmp_path: pathlib.Path) -> None:
         paths[role] = path
     instrumental_path = build_instrumental(paths, tmp_path / "instrumental.wav")
     assert instrumental_path.is_file()
+    assert soundfile.info(instrumental_path).subtype == "PCM_16"
 
     def artifact(role: str, path: pathlib.Path) -> StemArtifact:
         info = soundfile.info(path)

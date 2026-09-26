@@ -110,6 +110,34 @@ confidence、时长、力度和原始 MIDI 音高范围。每组条件使用 AND
 - 使用 `glt preview RESULT_DIR --volume 0..1` 重试。
 - 检查系统默认输出设备，以及 WAV 文件是否仍然存在。
 
+如果出现 `Symphonia decoder returned an error`，通常是旧结果中的 24-bit WAV（尤其是
+`instrumental.wav` 或 `routed-mix.wav`）不被内置播放器直接支持。桌面端会在播放前通过
+随包 FFmpeg 自动转换为 44.1 kHz stereo PCM 16-bit；基础包不会调用系统 FFmpeg。新分离和
+路由结果也直接输出 PCM 16-bit。旧结果无需重新转录，重新点击播放即可触发热转码缓存。
+
+## 安装或重装 Demucs 分离组件
+
+Demucs、PyTorch 和模型体积较大，不进入基础 GUI/CLI 包，也不会在后台静默下载。离线组件 ZIP
+由仓库的 `Separator component` 工作流生成，或使用本机构建目录中的：
+
+```text
+glt-local-full-separator-component-windows-x64.zip
+```
+
+从桌面端安装：
+
+1. 启动 GenshinLyreTranscriber。
+2. 左侧 `SEPARATOR COMPONENT` 点击“安装组件”；未安装时“分离与路由”区域也会显示安装入口。
+3. 选择上述 ZIP，等待显示 `Demucs 4.1.0` 和 `htdemucs`。
+
+安装目录固定为：
+
+```text
+%APPDATA%\com.quyansiyuanwang.genshinlyretranscriber\separator
+```
+
+组件包含运行时哈希、模型清单和许可证，安装时会逐项校验；损坏或被修改的 ZIP 会被拒绝。
+
 ## 兼容谱与精确谱听起来不同
 
 `score.readable.txt` 只用于人工阅读；`score.compat.txt` 使用 10ms 近似网格。

@@ -807,6 +807,10 @@ function App() {
       setError("请先载入音频或视频素材");
       return;
     }
+    if (await invoke<boolean>("path_is_directory", { path })) {
+      await openResultPath(path);
+      return;
+    }
     if (!output.trim()) {
       setError("请先选择输出目录");
       return;
@@ -872,6 +876,10 @@ function App() {
   }
 
   async function applyInput(path: string, analyze = true) {
+    if (await invoke<boolean>("path_is_directory", { path })) {
+      await openResultPath(path);
+      return;
+    }
     const operation = operationForPath(path);
     const output = request.output || (await defaultOutputFor(path));
     setRecentInputs((current) => addRecentPath(current, path));
@@ -1089,6 +1097,10 @@ function App() {
       title: "打开既有结果目录",
     });
     if (typeof selected !== "string") return;
+    await openResultPath(selected);
+  }
+
+  async function openResultPath(selected: string) {
     try {
       const opened = await invoke<ReportDocument>("read_report", { resultDir: selected });
       setReport(opened);
@@ -1104,11 +1116,20 @@ function App() {
       setNotice("既有结果已打开");
       setError(null);
     } catch (reason) {
-      setError(String(reason));
+      setError(`打开结果目录失败：${String(reason)}`);
     }
   }
 
   async function startJob(next = request, waitForCompletion = false): Promise<string | null> {
+    if (
+      (next.operation === "transcribe" || next.operation === "convert_midi") &&
+      next.input.trim() &&
+      (await invoke<boolean>("path_is_directory", { path: next.input }))
+    ) {
+      await openResultPath(next.input);
+      if (waitForCompletion) throw new Error("结果目录已作为结果打开，不进入批量转录");
+      return null;
+    }
     const validation = !next.input.trim()
       ? "请先载入音频、视频或 MIDI 素材"
       : !next.output.trim()
@@ -1236,13 +1257,17 @@ function App() {
   }
 
   async function installSeparator() {
+    if (!separatorDirectory) {
+      setError("分离组件目录尚未初始化，请稍后重试");
+      return;
+    }
     const archive = await openDialog({
       multiple: false,
       directory: false,
       title: "选择分离组件 ZIP",
       filters: [{ name: "Separator component", extensions: ["zip"] }],
     });
-    if (typeof archive !== "string" || !separatorDirectory) return;
+    if (typeof archive !== "string") return;
     try {
       const status = await invoke<SeparatorComponentStatus>("separator_component_install", {
         archive,
@@ -1278,14 +1303,11 @@ function App() {
       return;
     }
     try {
+      setNotice(`正在准备播放：${option.label}`);
       const status = await invoke<PlaybackStatus>("playback_status");
       const position = abSwitchPosition(status, positionUs);
-      const playbackPath =
-        option.primary === "original" && !/\.wav$/i.test(option.path)
-          ? await invoke<string>("prepare_playback_source", { input: option.path })
-          : option.path;
       await invoke("play_ab_source", {
-        path: playbackPath,
+        path: option.path,
         volume,
         positionUs: position,
       });
@@ -1368,6 +1390,19 @@ function App() {
       await startJob(next);
     } catch (reason) {
       setError(`应用筛选预设失败：${String(reason)}`);
+    }
+  }
+
+  async function copySeparatorPath() {
+    if (!separatorDirectory) {
+      setError("分离组件目录尚未初始化");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(separatorDirectory);
+      setNotice("Demucs 组件目录已复制");
+    } catch (reason) {
+      setError(`复制组件目录失败：${String(reason)}`);
     }
   }
 
@@ -1864,15 +1899,21 @@ function App() {
           <small>
             {separatorStatus?.installed
               ? separatorStatus.models.map((model) => model.id).join(" / ")
-              : "基础包不包含 torch；按需安装本地 ZIP"}
+              : "选择本地 separator-component ZIP；不会静默下载"}
           </small>
+          {separatorDirectory && (
+            <small className="separator-directory" title={separatorDirectory}>
+              {separatorDirectory}
+            </small>
+          )}
           <div className="project-actions">
             <button onClick={() => void installSeparator()}>
-              {separatorStatus?.installed ? "升级" : "安装"}
+              {separatorStatus?.installed ? "升级组件" : "安装组件"}
             </button>
             {separatorStatus?.installed && (
               <button onClick={() => void uninstallSeparator()}>卸载</button>
             )}
+            <button onClick={() => void copySeparatorPath()}>复制目录</button>
           </div>
         </div>
       </aside>
@@ -2296,6 +2337,18 @@ function App() {
                 {separationRunning ? "分离中" : "分离为四轨"}
               </button>
             </div>
+            {separatorStatus && !separatorStatus.installed && (
+              <div className="separator-install-callout">
+                <div>
+                  <strong>Demucs 组件未安装</strong>
+                  <span>选择本地 `separator-component-windows-x64.zip` 后即可分离四轨。</span>
+                  <small>{separatorStatus.error ?? "基础包不包含 PyTorch/Demucs 运行时。"}</small>
+                </div>
+                <button className="primary-button" onClick={() => void installSeparator()}>
+                  选择组件 ZIP
+                </button>
+              </div>
+            )}
             <div className="stem-status">
               <div>
                 <span>运行组件</span>

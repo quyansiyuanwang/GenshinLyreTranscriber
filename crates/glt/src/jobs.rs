@@ -730,12 +730,16 @@ impl WorkerClient {
         }
         #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+
             let pid = self.child.id().to_string();
-            let status = Command::new("taskkill")
+            let mut command = Command::new("taskkill");
+            command
                 .args(["/PID", pid.as_str(), "/T", "/F"])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status();
+                .creation_flags(0x0800_0000);
+            let status = command.status();
             if status.is_err() || !status.is_ok_and(|value| value.success()) {
                 self.child.kill()?;
             }

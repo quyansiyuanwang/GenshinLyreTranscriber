@@ -22,7 +22,8 @@ import {
 import type { CandidateNote, PerformanceDocument, PerformanceNote } from "./types";
 
 const CANVAS_HEIGHT = 440;
-const VELOCITY_HEIGHT = 92;
+const VELOCITY_HEIGHT = 112;
+const VELOCITY_LABEL_WIDTH = 34;
 const MIN_VIEW_US = 500_000;
 
 interface DragState {
@@ -431,18 +432,27 @@ export default function PianoRollEditor({
     context.fillStyle = "#191e21";
     context.fillRect(0, 0, width, VELOCITY_HEIGHT);
     context.strokeStyle = "#364044";
-    for (let value = 32; value <= 127; value += 32) {
+    context.font = '8px "Cascadia Mono", monospace';
+    context.textAlign = "left";
+    context.textBaseline = "middle";
+    for (const value of [0, 32, 64, 96, 127]) {
       const y = VELOCITY_HEIGHT - (value / 127) * (VELOCITY_HEIGHT - 14);
+      context.fillStyle = "#6f7c80";
+      context.fillText(String(value), 4, y);
       context.beginPath();
-      context.moveTo(0, y);
+      context.strokeStyle = value === 0 || value === 127 ? "#465257" : "#364044";
+      context.moveTo(VELOCITY_LABEL_WIDTH, y);
       context.lineTo(width, y);
       context.stroke();
     }
+    const plotWidth = Math.max(1, width - VELOCITY_LABEL_WIDTH);
     for (const note of visibleDocument.notes) {
-      const x = ((note.start_us - viewStartUs) / viewDurationUs) * width;
-      const height = (note.velocity / 127) * (VELOCITY_HEIGHT - 14);
+      const x =
+        VELOCITY_LABEL_WIDTH +
+        ((note.start_us - viewStartUs) / viewDurationUs) * plotWidth;
+      const height = Math.max(2, (note.velocity / 127) * (VELOCITY_HEIGHT - 14));
       context.fillStyle = selected.has(note.id) ? "#ffd35d" : "#6b9fc7";
-      context.fillRect(x, VELOCITY_HEIGHT - height, 2, height);
+      context.fillRect(x, VELOCITY_HEIGHT - height, Math.max(2, plotWidth / Math.max(1, visibleDocument.notes.length * 12)), height);
     }
   }, [selected, viewDurationUs, viewStartUs, visibleDocument]);
 
