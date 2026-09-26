@@ -205,8 +205,9 @@ fn doctor(
 fn start_job(
     app: AppHandle,
     state: State<'_, GuiState>,
-    mut request: DesktopJobRequest,
-) -> Result<(), String> {
+    request: DesktopJobRequest,
+) -> Result<PathBuf, String> {
+    let mut request = request;
     if request.worker_path.is_none() {
         request.worker_path = state.lock_worker_path()?.clone();
     }
@@ -216,9 +217,13 @@ fn start_job(
 fn spawn_desktop_job(
     app: AppHandle,
     state: &GuiState,
-    request: DesktopJobRequest,
+    mut request: DesktopJobRequest,
     cleanup: Option<PathBuf>,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
+    if !request.overwrite {
+        request.output = resolve_available_output(&request.output)?;
+    }
+    let resolved_output = request.output.clone();
     if state.running.swap(true, Ordering::SeqCst) {
         return Err("a job is already running".to_owned());
     }
@@ -250,7 +255,7 @@ fn spawn_desktop_job(
             let _ = fs::remove_file(path);
         }
     });
-    Ok(())
+    Ok(resolved_output)
 }
 
 #[tauri::command]
@@ -298,8 +303,12 @@ fn next_filter_output(source: PathBuf) -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn next_available_output(path: PathBuf) -> Result<PathBuf, String> {
+    resolve_available_output(&path)
+}
+
+pub(crate) fn resolve_available_output(path: &Path) -> Result<PathBuf, String> {
     if !path.exists() {
-        return Ok(path);
+        return Ok(path.to_path_buf());
     }
     let parent = path
         .parent()
@@ -402,9 +411,7 @@ fn edit_export(
     if !source_result_dir.is_dir() {
         return Err("source performance result directory does not exist".to_owned());
     }
-    if output.exists() {
-        return Err(format!("edit output already exists: {}", output.display()));
-    }
+    let output = resolve_available_output(&output)?;
     let revision_id = output
         .file_name()
         .and_then(|value| value.to_str())
@@ -623,7 +630,7 @@ pub fn run() {
             } else {
                 resource.join("glt-worker").join("glt-worker")
             };
-            if worker.is_file() {
+            if std::env::var_os("GLT_WORKER_PATH").is_none() && worker.is_file() {
                 let state = app.state::<GuiState>();
                 *state.lock_worker_path().map_err(std::io::Error::other)? = Some(worker);
             }
@@ -701,10 +708,10 @@ mod tests {
     fn available_output_versions_existing_directories() {
         let root = std::env::temp_dir().join(format!("glt-output-name-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("song-output")).unwrap();
-        let next = next_available_output(root.join("song-output")).unwrap();
+        let next = resolve_available_output(&root.join("song-output")).unwrap();
         assert_eq!(next, root.join("song-output-02"));
         fs::create_dir_all(&next).unwrap();
-        let next = next_available_output(root.join("song-output")).unwrap();
+        let next = resolve_available_output(&root.join("song-output")).unwrap();
         assert_eq!(next, root.join("song-output-03"));
         let _ = fs::remove_dir_all(root);
     }

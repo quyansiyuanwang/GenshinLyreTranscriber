@@ -91,6 +91,16 @@ export function presetFromRequest(request: JobRequest): DesktopPresetValues {
   };
 }
 
+export function presetMatchesRequest(
+  preset: DesktopPreset,
+  request: JobRequest,
+): boolean {
+  const current = presetFromRequest(request);
+  return (Object.keys(preset.values) as Array<keyof DesktopPresetValues>).every(
+    (key) => preset.values[key] === current[key],
+  );
+}
+
 export function loadCustomPresets(value: string | null): DesktopPreset[] {
   if (!value) return [];
   try {

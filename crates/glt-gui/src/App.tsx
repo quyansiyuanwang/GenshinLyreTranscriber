@@ -51,7 +51,13 @@ import { shouldLoopSeek } from "./playbackLoop";
 import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
 import { buildCustomRoutingPlan, defaultStemRoute, type StemRouteControl, type StemTarget } from "./routingPlan";
-import { BUILTIN_PRESETS, loadCustomPresets, nextCustomPresetName, presetFromRequest } from "./desktopPresets";
+import {
+  BUILTIN_PRESETS,
+  loadCustomPresets,
+  nextCustomPresetName,
+  presetFromRequest,
+  presetMatchesRequest,
+} from "./desktopPresets";
 import { estimateBpm, recentTapTimes } from "./tempoTap";
 import {
   appendQueueRequests,
@@ -291,6 +297,10 @@ function App() {
     message: string;
     kind: "info" | "error";
   } | null>(null);
+  const [operationLogOpen, setOperationLogOpen] = useState(false);
+  const [operationLog, setOperationLog] = useState<
+    Array<{ id: number; time: string; message: string; kind: "info" | "error" }>
+  >([]);
   const [clickAck, setClickAck] = useState<{ id: number; label: string } | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [report, setReport] = useState<ReportDocument | null>(null);
@@ -341,6 +351,8 @@ function App() {
     reject: (error: Error) => void;
   } | null>(null);
   const toastSequenceRef = useRef(0);
+  const operationLogSequenceRef = useRef(0);
+  const lastOperationLogRef = useRef<{ message: string; at: number } | null>(null);
   const clickAckSequenceRef = useRef(0);
   jobRequestRef.current = request;
   queueItemsRef.current = queueItems;
@@ -350,8 +362,28 @@ function App() {
     parentId: string | null;
   } | null>(null);
 
+  function appendOperationLog(message: string, kind: "info" | "error") {
+    const now = Date.now();
+    const previous = lastOperationLogRef.current;
+    if (previous?.message === message && now - previous.at < 600) return;
+    lastOperationLogRef.current = { message, at: now };
+    operationLogSequenceRef.current += 1;
+    setOperationLog((current) =>
+      [
+        {
+          id: operationLogSequenceRef.current,
+          time: new Date(now).toLocaleTimeString(),
+          message,
+          kind,
+        },
+        ...current,
+      ].slice(0, 40),
+    );
+  }
+
   function setNotice(message: string) {
     setNoticeState(message);
+    appendOperationLog(message, "info");
     toastSequenceRef.current += 1;
     setToast({ id: toastSequenceRef.current, message, kind: "info" });
   }
@@ -359,6 +391,7 @@ function App() {
   function setError(message: string | null) {
     setErrorState(message);
     if (!message) return;
+    appendOperationLog(message, "error");
     toastSequenceRef.current += 1;
     setToast({ id: toastSequenceRef.current, message, kind: "error" });
   }
@@ -396,6 +429,10 @@ function App() {
 
   const counts = useMemo(() => Object.entries(report?.counts ?? {}), [report]);
   const queueSummary = useMemo(() => queueCounts(queueItems), [queueItems]);
+  const desktopPresets = useMemo(
+    () => [...BUILTIN_PRESETS, ...customPresets],
+    [customPresets],
+  );
   const filterPreview = useMemo(
     () => liveFilterStats(candidateNotes, filterRules),
     [candidateNotes, filterRules],
@@ -766,7 +803,18 @@ function App() {
   }, []);
 
   async function startAnalysis(path: string, output: string) {
-    if (isMidi(path)) return;
+    if (!path.trim()) {
+      setError("请先载入音频或视频素材");
+      return;
+    }
+    if (!output.trim()) {
+      setError("请先选择输出目录");
+      return;
+    }
+    if (isMidi(path)) {
+      setError("MIDI 输入无需音频分析，可直接开始转换");
+      return;
+    }
     setNotice("正在分析当前范围");
     const directory = await join(output, "analysis");
     setAnalysisRunning(true);
@@ -1061,6 +1109,16 @@ function App() {
   }
 
   async function startJob(next = request, waitForCompletion = false): Promise<string | null> {
+    const validation = !next.input.trim()
+      ? "请先载入音频、视频或 MIDI 素材"
+      : !next.output.trim()
+        ? "请先选择输出目录"
+        : null;
+    if (validation) {
+      setError(validation);
+      if (waitForCompletion) throw new Error(validation);
+      return null;
+    }
     setError(null);
     setWarnings([]);
     setResult(null);
@@ -1085,7 +1143,12 @@ function App() {
           setNotice(`输出目录已存在，自动改用 ${available.split(/[/\\]/).pop()}`);
         }
       }
-      await invoke("start_job", { request: effective });
+      const startedOutput = await invoke<string>("start_job", { request: effective });
+      if (startedOutput !== effective.output) {
+        effective = { ...effective, output: startedOutput };
+        setRequest(effective);
+        setNotice(`输出目录已自动编号为 ${startedOutput.split(/[/\\]/).pop()}`);
+      }
       if (completion) await completion;
       return effective.output;
     } catch (reason) {
@@ -1641,19 +1704,19 @@ function App() {
             <summary>操作</summary>
             <div className="daw-menu-popover">
               <button
-                disabled={!request.input || !request.output}
+                disabled={running || analysisRunning}
                 onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void startAnalysis(request.input, request.output); }}
               >
                 分析当前范围
               </button>
               <button
-                disabled={!request.input || !request.output}
+                disabled={running}
                 onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void startJob({ ...request }); }}
               >
                 转录当前范围
               </button>
               <button
-                disabled={!request.input || separationRunning || !separatorStatus?.installed}
+                disabled={running || separationRunning}
                 onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void startSeparation(); }}
               >
                 分离为四轨
@@ -1697,7 +1760,7 @@ function App() {
             <summary>帮助</summary>
             <div className="daw-menu-popover">
               <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setNotice("波形拖动可选择区间；右侧起止秒可精确输入"); }}>选区操作提示</button>
-              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setNotice("GLT Lyre Studio · local-only desktop workspace"); }}>关于本机版本</button>
+              <button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setNotice(doctor ? `GLT ${doctor.application_version} · Worker ${doctor.worker_version} · ${doctor.model_version}` : "Worker 信息尚未就绪"); }}>关于本机版本</button>
             </div>
           </details>
         </nav>
@@ -2220,8 +2283,14 @@ function App() {
                 onClick={() => void startSeparation()}
                 disabled={
                   separationRunning ||
-                  !separatorStatus?.installed ||
-                  separatorStatus.models.length === 0
+                  (separatorStatus?.installed === true && separatorStatus.models.length === 0)
+                }
+                title={
+                  !request.input
+                    ? "请先载入素材"
+                    : !separatorStatus?.installed
+                      ? "请先安装 Demucs 分离组件"
+                      : "分离为 vocals / drums / bass / other"
                 }
               >
                 {separationRunning ? "分离中" : "分离为四轨"}
@@ -2373,11 +2442,14 @@ function App() {
           <div className="desktop-preset-bar">
             <span>参数预设</span>
             <div>
-              {[...BUILTIN_PRESETS, ...customPresets].map((preset) => (
-                <div className="desktop-preset-card" key={preset.id}>
+              {desktopPresets.map((preset) => {
+                const active = presetMatchesRequest(preset, request);
+                return (
+                <div className={`desktop-preset-card ${active ? "active" : ""}`} key={preset.id}>
                   <button
                     type="button"
                     title={preset.builtin ? "内置预设" : "自定义预设"}
+                    aria-pressed={active}
                     onClick={() => applyDesktopPreset(preset)}
                   >
                     {preset.name}
@@ -2397,7 +2469,8 @@ function App() {
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
               <button type="button" className="save" onClick={saveDesktopPreset}>
                 + 保存当前
               </button>
@@ -2709,6 +2782,39 @@ function App() {
               style={{ width: `${fraction === null ? 32 : fraction * 100}%` }}
             />
           </div>
+          <div className={`operation-console ${operationLogOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="operation-console-toggle"
+              aria-expanded={operationLogOpen}
+              onClick={() => setOperationLogOpen((value) => !value)}
+            >
+              操作记录
+              <span>{operationLog.length}</span>
+            </button>
+            {operationLogOpen && (
+              <div className="operation-console-popover">
+                <header>
+                  <strong>操作记录</strong>
+                  <button type="button" onClick={() => setOperationLog([])}>
+                    清空
+                  </button>
+                </header>
+                {operationLog.length === 0 ? (
+                  <p>尚无操作。每次载入、分析、转换、筛选和错误都会记录在这里。</p>
+                ) : (
+                  <ol>
+                    {operationLog.map((entry) => (
+                      <li className={entry.kind} key={entry.id}>
+                        <time>{entry.time}</time>
+                        <span>{entry.message}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            )}
+          </div>
           {running ? (
             <button className="danger-button" onClick={() => void cancelJob()}>
               取消任务
@@ -2716,7 +2822,8 @@ function App() {
           ) : (
             <button
               className="primary-button"
-              disabled={!request.input || !request.output}
+              disabled={running}
+              title={!request.input ? "请先载入素材" : !request.output ? "请先选择输出目录" : "开始转录"}
               onClick={() => void startJob()}
             >
               开始转换

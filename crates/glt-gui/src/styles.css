@@ -1392,7 +1392,7 @@ select {
   z-index: 15;
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: minmax(180px, auto) minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(180px, auto) minmax(160px, 1fr) auto auto;
   align-items: center;
   gap: 9px;
   min-height: 43px;
@@ -1400,6 +1400,107 @@ select {
   border-top: 1px solid #15191b;
   background: linear-gradient(#353d41, #2a3134);
   box-shadow: 0 -2px 8px rgb(0 0 0 / 24%), inset 0 1px rgb(255 255 255 / 5%);
+}
+
+.operation-console {
+  position: relative;
+}
+
+.operation-console-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  padding: 0 9px;
+  border: 1px solid #4c595e;
+  color: #c7d2d5;
+  background: linear-gradient(#303a3e, #252d30);
+  font-size: 8px;
+}
+
+.operation-console-toggle span {
+  min-width: 16px;
+  padding: 1px 4px;
+  border: 1px solid #4b5d64;
+  color: #9fc8d7;
+  background: #1d2528;
+  text-align: center;
+}
+
+.operation-console.open .operation-console-toggle {
+  border-color: #b56c21;
+  color: #ffe4bd;
+}
+
+.operation-console-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 120;
+  width: min(460px, calc(100vw - 250px));
+  max-height: 310px;
+  overflow: hidden;
+  border: 1px solid #59666b;
+  background: rgb(28 34 37 / 98%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 48%);
+}
+
+.operation-console-popover header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid #3b464a;
+  background: #252d30;
+}
+
+.operation-console-popover header strong {
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.operation-console-popover header button {
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid #4d595e;
+  color: #b8c3c5;
+  background: #30383b;
+  font-size: 8px;
+}
+
+.operation-console-popover p {
+  margin: 0;
+  padding: 12px;
+  color: #899598;
+  font-size: 8px;
+}
+
+.operation-console-popover ol {
+  max-height: 265px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.operation-console-popover li {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 7px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #303a3e;
+  color: #cbd5d6;
+  font-size: 8px;
+}
+
+.operation-console-popover li.error {
+  color: #ffc7c1;
+  background: rgb(120 49 44 / 18%);
+}
+
+.operation-console-popover time {
+  color: #778589;
+  font-family: "Cascadia Mono", "Consolas", monospace;
 }
 
 .progress-copy {
@@ -2604,7 +2705,7 @@ select {
   }
 
   .run-bar {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
   }
 
   .progress-track {
@@ -2715,6 +2816,16 @@ select {
 .desktop-preset-bar > div > button:hover {
   color: #fff1dc;
   background: #3a4448;
+}
+
+.desktop-preset-card.active {
+  border-color: #c87928;
+  box-shadow: inset 0 -2px #e69036;
+}
+
+.desktop-preset-card.active > button:first-child {
+  color: #fff3df;
+  background: linear-gradient(#67441f, #493019);
 }
 
 .portable-config-actions {
