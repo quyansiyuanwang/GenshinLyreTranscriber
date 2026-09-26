@@ -1,0 +1,9 @@
+{
+  "format_version": 1,
+  "fixture": "synthetic-steps-v1",
+  "baseline_f1": 1.0,
+  "allowed_absolute_drop": 0.02,
+  "minimum_f1": 0.98,
+  "onset_tolerance_us": 120000,
+  "source": "self-generated sine-note WAV; redistributable"
+}

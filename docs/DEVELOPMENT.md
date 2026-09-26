@@ -90,6 +90,17 @@ uv run --directory python pytest
 
 CI 还会检出固定提交的参考播放器，并运行兼容谱解析与虚拟键盘调度验证。
 
+发布构建可运行合成谱面质量回归。当前基线 F1 为 `1.0`，允许绝对下降不超过 `0.02`：
+
+```powershell
+uv run --directory python python -m glt_core.tools.quality_regression `
+  --glt target\release\glt.exe `
+  --minimum-f1 0.98
+```
+
+基线定义在 `tests/fixtures/quality-baseline-v1.json`。该固定素材由工具自行生成正弦音符，
+不依赖用户媒体，可直接再分发。
+
 ## 媒体输入与 FFmpeg
 
 音频/视频先由 ffprobe 解析音轨，再由 FFmpeg 用参数数组执行选择、裁剪和重采样。代码不通过
@@ -122,6 +133,20 @@ Windows 11、CPython 3.12.12、9.1 秒单声道短音频的参考测量：
 | 峰值工作集 | 191.73-192.99 MiB |
 | worker onedir 大小 | 293.76 MiB |
 | FFmpeg `bin` 目录大小 | 175.20 MiB |
+
+10 分钟循环 Instrumental 的真实 CLI 回归（2026-09-26，本机参考）：
+
+| 指标 | 结果 |
+|---|---:|
+| 输入时长 | 600.000 秒 |
+| 完整进程耗时 | 40.249 秒 |
+| worker 上报耗时 | 31.784 秒 |
+| 15 秒分段 | 40 |
+| 峰值工作集 | 735.86 MiB |
+| 精确重复音符 | 0 |
+
+性能门禁以本机回归为准：完整进程不超过 120 秒、峰值工作集不超过 1024 MiB、重复音符为 0；
+不同机器不把该数值当作跨平台承诺。
 
 不同 CPU、磁盘和杀毒软件会影响测量，结果不是跨机器性能保证。
 
