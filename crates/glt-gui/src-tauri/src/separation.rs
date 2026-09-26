@@ -234,7 +234,19 @@ pub fn separator_component_status(directory: PathBuf) -> SeparatorComponentStatu
 }
 
 #[tauri::command]
-pub fn separator_component_install(
+pub async fn separator_component_install(
+    archive: PathBuf,
+    target: PathBuf,
+    overwrite: bool,
+) -> Result<SeparatorComponentStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        install_separator_component(archive, target, overwrite)
+    })
+    .await
+    .map_err(|error| format!("separator component install task failed: {error}"))?
+}
+
+fn install_separator_component(
     archive: PathBuf,
     target: PathBuf,
     overwrite: bool,
@@ -269,7 +281,7 @@ pub fn separator_component_install(
             }
             fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
         }
-        fs::rename(&staging, &target).map_err(|error| error.to_string())?;
+        move_directory(&staging, &target)?;
         Ok(())
     })();
     if result.is_err() {
@@ -277,6 +289,40 @@ pub fn separator_component_install(
     }
     result?;
     Ok(separator_component_status(target))
+}
+
+fn move_directory(source: &Path, target: &Path) -> Result<(), String> {
+    if fs::rename(source, target).is_ok() {
+        return Ok(());
+    }
+    if target.exists() {
+        fs::remove_dir_all(target).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = copy_directory(source, target) {
+        let _ = fs::remove_dir_all(target);
+        return Err(error);
+    }
+    fs::remove_dir_all(source).map_err(|error| error.to_string())
+}
+
+fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let destination = target.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_dir() {
+            copy_directory(&entry.path(), &destination)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
+        } else {
+            return Err(format!(
+                "separator component contains an unsupported file: {}",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -481,7 +527,7 @@ mod tests {
         writer.finish().unwrap();
 
         let target = root.join("installed");
-        let installed = separator_component_install(archive, target.clone(), false).unwrap();
+        let installed = install_separator_component(archive, target.clone(), false).unwrap();
         assert!(installed.installed);
         assert_eq!(installed.models.len(), 1);
         separator_component_uninstall(target.clone()).unwrap();
