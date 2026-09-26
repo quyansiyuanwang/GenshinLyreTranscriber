@@ -2008,6 +2008,116 @@ select {
   gap: 9px;
 }
 
+.ab-compare-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.ab-compare-heading span {
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.ab-compare-heading strong {
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.ab-compare-heading > small {
+  color: var(--selection);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 10px;
+}
+
+.ab-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.ab-slots button {
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  min-height: 56px;
+  gap: 1px 7px;
+  padding: 6px 8px;
+  border: 1px solid #465155;
+  color: #cbd3d3;
+  background: linear-gradient(#30383c, #252c2f);
+  text-align: left;
+}
+
+.ab-slots button:hover:not(:disabled) {
+  border-color: #6b767a;
+  color: #fff3e2;
+  background: linear-gradient(#3d474b, #2c3438);
+}
+
+.ab-slots button.active.original {
+  border-color: #5ba0c4;
+  background: linear-gradient(#345b70, #223f50);
+  box-shadow: inset 3px 0 #67b7df;
+}
+
+.ab-slots button.active.mapped {
+  border-color: #c37b32;
+  background: linear-gradient(#68451f, #493017);
+  box-shadow: inset 3px 0 #f3a347;
+}
+
+.ab-slots button b {
+  grid-row: 1 / span 2;
+  color: #f0b76f;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 18px;
+  text-align: center;
+}
+
+.ab-slots button span {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ab-slots button small {
+  color: var(--dim);
+  font-size: 7px;
+}
+
+.ab-extra-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+.ab-extra-sources > span {
+  margin-right: 3px;
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.ab-extra-sources button {
+  min-height: 23px;
+  padding: 0 7px;
+  border: 1px solid #465155;
+  color: #aeb8ba;
+  background: #293135;
+  font-size: 8px;
+}
+
+.ab-extra-sources button.active {
+  border-color: #a96a2a;
+  color: #fff1dc;
+  background: #643d1a;
+}
+
 .preview-card strong {
   display: block;
   margin-top: 3px;

@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
 mod analysis;
+mod playback_source;
 mod project;
 mod separation;
 
@@ -184,6 +185,12 @@ fn write_config_file(path: PathBuf, content: String) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     fs::write(path, content).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn prepare_playback_source(state: State<'_, GuiState>, input: PathBuf) -> Result<PathBuf, String> {
+    let worker_path = state.lock_worker_path()?.clone();
+    playback_source::prepare(&input, worker_path.as_deref())
 }
 
 #[tauri::command]
@@ -616,6 +623,7 @@ pub fn run() {
             project_close,
             read_config_file,
             write_config_file,
+            prepare_playback_source,
             doctor,
             start_job,
             cancel_job,

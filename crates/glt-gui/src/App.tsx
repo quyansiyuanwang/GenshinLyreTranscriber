@@ -34,6 +34,12 @@ import type {
   WaveformPayload,
 } from "./types";
 import AnalysisView from "./AnalysisView";
+import {
+  abSwitchPosition,
+  findAbSource,
+  missingAbSourceMessage,
+  type AbSourceOption,
+} from "./abCompare";
 import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import FilterRangeSlider from "./FilterRangeSlider";
 import MappingEditor from "./MappingEditor";
@@ -376,16 +382,17 @@ function App() {
     () => liveFilterStats(candidateNotes, filterRules),
     [candidateNotes, filterRules],
   );
-  const abOptions = useMemo(() => {
-    const options = [
+  const abOptions = useMemo<AbSourceOption[]>(() => {
+    const options: AbSourceOption[] = [
       {
         id: "preview",
         label: "合成",
         path: previewArtifact && result
           ? `${result.result.output_dir}\\${previewArtifact.relative_path}`
           : null,
+        primary: "mapped",
       },
-      { id: "original", label: "原音", path: request.input || null },
+      { id: "original", label: "原音", path: request.input || null, primary: "original" },
     ];
     for (const artifact of result?.result.artifacts ?? []) {
       if (artifact.kind === "instrumental_wav" || artifact.kind === "routed_audio") {
@@ -393,6 +400,7 @@ function App() {
           id: artifact.kind,
           label: artifact.kind === "instrumental_wav" ? "Instrumental" : "路由",
           path: `${result!.result.output_dir}\\${artifact.relative_path}`,
+          primary: "extra",
         });
       }
     }
@@ -402,20 +410,25 @@ function App() {
           id: `stem-${stem.role}`,
           label: stemLabel(stem.role),
           path: `${parentPath(stemSetPath)}\\${stem.relative_path}`,
+          primary: "extra",
         });
       }
       options.push({
         id: "instrumental",
         label: "Instrumental",
         path: `${parentPath(stemSetPath)}\\${stemSet.instrumental.relative_path}`,
+        primary: "extra",
       });
     }
     if (routedAudioPath) {
-      options.push({ id: "routed_audio", label: "路由", path: routedAudioPath });
+      options.push({ id: "routed_audio", label: "路由", path: routedAudioPath, primary: "extra" });
     }
     return options;
   }, [previewArtifact, request.input, result, routedAudioPath, stemSet, stemSetPath]);
   const hasActiveAbSource = abOptions.some((option) => option.id === abSource && option.path);
+  const abOriginal = abOptions.find((option) => option.primary === "original");
+  const abMapped = abOptions.find((option) => option.primary === "mapped");
+  const abExtras = abOptions.filter((option) => option.primary === "extra");
 
   useEffect(() => {
     try {
@@ -1157,16 +1170,20 @@ function App() {
   }
 
   async function switchAbSource(sourceId: string) {
-    const option = abOptions.find((entry) => entry.id === sourceId);
+    const option = findAbSource(abOptions, sourceId);
     if (!option?.path) {
-      setPlaybackError(`没有可播放的${option?.label ?? "音频"}来源`);
+      setPlaybackError(missingAbSourceMessage(option));
       return;
     }
     try {
       const status = await invoke<PlaybackStatus>("playback_status");
-      const position = status.available ? status.position_us : positionUs;
+      const position = abSwitchPosition(status, positionUs);
+      const playbackPath =
+        option.primary === "original" && !/\.wav$/i.test(option.path)
+          ? await invoke<string>("prepare_playback_source", { input: option.path })
+          : option.path;
       await invoke("play_ab_source", {
-        path: option.path,
+        path: playbackPath,
         volume,
         positionUs: position,
       });
@@ -2859,23 +2876,54 @@ function App() {
 
             <div className="result-grid">
               <div className="preview-card">
-                <div>
-                  <span>合成试听</span>
-                  <strong>{previewArtifact ? "preview.wav 已生成" : "没有 preview.wav"}</strong>
+                <div className="ab-compare-heading">
+                  <div>
+                    <span>A/B 同轨对比</span>
+                    <strong>{previewArtifact ? "原音与映射试听共用播放位置" : "缺少 preview.wav，仅可播放原音"}</strong>
+                  </div>
+                  <small>{formatClock(positionUs)}</small>
                 </div>
+                <div className="ab-slots">
+                  <button
+                    type="button"
+                    className={abSource === "original" ? "active original" : ""}
+                    disabled={!abOriginal?.path}
+                    onClick={() => void switchAbSource("original")}
+                  >
+                    <b>A</b>
+                    <span>原始音频</span>
+                    <small>{abOriginal?.path ? "参考素材" : "来源缺失"}</small>
+                  </button>
+                  <button
+                    type="button"
+                    className={abSource === "preview" ? "active mapped" : ""}
+                    disabled={!abMapped?.path}
+                    onClick={() => void switchAbSource("preview")}
+                  >
+                    <b>B</b>
+                    <span>映射试听</span>
+                    <small>{abMapped?.path ? "preview.wav" : "没有 preview.wav"}</small>
+                  </button>
+                </div>
+                {abExtras.length > 0 && (
+                  <div className="ab-extra-sources">
+                    <span>附加来源</span>
+                    {abExtras.map((option) => (
+                      <button
+                        type="button"
+                        key={option.id}
+                        className={abSource === option.id ? "active" : ""}
+                        disabled={!option.path}
+                        onClick={() => void switchAbSource(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="playback-controls">
-                  {abOptions.map((option) => (
-                    <button
-                      key={option.id}
-                      className={abSource === option.id ? "primary-button" : undefined}
-                      onClick={() => void switchAbSource(option.id)}
-                      disabled={!option.path}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
                   <button onClick={() => void playPreview()} disabled={!previewArtifact}>
-                    播放当前
+                    重播 B
                   </button>
                   <button onClick={() => void pausePreview()} disabled={!hasActiveAbSource}>
                     暂停
