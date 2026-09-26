@@ -61,6 +61,18 @@ export const BUILTIN_PRESETS: DesktopPreset[] = [
     builtin: true,
     values: { ...base, cleaning_profile: "strict", min_confidence: 0.5, min_duration_ms: 150 },
   },
+  {
+    id: "builtin-melody-recall",
+    name: "主旋律增强",
+    builtin: true,
+    values: {
+      ...base,
+      cleaning_profile: "solo",
+      min_confidence: 0.15,
+      min_duration_ms: 40,
+      max_voices: 3,
+    },
+  },
 ];
 
 export function presetFromRequest(request: JobRequest): DesktopPresetValues {
