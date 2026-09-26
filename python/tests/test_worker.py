@@ -586,9 +586,7 @@ def test_worker_mapping_config_accepts_profile_and_custom_layout() -> None:
         {
             "transpose": 12,
             "mapping_profile": "custom-c",
-            "mapping_keys": [
-                {"key": entry.key, "pitch": entry.pitch} for entry in layout.keys
-            ],
+            "mapping_keys": [{"key": entry.key, "pitch": entry.pitch} for entry in layout.keys],
         }
     )
     assert config.layout.profile == "custom-c"
