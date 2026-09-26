@@ -8,7 +8,6 @@ import json
 import os
 import pathlib
 import shutil
-import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -114,7 +113,9 @@ def separate_demucs(
         arguments = _demucs_arguments(temporary_root, model_id, device, source)
         with (
             _demucs_environment(model_paths, offline=offline),
-            contextlib.redirect_stdout(sys.stderr),
+            open(os.devnull, "w", encoding="utf-8") as sink,
+            contextlib.redirect_stdout(sink),
+            contextlib.redirect_stderr(sink),
         ):
             try:
                 demucs_main(arguments)

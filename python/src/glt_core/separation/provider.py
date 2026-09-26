@@ -7,6 +7,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -72,6 +73,14 @@ def run_component(
         process.kill()
         raise SeparationError("separator stdout is unavailable")
     result_payload: dict[str, object] | None = None
+    stderr_chunks: list[str] = []
+
+    def drain_stderr() -> None:
+        if process.stderr is not None:
+            stderr_chunks.append(process.stderr.read())
+
+    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+    stderr_thread.start()
     try:
         for line in process.stdout:
             if cancelled is not None and cancelled():
@@ -92,7 +101,8 @@ def run_component(
             elif payload.get("type") == "result":
                 result_payload = payload
         return_code = process.wait()
-        stderr = process.stderr.read() if process.stderr is not None else ""
+        stderr_thread.join(timeout=1)
+        stderr = "".join(stderr_chunks)
         if return_code != 0:
             raise SeparationError(stderr.strip() or f"separator exited with {return_code}")
         if result_payload is None:
