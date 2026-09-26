@@ -9,9 +9,11 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::config::ConfigDocument;
 use crate::jobs::{
     DEFAULT_CANCEL_GRACE, DEFAULT_READY_TIMEOUT, DEFAULT_TERMINAL_TIMEOUT, FilterPreset,
     FilterSpec, Operation, ResultPayload, StartOptions, StartRequest, Timing, Transpose,
@@ -41,6 +43,8 @@ enum Command {
     Tui,
     /// Check bundled worker and model resources.
     Doctor(DoctorArgs),
+    /// Validate, initialize or display a versioned GLT config.
+    Config(ConfigArgs),
     /// Transcribe a local audio or video input.
     Transcribe(TranscribeArgs),
     /// Convert a local MIDI file through the same mapping pipeline.
@@ -61,6 +65,41 @@ struct DoctorArgs {
     /// Emit a machine-readable result.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    command: ConfigCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    /// Create a default glt-config-v1 JSON file.
+    Init {
+        /// Destination JSON path.
+        #[arg(long)]
+        output: PathBuf,
+        /// Configuration display name.
+        #[arg(long, default_value = "默认配置")]
+        name: String,
+        /// Replace an existing config file.
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Validate a glt-config-v1 JSON file.
+    Validate {
+        /// Config file to validate.
+        file: PathBuf,
+        /// Emit a machine-readable result.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a normalized glt-config-v1 JSON file.
+    Show {
+        /// Config file to display.
+        file: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -133,7 +172,24 @@ impl From<TransposeArg> for Transpose {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+fn timing_arg(value: Timing) -> TimingArg {
+    match value {
+        Timing::Auto => TimingArg::Auto,
+        Timing::Preserve => TimingArg::Preserve,
+        Timing::Straight => TimingArg::Straight,
+        Timing::Triplet => TimingArg::Triplet,
+    }
+}
+
+fn transpose_arg(value: Transpose) -> TransposeArg {
+    match value {
+        Transpose::Auto(_) => TransposeArg::Auto,
+        Transpose::Semitones(value) => TransposeArg::Semitones(value),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum CleaningProfile {
     Auto,
     Solo,
@@ -142,7 +198,7 @@ pub(crate) enum CleaningProfile {
 }
 
 impl CleaningProfile {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
             Self::Solo => "solo",
@@ -215,14 +271,15 @@ impl CleaningOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ArrangementProfile {
     Balanced,
     Off,
 }
 
 impl ArrangementProfile {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Balanced => "balanced",
             Self::Off => "off",
@@ -285,14 +342,17 @@ struct TranscribeArgs {
     #[arg(long)]
     output: PathBuf,
     /// Timing strategy.
-    #[arg(long, value_enum, default_value = "auto")]
-    timing: TimingArg,
+    #[arg(long, value_enum)]
+    timing: Option<TimingArg>,
     /// Explicit BPM override.
     #[arg(long)]
     bpm: Option<f64>,
     /// Transpose selection: auto or semitones.
-    #[arg(long, default_value = "auto")]
-    transpose: TransposeArg,
+    #[arg(long)]
+    transpose: Option<TransposeArg>,
+    /// Load parameters and mapping from glt-config-v1 JSON.
+    #[arg(long)]
+    config: Option<PathBuf>,
     /// Zero-based media audio track.
     #[arg(long)]
     audio_track: Option<u32>,
@@ -315,17 +375,20 @@ struct TranscribeArgs {
     #[arg(long)]
     retrigger_gap_ms: Option<u64>,
     /// Cleaning profile: auto, solo, mix or strict.
-    #[arg(long, value_enum, default_value = "auto")]
-    cleaning_profile: CleaningProfile,
+    #[arg(long, value_enum)]
+    cleaning_profile: Option<CleaningProfile>,
     /// Playability arrangement: balanced or off.
-    #[arg(long, value_enum, default_value = "balanced")]
-    arrangement: ArrangementProfile,
+    #[arg(long, value_enum)]
+    arrangement: Option<ArrangementProfile>,
     /// Merge onsets separated by at most this many milliseconds.
-    #[arg(long, default_value_t = 150)]
-    onset_window_ms: u64,
+    #[arg(long)]
+    onset_window_ms: Option<u64>,
     /// Maximum simultaneous voices kept in one arranged event.
-    #[arg(long, default_value_t = 2)]
-    max_voices: u8,
+    #[arg(long)]
+    max_voices: Option<u8>,
+    /// Disable preview WAV even when enabled by a config file.
+    #[arg(long, conflicts_with = "preview_wav")]
+    no_preview_wav: bool,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -345,11 +408,14 @@ struct ConvertMidiArgs {
     #[arg(long)]
     output: PathBuf,
     /// Timing strategy.
-    #[arg(long, value_enum, default_value = "preserve")]
-    timing: TimingArg,
+    #[arg(long, value_enum)]
+    timing: Option<TimingArg>,
     /// Transpose selection: auto or semitones.
-    #[arg(long, default_value = "auto")]
-    transpose: TransposeArg,
+    #[arg(long)]
+    transpose: Option<TransposeArg>,
+    /// Load parameters and mapping from glt-config-v1 JSON.
+    #[arg(long)]
+    config: Option<PathBuf>,
     /// Request a synthesized preview WAV.
     #[arg(long)]
     preview_wav: bool,
@@ -363,17 +429,20 @@ struct ConvertMidiArgs {
     #[arg(long)]
     retrigger_gap_ms: Option<u64>,
     /// Cleaning profile: auto, solo, mix or strict.
-    #[arg(long, value_enum, default_value = "auto")]
-    cleaning_profile: CleaningProfile,
+    #[arg(long, value_enum)]
+    cleaning_profile: Option<CleaningProfile>,
     /// Playability arrangement: balanced or off.
-    #[arg(long, value_enum, default_value = "balanced")]
-    arrangement: ArrangementProfile,
+    #[arg(long, value_enum)]
+    arrangement: Option<ArrangementProfile>,
     /// Merge onsets separated by at most this many milliseconds.
-    #[arg(long, default_value_t = 150)]
-    onset_window_ms: u64,
+    #[arg(long)]
+    onset_window_ms: Option<u64>,
     /// Maximum simultaneous voices kept in one arranged event.
-    #[arg(long, default_value_t = 2)]
-    max_voices: u8,
+    #[arg(long)]
+    max_voices: Option<u8>,
+    /// Disable preview WAV even when enabled by a config file.
+    #[arg(long, conflicts_with = "preview_wav")]
+    no_preview_wav: bool,
     /// Allow replacing files previously created by this tool.
     #[arg(long)]
     overwrite: bool,
@@ -501,12 +570,60 @@ pub fn run() -> i32 {
 fn execute(cli: Cli) -> Result<(), CliError> {
     match cli.command {
         Some(Command::Doctor(args)) => run_doctor(args),
+        Some(Command::Config(args)) => run_config(args),
         Some(Command::Transcribe(args)) => run_transcribe(args),
         Some(Command::ConvertMidi(args)) => run_convert_midi(args),
         Some(Command::Preview(args)) => run_preview(args),
         Some(Command::Filter(args)) => run_filter(args),
         Some(Command::Performance(args)) => run_performance(args),
         Some(Command::Tui) | None => crate::tui::run(),
+    }
+}
+
+fn run_config(args: ConfigArgs) -> Result<(), CliError> {
+    match args.command {
+        ConfigCommand::Init {
+            output,
+            name,
+            overwrite,
+        } => {
+            let document = ConfigDocument {
+                name,
+                ..ConfigDocument::default()
+            };
+            document.save(&output, overwrite)?;
+            println!("config: {}", output.display());
+            Ok(())
+        }
+        ConfigCommand::Validate { file, json } => {
+            let document = ConfigDocument::load(&file)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "status": "ok",
+                        "name": document.name,
+                        "mapping_keys": document.mapping.keys.len(),
+                    }))
+                    .expect("JSON serialization cannot fail")
+                );
+            } else {
+                println!(
+                    "valid: {} ({} mapping keys)",
+                    document.name,
+                    document.mapping.keys.len()
+                );
+            }
+            Ok(())
+        }
+        ConfigCommand::Show { file } => {
+            let document = ConfigDocument::load(&file)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&document).expect("JSON serialization cannot fail")
+            );
+            Ok(())
+        }
     }
 }
 
@@ -597,24 +714,59 @@ fn run_preview(args: PreviewArgs) -> Result<(), CliError> {
 }
 
 fn run_transcribe(args: TranscribeArgs) -> Result<(), CliError> {
-    let options = build_options(
-        args.timing,
-        args.bpm,
-        args.transpose,
+    let config = args
+        .config
+        .as_deref()
+        .map(ConfigDocument::load)
+        .transpose()?;
+    let parameters = config.as_ref().map(|document| &document.parameters);
+    let timing = args
+        .timing
+        .unwrap_or_else(|| timing_arg(parameters.map_or(Timing::Auto, |value| value.timing)));
+    let transpose = args.transpose.unwrap_or_else(|| {
+        parameters.map_or(TransposeArg::Auto, |value| {
+            transpose_arg(value.transpose.clone())
+        })
+    });
+    let mut options = build_options(
+        timing,
+        args.bpm.or_else(|| parameters.and_then(|value| value.bpm)),
+        transpose,
         args.audio_track,
         args.start_seconds,
         args.end_seconds,
-        args.preview_wav,
+        if args.no_preview_wav {
+            false
+        } else {
+            args.preview_wav || parameters.is_some_and(|value| value.preview_wav)
+        },
         args.overwrite,
     )?;
+    if let Some(document) = &config {
+        document.apply_to_options(&mut options);
+    }
     let cleaning = build_cleaning_options(
-        args.cleaning_profile,
-        args.min_confidence,
-        args.min_duration_ms,
-        args.retrigger_gap_ms,
+        args.cleaning_profile.unwrap_or_else(|| {
+            parameters.map_or(CleaningProfile::Auto, |value| value.cleaning_profile)
+        }),
+        args.min_confidence
+            .or_else(|| parameters.and_then(|value| value.min_confidence)),
+        args.min_duration_ms
+            .or_else(|| parameters.and_then(|value| value.min_duration_ms)),
+        args.retrigger_gap_ms
+            .or_else(|| parameters.and_then(|value| value.retrigger_gap_ms)),
     )?;
-    let arrangement =
-        build_arrangement_options(args.arrangement, args.onset_window_ms, args.max_voices)?;
+    let arrangement = build_arrangement_options(
+        args.arrangement.unwrap_or_else(|| {
+            parameters.map_or(ArrangementProfile::Balanced, |value| value.arrangement)
+        }),
+        args.onset_window_ms
+            .or_else(|| parameters.map(|value| value.onset_window_ms))
+            .unwrap_or(150),
+        args.max_voices
+            .or_else(|| parameters.map(|value| value.max_voices))
+            .unwrap_or(2),
+    )?;
     run_job(
         args.worker,
         args.input,
@@ -628,24 +780,59 @@ fn run_transcribe(args: TranscribeArgs) -> Result<(), CliError> {
 }
 
 fn run_convert_midi(args: ConvertMidiArgs) -> Result<(), CliError> {
-    let options = build_options(
-        args.timing,
+    let config = args
+        .config
+        .as_deref()
+        .map(ConfigDocument::load)
+        .transpose()?;
+    let parameters = config.as_ref().map(|document| &document.parameters);
+    let timing = args
+        .timing
+        .unwrap_or_else(|| timing_arg(parameters.map_or(Timing::Preserve, |value| value.timing)));
+    let transpose = args.transpose.unwrap_or_else(|| {
+        parameters.map_or(TransposeArg::Auto, |value| {
+            transpose_arg(value.transpose.clone())
+        })
+    });
+    let mut options = build_options(
+        timing,
         None,
-        args.transpose,
+        transpose,
         None,
         None,
         None,
-        args.preview_wav,
+        if args.no_preview_wav {
+            false
+        } else {
+            args.preview_wav || parameters.is_some_and(|value| value.preview_wav)
+        },
         args.overwrite,
     )?;
+    if let Some(document) = &config {
+        document.apply_to_options(&mut options);
+    }
     let cleaning = build_cleaning_options(
-        args.cleaning_profile,
-        args.min_confidence,
-        args.min_duration_ms,
-        args.retrigger_gap_ms,
+        args.cleaning_profile.unwrap_or_else(|| {
+            parameters.map_or(CleaningProfile::Auto, |value| value.cleaning_profile)
+        }),
+        args.min_confidence
+            .or_else(|| parameters.and_then(|value| value.min_confidence)),
+        args.min_duration_ms
+            .or_else(|| parameters.and_then(|value| value.min_duration_ms)),
+        args.retrigger_gap_ms
+            .or_else(|| parameters.and_then(|value| value.retrigger_gap_ms)),
     )?;
-    let arrangement =
-        build_arrangement_options(args.arrangement, args.onset_window_ms, args.max_voices)?;
+    let arrangement = build_arrangement_options(
+        args.arrangement.unwrap_or_else(|| {
+            parameters.map_or(ArrangementProfile::Balanced, |value| value.arrangement)
+        }),
+        args.onset_window_ms
+            .or_else(|| parameters.map(|value| value.onset_window_ms))
+            .unwrap_or(150),
+        args.max_voices
+            .or_else(|| parameters.map(|value| value.max_voices))
+            .unwrap_or(2),
+    )?;
     run_job(
         args.worker,
         args.input,

@@ -86,6 +86,29 @@ for raw_line in sys.stdin:
     job_id = str(message["job_id"])
     options = message["payload"]["options"]
     staging_dir = str(message["payload"]["staging_dir"])
+    echo_path = os.environ.get("GLT_MOCK_WORKER_ECHO")
+    if echo_path:
+        pathlib.Path(echo_path).write_text(
+            json.dumps(
+                {
+                    "options": options,
+                    "env": {
+                        key: os.environ.get(key)
+                        for key in (
+                            "GLT_CLEANING_PROFILE",
+                            "GLT_MIN_CONFIDENCE",
+                            "GLT_MIN_DURATION_US",
+                            "GLT_RETRIGGER_GAP_US",
+                            "GLT_ARRANGEMENT",
+                            "GLT_ONSET_WINDOW_US",
+                            "GLT_MAX_VOICES",
+                        )
+                    },
+                },
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
 
     if mode == "long-line":
         print("x" * (1024 * 1024 + 100), flush=True)

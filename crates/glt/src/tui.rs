@@ -28,9 +28,10 @@ use crate::cli::{
     JobUpdate, build_arrangement_options, build_cleaning_options, build_job_options,
     run_job_with_cancel,
 };
+use crate::config::{ConfigDocument, ConfigMapping, DEFAULT_MAPPING_PROFILE, default_mapping_keys};
 use crate::jobs::{
-    FilterPreset, FilterRange, FilterRule, FilterSpec, IntegerFilterRange, Operation, StartOptions,
-    Timing, Transpose,
+    FilterPreset, FilterRange, FilterRule, FilterSpec, IntegerFilterRange, MappingKey, Operation,
+    StartOptions, Timing, Transpose,
 };
 use crate::preview::PlaybackService;
 
@@ -59,10 +60,17 @@ const FILTER_FIELD_COUNT: usize = 9;
 enum Screen {
     Input,
     Parameters,
+    Config,
     Filter,
     Running,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserTarget {
+    Input,
+    Config,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -243,6 +251,7 @@ pub struct TuiApp {
     fields: [String; FIELD_COUNT],
     focus: usize,
     browser: Option<Browser>,
+    browser_target: BrowserTarget,
     warnings: Vec<String>,
     stage: String,
     fraction: Option<f64>,
@@ -256,6 +265,12 @@ pub struct TuiApp {
     filter_seed: FilterSpec,
     filter_transpose: i32,
     filter_cache_available: bool,
+    config_path: String,
+    config_path_focus: bool,
+    mapping_profile: String,
+    mapping_keys: Vec<MappingKey>,
+    mapping_selected: usize,
+    mapping_anchor: Option<usize>,
     preview_path: Option<PathBuf>,
     playback: Option<PlaybackService>,
     playback_paused: bool,
@@ -284,6 +299,7 @@ impl Default for TuiApp {
             fields,
             focus: FIELD_INPUT,
             browser: None,
+            browser_target: BrowserTarget::Input,
             warnings: Vec::new(),
             stage: String::new(),
             fraction: None,
@@ -297,6 +313,12 @@ impl Default for TuiApp {
             filter_seed: FilterSpec::default(),
             filter_transpose: 0,
             filter_cache_available: false,
+            config_path: String::new(),
+            config_path_focus: true,
+            mapping_profile: DEFAULT_MAPPING_PROFILE.to_owned(),
+            mapping_keys: default_mapping_keys(),
+            mapping_selected: 0,
+            mapping_anchor: None,
             preview_path: None,
             playback: None,
             playback_paused: true,
@@ -807,6 +829,10 @@ impl TuiApp {
         else {
             return;
         };
+        if self.screen == Screen::Config {
+            self.config_path = path;
+            return;
+        }
         if let Some(uri_path) = path.strip_prefix("file:///") {
             path = uri_path.replace('/', "\\");
             if let Some(first) = path.get_mut(0..1) {
@@ -839,6 +865,132 @@ impl TuiApp {
         self.focus = FIELD_INPUT;
     }
 
+    fn open_config(&mut self) {
+        if self.config_path.trim().is_empty() {
+            let input = Path::new(self.field(FIELD_INPUT));
+            if let (Some(parent), Some(stem)) = (input.parent(), input.file_stem()) {
+                self.config_path = parent
+                    .join(format!("{}-config.json", stem.to_string_lossy()))
+                    .display()
+                    .to_string();
+            }
+        }
+        self.screen = Screen::Config;
+        self.config_path_focus = true;
+        self.mapping_anchor = None;
+        self.message =
+            "F6 browse  F7 import  F8 export  Arrows move  Space swap  R reset".to_owned();
+    }
+
+    fn import_config(&mut self) {
+        let path = PathBuf::from(self.config_path.trim());
+        if path.as_os_str().is_empty() {
+            self.message = "choose a config path first (F6)".to_owned();
+            return;
+        }
+        match ConfigDocument::load(&path) {
+            Ok(document) => {
+                self.apply_config_document(&document);
+                self.message = format!("imported config: {}", document.name);
+            }
+            Err(error) => self.message = error.to_string(),
+        }
+    }
+
+    fn export_config(&mut self) {
+        let path = PathBuf::from(self.config_path.trim());
+        if path.as_os_str().is_empty() {
+            self.message = "choose an output config path first".to_owned();
+            return;
+        }
+        match self.current_config_document() {
+            Ok(document) => match document.save(&path, true) {
+                Ok(()) => self.message = format!("exported config: {}", path.display()),
+                Err(error) => self.message = error.to_string(),
+            },
+            Err(error) => self.message = error.to_string(),
+        }
+    }
+
+    fn current_config_document(&self) -> Result<ConfigDocument, CliError> {
+        let options = self.build_options()?;
+        let cleaning = self.build_clean_options()?;
+        let arrangement = self.build_arrangement_options()?;
+        let name = Path::new(self.field(FIELD_INPUT))
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .map(|value| format!("{value}-config"))
+            .unwrap_or_else(|| "GLT 配置".to_owned());
+        let mut document = ConfigDocument::from_options(name, &options, &cleaning, &arrangement)?;
+        document.mapping = ConfigMapping {
+            profile: self.mapping_profile.clone(),
+            keys: self.mapping_keys.clone(),
+        };
+        document.validate()?;
+        Ok(document)
+    }
+
+    fn apply_config_document(&mut self, document: &ConfigDocument) {
+        let parameters = &document.parameters;
+        self.fields[FIELD_TIMING] = timing_text(parameters.timing).to_owned();
+        self.fields[FIELD_BPM] = parameters.bpm.map(format_number).unwrap_or_default();
+        self.fields[FIELD_TRANSPOSE] = transpose_text(&parameters.transpose);
+        self.fields[FIELD_PREVIEW] = parameters.preview_wav.to_string();
+        self.fields[FIELD_CLEANING_PROFILE] = parameters.cleaning_profile.as_str().to_owned();
+        self.fields[FIELD_MIN_CONFIDENCE] = parameters
+            .min_confidence
+            .map(format_number)
+            .unwrap_or_default();
+        self.fields[FIELD_MIN_DURATION] = parameters
+            .min_duration_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        self.fields[FIELD_RETRIGGER_GAP] = parameters
+            .retrigger_gap_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        self.fields[FIELD_ARRANGEMENT] = parameters.arrangement.as_str().to_owned();
+        self.fields[FIELD_ONSET_WINDOW] = parameters.onset_window_ms.to_string();
+        self.fields[FIELD_MAX_VOICES] = parameters.max_voices.to_string();
+        self.mapping_profile = document.mapping.profile.clone();
+        self.mapping_keys = document.mapping.keys.clone();
+        self.mapping_selected = self.mapping_selected.min(self.mapping_keys.len() - 1);
+        self.mapping_anchor = None;
+    }
+
+    fn mapping_swap_or_select(&mut self) {
+        if let Some(anchor) = self.mapping_anchor {
+            if anchor != self.mapping_selected {
+                let first = self.mapping_keys[anchor].pitch;
+                let second = self.mapping_keys[self.mapping_selected].pitch;
+                self.mapping_keys[anchor].pitch = second;
+                self.mapping_keys[self.mapping_selected].pitch = first;
+            }
+            self.mapping_anchor = None;
+        } else {
+            self.mapping_anchor = Some(self.mapping_selected);
+        }
+    }
+
+    fn shift_selected_mapping(&mut self, semitones: i32) {
+        let source = self.mapping_keys[self.mapping_selected].pitch as i32;
+        let target = source + semitones;
+        if let Some(index) = self
+            .mapping_keys
+            .iter()
+            .position(|entry| i32::from(entry.pitch) == target)
+        {
+            let first = self.mapping_keys[self.mapping_selected].pitch;
+            let second = self.mapping_keys[index].pitch;
+            self.mapping_keys[self.mapping_selected].pitch = second;
+            self.mapping_keys[index].pitch = first;
+        } else if (48..=83).contains(&target) && matches!(target % 12, 0 | 2 | 4 | 5 | 7 | 9 | 11) {
+            self.mapping_keys[self.mapping_selected].pitch = target as u8;
+        } else {
+            self.message = "mapping pitch must stay within C3-B5 naturals".to_owned();
+        }
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> bool {
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return false;
@@ -852,6 +1004,58 @@ impl TuiApp {
             return false;
         }
         if self.screen == Screen::Running {
+            return false;
+        }
+        if self.screen == Screen::Config {
+            match key.code {
+                KeyCode::Esc => self.screen = Screen::Parameters,
+                KeyCode::F(6) => {
+                    let seed = PathBuf::from(self.config_path.trim());
+                    self.browser = Some(Browser::open(if seed.as_os_str().is_empty() {
+                        Path::new(self.field(FIELD_INPUT))
+                    } else {
+                        &seed
+                    }));
+                    self.browser_target = BrowserTarget::Config;
+                }
+                KeyCode::F(7) => self.import_config(),
+                KeyCode::F(8) => self.export_config(),
+                KeyCode::Tab => self.config_path_focus = !self.config_path_focus,
+                KeyCode::Backspace if self.config_path_focus => {
+                    self.config_path.pop();
+                }
+                KeyCode::Char(character) if self.config_path_focus => {
+                    self.config_path.push(character);
+                }
+                KeyCode::Up if !self.config_path_focus => {
+                    self.mapping_selected = self.mapping_selected.saturating_sub(7);
+                }
+                KeyCode::Down if !self.config_path_focus => {
+                    self.mapping_selected =
+                        (self.mapping_selected + 7).min(self.mapping_keys.len() - 1);
+                }
+                KeyCode::Left if !self.config_path_focus => {
+                    self.mapping_selected = self.mapping_selected.saturating_sub(1);
+                }
+                KeyCode::Right if !self.config_path_focus => {
+                    self.mapping_selected =
+                        (self.mapping_selected + 1).min(self.mapping_keys.len() - 1);
+                }
+                KeyCode::Char(' ') if !self.config_path_focus => self.mapping_swap_or_select(),
+                KeyCode::Char('[') if !self.config_path_focus => self.shift_selected_mapping(-1),
+                KeyCode::Char(']') if !self.config_path_focus => self.shift_selected_mapping(1),
+                KeyCode::Char('-') if !self.config_path_focus => self.shift_selected_mapping(-12),
+                KeyCode::Char('+' | '=') if !self.config_path_focus => {
+                    self.shift_selected_mapping(12);
+                }
+                KeyCode::Char('r' | 'R') if !self.config_path_focus => {
+                    self.mapping_profile = DEFAULT_MAPPING_PROFILE.to_owned();
+                    self.mapping_keys = default_mapping_keys();
+                    self.mapping_anchor = None;
+                    self.message = "mapping reset to C natural".to_owned();
+                }
+                _ => {}
+            }
             return false;
         }
         if self.screen == Screen::Filter {
@@ -890,7 +1094,9 @@ impl TuiApp {
             KeyCode::F(2) => {
                 let seed = PathBuf::from(self.field(FIELD_INPUT));
                 self.browser = Some(Browser::open(&seed));
+                self.browser_target = BrowserTarget::Input;
             }
+            KeyCode::Char('c' | 'C') if self.screen == Screen::Parameters => self.open_config(),
             KeyCode::F(5) => self.start_job(),
             KeyCode::Enter => {
                 if self.screen == Screen::Input {
@@ -976,7 +1182,12 @@ impl TuiApp {
                         browser.selected = 0;
                         browser.refresh();
                     } else {
-                        self.fields[self.focus] = path.display().to_string();
+                        if self.browser_target == BrowserTarget::Config {
+                            self.config_path = path.display().to_string();
+                            self.screen = Screen::Config;
+                        } else {
+                            self.fields[self.focus] = path.display().to_string();
+                        }
                         self.browser = None;
                     }
                 }
@@ -1020,11 +1231,15 @@ impl TuiApp {
             };
             frame.render_widget(
                 Paragraph::new(entries)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(format!("Browse: {}", browser.directory.display())),
-                    )
+                    .block(Block::default().borders(Borders::ALL).title(format!(
+                        "Browse {}: {}",
+                        if self.browser_target == BrowserTarget::Config {
+                            "config"
+                        } else {
+                            "input"
+                        },
+                        browser.directory.display()
+                    )))
                     .wrap(Wrap { trim: false }),
                 chunks[1],
             );
@@ -1036,10 +1251,13 @@ impl TuiApp {
             Screen::Completed => {
                 "Space play  S stop  +/- volume  F edit  A auto  B balanced  M melody  R rerun"
             }
+            Screen::Config => {
+                "Tab path/map  F6 browse  F7 import  F8 export  Space swap  R reset  Esc back"
+            }
             Screen::Filter => "Tab field  Up/Down rule  Space toggle  F5 apply  R reset  Esc back",
             Screen::Failed => "Esc exit",
             Screen::Input => "Enter parameters  F2 browse  Esc quit",
-            Screen::Parameters => "Space cycle/toggle  F5 run  Tab next  Esc quit",
+            Screen::Parameters => "Space cycle/toggle  C config  F5 run  Tab next  Esc quit",
         };
         frame.render_widget(
             Paragraph::new(format!("{footer}  |  {}", self.message)).style(Style::default().fg(
@@ -1107,6 +1325,52 @@ impl TuiApp {
                 frame.render_widget(
                     Paragraph::new(lines)
                         .block(Block::default().borders(Borders::ALL).title("Parameters"))
+                        .wrap(Wrap { trim: false }),
+                    area,
+                );
+            }
+            Screen::Config => {
+                let mut lines = vec![
+                    Line::from(format!(
+                        "{} config path: {}",
+                        focus_marker(self.config_path_focus),
+                        self.config_path
+                    )),
+                    Line::from("mapping keys (selected / anchor):"),
+                ];
+                for row in self.mapping_keys.chunks(7) {
+                    let text = row
+                        .iter()
+                        .map(|entry| {
+                            let index = self
+                                .mapping_keys
+                                .iter()
+                                .position(|candidate| candidate.key == entry.key)
+                                .unwrap_or_default();
+                            let selected = if index == self.mapping_selected {
+                                ">"
+                            } else {
+                                " "
+                            };
+                            let anchor = if self.mapping_anchor == Some(index) {
+                                "*"
+                            } else {
+                                " "
+                            };
+                            format!("{selected}{anchor}{}:{}", entry.key, entry.pitch)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("  ");
+                    lines.push(Line::from(text));
+                }
+                lines.push(Line::from(format!("profile: {}", self.mapping_profile)));
+                frame.render_widget(
+                    Paragraph::new(lines)
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title("Config / Mapping"),
+                        )
                         .wrap(Wrap { trim: false }),
                     area,
                 );
@@ -1477,6 +1741,22 @@ fn format_number(value: f64) -> String {
         format!("{}", value as i64)
     } else {
         format!("{value}")
+    }
+}
+
+fn timing_text(value: Timing) -> &'static str {
+    match value {
+        Timing::Auto => "auto",
+        Timing::Preserve => "preserve",
+        Timing::Straight => "straight",
+        Timing::Triplet => "triplet",
+    }
+}
+
+fn transpose_text(value: &Transpose) -> String {
+    match value {
+        Transpose::Auto(_) => "auto".to_owned(),
+        Transpose::Semitones(value) => value.to_string(),
     }
 }
 
@@ -1974,16 +2254,53 @@ mod tests {
     #[test]
     fn render_fits_supported_terminal_sizes() {
         for (width, height) in [(80, 24), (120, 40)] {
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).unwrap();
-            let app = TuiApp {
-                screen: Screen::Filter,
-                ..TuiApp::default()
-            };
-            terminal.draw(|frame| app.render(frame)).unwrap();
-            assert_eq!(terminal.backend().buffer().area().width, width);
-            assert_eq!(terminal.backend().buffer().area().height, height);
+            for screen in [Screen::Filter, Screen::Config] {
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).unwrap();
+                let app = TuiApp {
+                    screen,
+                    ..TuiApp::default()
+                };
+                terminal.draw(|frame| app.render(frame)).unwrap();
+                assert_eq!(terminal.backend().buffer().area().width, width);
+                assert_eq!(terminal.backend().buffer().area().height, height);
+            }
         }
+    }
+
+    #[test]
+    fn config_screen_imports_and_exports_same_document() {
+        let root = std::env::temp_dir().join(format!("glt-tui-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let input_path = root.join("song.flac");
+        std::fs::write(&input_path, b"mock").unwrap();
+
+        let mut document = ConfigDocument {
+            name: "TUI config".to_owned(),
+            ..ConfigDocument::default()
+        };
+        document.parameters.timing = Timing::Triplet;
+        document.parameters.min_duration_ms = Some(120);
+        document.mapping.keys[0].pitch = 60;
+        document.mapping.keys[7].pitch = 48;
+        let source = root.join("source.json");
+        document.save(&source, true).unwrap();
+
+        let mut app = TuiApp::default();
+        app.fields[FIELD_INPUT] = input_path.display().to_string();
+        app.config_path = source.display().to_string();
+        app.import_config();
+        assert_eq!(app.field(FIELD_TIMING), "triplet");
+        assert_eq!(app.field(FIELD_MIN_DURATION), "120");
+        assert_eq!(app.mapping_keys[0].pitch, 60);
+
+        app.config_path = root.join("exported.json").display().to_string();
+        app.export_config();
+        let exported = ConfigDocument::load(Path::new(&app.config_path)).unwrap();
+        assert_eq!(exported.parameters.timing, Timing::Triplet);
+        assert_eq!(exported.mapping.keys[0].pitch, 60);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

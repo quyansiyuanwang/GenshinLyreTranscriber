@@ -12,6 +12,10 @@ glt tui
 # 检查运行环境
 glt doctor
 
+# 创建并校验参数/映射配置
+glt config init --output my-config.json
+glt config validate my-config.json
+
 # 转录音频或视频并生成试听
 glt transcribe input.flac --output output --preview-wav
 
@@ -31,6 +35,7 @@ glt preview output --volume 0.8
 |---|---|
 | `glt` / `glt tui` | 打开终端交互界面 |
 | `glt doctor` | 检查 worker、模型和运行资源 |
+| `glt config` | `init`、`validate`、`show` 版本化参数与 21 键映射 |
 | `glt transcribe INPUT` | 转录音频或视频 |
 | `glt convert-midi INPUT` | 导入并处理 MIDI |
 | `glt filter RESULT_DIR` | 从已有候选缓存生成筛选版本 |
@@ -57,6 +62,7 @@ glt filter --help
 | `Space` | 循环选项或切换布尔值 |
 | `F2` | 浏览当前路径 |
 | `F5` | 开始任务；筛选页中表示应用规则 |
+| `C` | 参数页中打开配置与 21 键映射视图 |
 | `Esc` | 返回或退出 |
 | `Ctrl+C` | 取消正在运行的作业，或退出 TUI |
 
@@ -80,6 +86,22 @@ glt filter --help
 | `B` | 应用 balanced 预设 |
 | `M` | 应用 melody 预设 |
 | `R` | 返回参数页，保留输入并重新执行 |
+
+### 配置与映射页
+
+在参数页按 `C` 打开版本化配置视图。这里可以浏览配置 JSON、导入/导出，并用图形化键位网格编辑 21 键映射。
+
+| 按键 | 行为 |
+|---|---|
+| `Tab` | 在配置路径和映射网格之间切换焦点 |
+| `F6` | 浏览并选择配置 JSON |
+| `F7` | 导入当前路径配置 |
+| `F8` | 导出当前参数和映射 |
+| `Arrow` | 在 21 键网格中移动选择 |
+| `Space` | 选择键位或与另一键交换音高 |
+| `[` / `]` | 所选键位 ±1 半音 |
+| `-` / `+` | 所选键位 ±12 半音 |
+| `R` | 恢复默认 C 调映射 |
 
 ### 筛选页
 
@@ -131,7 +153,9 @@ glt transcribe rehearsal.wav --output out --timing preserve --arrangement off
 | `--timing MODE` | `auto`、`preserve`、`straight`、`triplet` |
 | `--bpm NUMBER` | 显式 BPM，优先于自动速度分析 |
 | `--transpose VALUE` | `auto` 或 `-48..48` 半音 |
+| `--config FILE` | 载入版本化参数与 21 键映射；显式参数优先于配置 |
 | `--preview-wav` | 生成自行合成的 `preview.wav` |
+| `--no-preview-wav` | 即使配置启用预览也显式关闭 |
 | `--overwrite` | 允许替换工具此前生成的同名输出 |
 | `--json` | stdout 输出机器可读结果 |
 | `--worker PATH` | 覆盖 worker 路径，仅用于开发或诊断 |
@@ -216,6 +240,20 @@ glt convert-midi score.mid --output out --transpose auto --preview-wav
 ```powershell
 uv run --directory python python -m glt_core.tools.mapping_preview output\cleaned.mid
 ```
+
+### 可移植配置
+
+`glt-config-v1` 同时包含清理、编排、时序、移调参数和 21 键布局。桌面端、CLI 和 TUI
+使用同一结构；命令行动态参数优先于配置，配置优先于内置默认值。
+
+```powershell
+glt config init --output song-config.json --name "远航星 C 调"
+glt config validate song-config.json
+glt config show song-config.json
+glt transcribe input.flac --output out --config song-config.json --transpose 12
+```
+
+未知版本、重复键位、重复音高或超出 C3-B5 自然音的配置会被拒绝，不会覆盖已有可用文件。
 
 ## 筛选结果
 

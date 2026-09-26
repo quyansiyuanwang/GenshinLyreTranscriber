@@ -96,6 +96,127 @@ fn transcribe_keeps_stdout_machine_readable() {
 }
 
 #[test]
+fn config_init_validate_and_show_share_one_versioned_contract() {
+    let root = unique_test_dir("config");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("portable.json");
+    let init = Command::new(binary())
+        .args(["config", "init", "--output"])
+        .arg(&path)
+        .args(["--name", "测试配置"])
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let validate = Command::new(binary())
+        .args(["config", "validate"])
+        .arg(&path)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        validate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validate.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&validate.stdout).unwrap();
+    assert_eq!(report["status"], "ok");
+    assert_eq!(report["mapping_keys"], 21);
+
+    let show = Command::new(binary())
+        .args(["config", "show"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(show.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(document["format_version"], 1);
+    assert_eq!(document["name"], "测试配置");
+}
+
+#[test]
+fn transcribe_config_is_used_with_cli_values_taking_priority() {
+    let root = unique_test_dir("config-priority");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let input = root.join("input.wav");
+    let output = root.join("result");
+    let config = root.join("config.json");
+    let echo = root.join("echo.json");
+    std::fs::write(&input, b"mock input bytes").unwrap();
+
+    let mapping = serde_json::json!([
+        {"key":"Z","pitch":60},{"key":"X","pitch":50},{"key":"C","pitch":52},
+        {"key":"V","pitch":53},{"key":"B","pitch":55},{"key":"N","pitch":57},
+        {"key":"M","pitch":59},{"key":"A","pitch":48},{"key":"S","pitch":62},
+        {"key":"D","pitch":64},{"key":"F","pitch":65},{"key":"G","pitch":67},
+        {"key":"H","pitch":69},{"key":"J","pitch":71},{"key":"Q","pitch":72},
+        {"key":"W","pitch":74},{"key":"E","pitch":76},{"key":"R","pitch":77},
+        {"key":"T","pitch":79},{"key":"Y","pitch":81},{"key":"U","pitch":83}
+    ]);
+    let document = serde_json::json!({
+        "format_version": 1,
+        "name": "CLI priority",
+        "parameters": {
+            "cleaning_profile": "strict",
+            "arrangement": "off",
+            "min_confidence": 0.61,
+            "min_duration_ms": 120,
+            "retrigger_gap_ms": 25,
+            "timing": "triplet",
+            "bpm": 90,
+            "transpose": 12,
+            "onset_window_ms": 175,
+            "max_voices": 3,
+            "preview_wav": true
+        },
+        "mapping": {"profile":"custom-c", "keys": mapping}
+    });
+    std::fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+
+    let output_result = Command::new(binary())
+        .env("GLT_MOCK_WORKER_ECHO", &echo)
+        .args(["transcribe"])
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .args(["--config"])
+        .arg(&config)
+        .args([
+            "--transpose=-7",
+            "--min-confidence",
+            "0.44",
+            "--cleaning-profile",
+            "mix",
+        ])
+        .arg("--worker")
+        .arg(mock_worker())
+        .arg("--json")
+        .output()
+        .expect("run configured transcription");
+    assert!(
+        output_result.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output_result.stderr)
+    );
+    let echoed: serde_json::Value = serde_json::from_slice(&std::fs::read(&echo).unwrap()).unwrap();
+    assert_eq!(echoed["options"]["transpose"], -7);
+    assert_eq!(echoed["options"]["timing"], "triplet");
+    assert_eq!(echoed["options"]["mapping_profile"], "custom-c");
+    assert_eq!(echoed["options"]["mapping_keys"][0]["pitch"], 60);
+    assert_eq!(echoed["env"]["GLT_CLEANING_PROFILE"], "mix");
+    assert_eq!(echoed["env"]["GLT_MIN_CONFIDENCE"], "0.44");
+    assert_eq!(echoed["env"]["GLT_MIN_DURATION_US"], "120000");
+    assert_eq!(echoed["env"]["GLT_ARRANGEMENT"], "off");
+    assert_eq!(echoed["env"]["GLT_MAX_VOICES"], "3");
+}
+
+#[test]
 fn invalid_segment_is_usage_error() {
     let unique = format!("glt-cli-invalid-{}", std::process::id());
     let input = std::env::temp_dir().join(format!("{unique}.wav"));

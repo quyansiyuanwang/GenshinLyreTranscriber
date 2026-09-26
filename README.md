@@ -17,6 +17,7 @@
 - 可试听预览：自行合成轻量 WAV，并通过 TUI 或 CLI 播放，不包含游戏采样。
 - Tauri 桌面工作站：波形/频谱/瀑布图、即点即播、A/B、可选 Demucs 分离、演奏路由、
   Performance 派生导出和 WebGL2 钢琴卷帘编辑。
+- 版本化配置：参数与 21 键映射统一保存为 `glt-config-v1`，桌面端、CLI 和 TUI 可互相导入。
 - 完整离线目标：最终发布包不要求用户预装 Python、FFmpeg 或下载模型。
 
 ## 快速开始
@@ -52,7 +53,7 @@ target\debug\glt.exe
 target\debug\glt.exe tui
 ```
 
-TUI 支持路径粘贴、文件拖入、目录浏览、参数调整、任务取消、结果查看、试听和失败后重试。
+TUI 支持路径粘贴、文件拖入、目录浏览、参数调整、图形化 21 键映射、配置导入导出、任务取消、结果查看、试听和失败后重试。
 完整按键说明见 [命令行使用](docs/USAGE.md#tui-操作)。
 
 ### 使用桌面工作站
@@ -92,6 +93,14 @@ target\debug\glt.exe convert-midi "score.mid" --output "output"
 
 ```powershell
 target\debug\glt.exe filter "output" --output "output-filter" --auto
+```
+
+创建并校验可移植配置：
+
+```powershell
+target\debug\glt.exe config init --output "my-config.json"
+target\debug\glt.exe config validate "my-config.json"
+target\debug\glt.exe transcribe "input.flac" --output "output" --config "my-config.json"
 ```
 
 播放已完成结果的试听文件：
