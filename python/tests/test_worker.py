@@ -13,6 +13,7 @@ import pytest
 
 import glt_core.worker as worker_module
 from glt_core.domain.note_sequence import Note, NoteSequence, Provenance
+from glt_core.processing.mapping import default_mapping_layout
 from glt_core.transcription import TranscriptionCancelled
 from glt_core.worker import WorkerServer
 
@@ -577,3 +578,24 @@ def test_explicit_strict_profile_selects_strict_thresholds(
     config = worker_module._cleaning_config()
     assert config.min_confidence == 0.5
     assert config.min_duration_us == 150_000
+
+
+def test_worker_mapping_config_accepts_profile_and_custom_layout() -> None:
+    layout = default_mapping_layout()
+    config = worker_module._mapping_config(
+        {
+            "transpose": 12,
+            "mapping_profile": "custom-c",
+            "mapping_keys": [
+                {"key": entry.key, "pitch": entry.pitch} for entry in layout.keys
+            ],
+        }
+    )
+    assert config.layout.profile == "custom-c"
+    assert config.layout.keys == layout.keys
+    assert config.transpose == 12
+
+
+def test_worker_mapping_config_rejects_invalid_layout() -> None:
+    with pytest.raises(worker_module.WorkerJobError, match="exactly 21"):
+        worker_module._mapping_config({"mapping_keys": []})

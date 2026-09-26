@@ -771,6 +771,7 @@ pub(crate) fn build_job_options(
         preview_wav: Some(preview_wav),
         overwrite: Some(overwrite),
         mapping_profile: None,
+        mapping_keys: None,
         filter: None,
         filter_preset: None,
         title: None,

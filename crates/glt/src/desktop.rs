@@ -11,8 +11,8 @@ use crate::cli::{
     build_cleaning_options, build_job_options, resolve_worker_spec, run_job_with_cancel,
 };
 use crate::jobs::{
-    DEFAULT_READY_TIMEOUT, FilterPreset, FilterSpec, Operation, ResultPayload, Timing, Transpose,
-    WorkerClient, WorkerSpec,
+    DEFAULT_READY_TIMEOUT, FilterPreset, FilterSpec, MappingKey, Operation, ResultPayload, Timing,
+    Transpose, WorkerClient, WorkerSpec,
 };
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -62,6 +62,10 @@ pub struct DesktopJobRequest {
     pub timing: Timing,
     pub bpm: Option<f64>,
     pub transpose: Transpose,
+    #[serde(default)]
+    pub mapping_profile: Option<String>,
+    #[serde(default)]
+    pub mapping_keys: Option<Vec<MappingKey>>,
     pub audio_track: Option<u32>,
     pub start_seconds: Option<f64>,
     pub end_seconds: Option<f64>,
@@ -132,6 +136,8 @@ where
     .map_err(|error| error.to_string())?;
     options.filter = request.filter;
     options.filter_preset = request.filter_preset;
+    options.mapping_profile = request.mapping_profile;
+    options.mapping_keys = request.mapping_keys;
     options.title = request.title;
     options.source_result_dir = request.source_result_dir;
     options.revision_id = request.revision_id;

@@ -2579,6 +2579,189 @@ select {
   background: #3a4448;
 }
 
+.portable-config-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 9px;
+  padding: 7px 8px;
+  border: 1px solid #414b4f;
+  background:
+    linear-gradient(90deg, rgb(91 192 222 / 5%), transparent 45%),
+    #1f2629;
+}
+
+.portable-config-actions > div {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 210px;
+  gap: 2px;
+}
+
+.portable-config-actions > div > span {
+  color: #77b8cc;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.portable-config-actions > div > small {
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.portable-config-actions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid #4b565a;
+  color: #dce2e1;
+  background: linear-gradient(#3b4448, #30373b);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.portable-config-actions button:hover {
+  border-color: #6c777b;
+  background: linear-gradient(#475156, #363e42);
+}
+
+.mapping-editor {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 9px;
+  border: 1px solid #4b5559;
+  background: #171c1f;
+}
+
+.mapping-editor-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mapping-editor-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.mapping-editor-header > div > span {
+  color: #77b8cc;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.mapping-editor-header > div > strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mapping-editor-header > div > small {
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.mapping-editor-header label {
+  display: grid;
+  min-width: 190px;
+  gap: 3px;
+  color: var(--dim);
+  font-size: 8px;
+}
+
+.mapping-editor-header input {
+  min-height: 25px;
+}
+
+.mapping-keyboard {
+  display: grid;
+  gap: 1px;
+  border: 1px solid #30393d;
+  background: #30393d;
+}
+
+.mapping-key-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px;
+}
+
+.mapping-key-row button {
+  display: grid;
+  min-height: 56px;
+  place-items: center;
+  align-content: center;
+  gap: 1px;
+  padding: 4px;
+  border: 0;
+  color: #c8d0d0;
+  background: linear-gradient(#2f383c, #232a2d);
+}
+
+.mapping-key-row button:hover {
+  color: #fff3df;
+  background: linear-gradient(#414c51, #2d363a);
+}
+
+.mapping-key-row button.selected {
+  color: #fff5e6;
+  background: linear-gradient(#a76325, #6b3b15);
+  box-shadow: inset 0 0 0 1px #f3a347;
+}
+
+.mapping-key-row button strong {
+  color: #f0b76f;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.mapping-key-row button span {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 9px;
+}
+
+.mapping-key-row button small {
+  color: var(--dim);
+  font-size: 7px;
+}
+
+.mapping-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.mapping-editor-actions > span {
+  flex: 1 1 auto;
+  color: #aeb8ba;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 8px;
+}
+
+.mapping-editor-actions button {
+  min-height: 25px;
+  padding: 0 8px;
+  border: 1px solid #4b565a;
+  color: #dce2e1;
+  background: linear-gradient(#3b4448, #30373b);
+  font-size: 8px;
+}
+
+.mapping-editor-actions button:hover:not(:disabled) {
+  border-color: #6c777b;
+  background: linear-gradient(#475156, #363e42);
+}
+
+.mapping-editor-actions em {
+  color: #e2938e;
+  font-size: 8px;
+  font-style: normal;
+}
+
 .desktop-preset-card > button.remove {
   width: 24px;
   padding: 0;

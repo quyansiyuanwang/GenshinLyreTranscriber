@@ -16,6 +16,8 @@ mod analysis;
 mod project;
 mod separation;
 
+const MAX_CONFIG_FILE_BYTES: u64 = 1024 * 1024;
+
 #[derive(Default)]
 struct GuiState {
     running: AtomicBool,
@@ -162,6 +164,26 @@ fn project_add_revision_path(
 fn project_close(state: State<'_, GuiState>) -> Result<(), String> {
     *state.lock_project()? = None;
     Ok(())
+}
+
+#[tauri::command]
+fn read_config_file(path: PathBuf) -> Result<String, String> {
+    let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_CONFIG_FILE_BYTES {
+        return Err("config file exceeds 1 MiB".to_owned());
+    }
+    fs::read_to_string(path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn write_config_file(path: PathBuf, content: String) -> Result<(), String> {
+    if content.len() as u64 > MAX_CONFIG_FILE_BYTES {
+        return Err("config file exceeds 1 MiB".to_owned());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, content).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -372,6 +394,8 @@ fn edit_export(
         timing: Timing::Preserve,
         bpm: None,
         transpose: Transpose::Semitones(0),
+        mapping_profile: None,
+        mapping_keys: None,
         audio_track: None,
         start_seconds: None,
         end_seconds: None,
@@ -590,6 +614,8 @@ pub fn run() {
             project_add_revision,
             project_add_revision_path,
             project_close,
+            read_config_file,
+            write_config_file,
             doctor,
             start_job,
             cancel_job,

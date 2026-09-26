@@ -257,6 +257,13 @@ fn validate_integer_range(
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MappingKey {
+    pub key: String,
+    pub pitch: u8,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StartOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<Timing>,
@@ -276,6 +283,8 @@ pub struct StartOptions {
     pub overwrite: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mapping_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping_keys: Option<Vec<MappingKey>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<FilterSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]

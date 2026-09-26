@@ -249,7 +249,11 @@ export function parseQueue(raw: string | null): QueueItem[] {
       }
       items.push({
         id: candidate.id,
-        request: candidate.request,
+        request: {
+          ...candidate.request,
+          mapping_profile: candidate.request.mapping_profile ?? null,
+          mapping_keys: candidate.request.mapping_keys ?? null,
+        },
         status: candidate.status as QueueItemStatus,
         added_at: typeof candidate.added_at === "number" ? candidate.added_at : Date.now(),
         started_at: typeof candidate.started_at === "number" ? candidate.started_at : null,

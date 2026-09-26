@@ -15,6 +15,7 @@ import type {
   FilterPreset,
   JobEvent,
   JobRequest,
+  MappingKey,
   JobResult,
   MediaProbeDocument,
   Operation,
@@ -35,6 +36,7 @@ import type {
 import AnalysisView from "./AnalysisView";
 import FilterPreviewCanvas from "./FilterPreviewCanvas";
 import FilterRangeSlider from "./FilterRangeSlider";
+import MappingEditor from "./MappingEditor";
 import { liveFilterStats, parseOptionalNumber, rulesToFilter } from "./filterPreview";
 import { filterMetricDefinition, type FilterMetric } from "./filterMetrics";
 import ParameterSlider from "./ParameterSlider";
@@ -58,6 +60,14 @@ import {
   updateQueueItem,
   type QueueItem,
 } from "./jobQueue";
+import {
+  DEFAULT_MAPPING_PROFILE,
+  applyPortableConfig,
+  createPortableConfig,
+  defaultMappingKeys,
+  parsePortableConfig,
+  serializePortableConfig,
+} from "./portableConfig";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
 
@@ -144,6 +154,8 @@ const DEFAULT_REQUEST: JobRequest = {
   timing: "auto",
   bpm: null,
   transpose: "auto",
+  mapping_profile: null,
+  mapping_keys: null,
   audio_track: null,
   start_seconds: null,
   end_seconds: null,
@@ -254,6 +266,7 @@ function App() {
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [mappingOpen, setMappingOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<DraftFilterRule[]>([{ ...EMPTY_RULE }]);
   const [activeFilterRule, setActiveFilterRule] = useState(0);
   const [queueItems, setQueueItems] = useState<QueueItem[]>(() =>
@@ -1334,6 +1347,59 @@ function App() {
     setNotice(`已保存预设：${name}`);
   }
 
+  function updateMapping(profile: string, keys: MappingKey[]) {
+    setRequest((current) => ({
+      ...current,
+      mapping_profile: profile.trim() || DEFAULT_MAPPING_PROFILE,
+      mapping_keys: keys,
+    }));
+    setNotice("琴键映射已更新，将在下一次任务中生效");
+  }
+
+  async function exportPortableConfig() {
+    try {
+      const baseName = request.input
+        ? request.input.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") || "glt-config"
+        : "glt-config";
+      const selected = await saveDialog({
+        title: "导出 GLT 参数与琴键映射",
+        defaultPath: `${baseName}-config.json`,
+        filters: [{ name: "GLT Config", extensions: ["json", "gltconfig"] }],
+      });
+      if (typeof selected !== "string") return;
+      const config = createPortableConfig(
+        selected.split(/[/\\]/).pop()?.replace(/\.(json|gltconfig)$/i, "") || "glt-config",
+        jobRequestRef.current,
+      );
+      await invoke("write_config_file", {
+        path: selected,
+        content: serializePortableConfig(config),
+      });
+      setNotice(`配置已导出：${selected}`);
+    } catch (reason) {
+      setError(`导出配置失败：${String(reason)}`);
+    }
+  }
+
+  async function importPortableConfig() {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: false,
+        title: "导入 GLT 参数与琴键映射",
+        filters: [{ name: "GLT Config", extensions: ["json", "gltconfig"] }],
+      });
+      if (typeof selected !== "string") return;
+      const content = await invoke<string>("read_config_file", { path: selected });
+      const config = parsePortableConfig(content);
+      setRequest((current) => applyPortableConfig(current, config));
+      setMappingOpen(true);
+      setNotice(`已导入配置：${config.name}`);
+    } catch (reason) {
+      setError(`导入配置失败：${String(reason)}`);
+    }
+  }
+
   function tapTempo() {
     const now = globalThis.performance.now();
     const recent = recentTapTimes(tapTimesRef.current, now);
@@ -2281,6 +2347,31 @@ function App() {
               </button>
             </div>
           </div>
+
+          <div className="portable-config-actions">
+            <div>
+              <span>版本化配置</span>
+              <small>参数、音域和 21 键映射一起保存；未知版本或非法键位会被拒绝。</small>
+            </div>
+            <button type="button" onClick={() => void importPortableConfig()}>导入配置</button>
+            <button type="button" onClick={() => void exportPortableConfig()}>导出配置</button>
+            <button
+              type="button"
+              className={mappingOpen ? "primary-button" : ""}
+              aria-pressed={mappingOpen}
+              onClick={() => setMappingOpen((value) => !value)}
+            >
+              {mappingOpen ? "收起琴键编辑器" : "编辑 21 键映射"}
+            </button>
+          </div>
+
+          {mappingOpen && (
+            <MappingEditor
+              profile={request.mapping_profile ?? DEFAULT_MAPPING_PROFILE}
+              keys={request.mapping_keys ?? defaultMappingKeys()}
+              onChange={updateMapping}
+            />
+          )}
 
           <SegmentedControl
             label="清理档位"

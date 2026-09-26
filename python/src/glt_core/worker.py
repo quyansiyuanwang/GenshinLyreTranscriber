@@ -61,7 +61,9 @@ from glt_core.processing import (
     ArrangementConfig,
     CleanConfig,
     FilterSpec,
+    KeyboardKey,
     MappingConfig,
+    MappingLayout,
     QuantizationConfig,
     analyze_timing,
     apply_filter,
@@ -2128,7 +2130,33 @@ def _mapping_config(options: dict[str, Any]) -> MappingConfig:
         transpose == "auto" or (isinstance(transpose, int) and not isinstance(transpose, bool))
     ):
         raise WorkerJobError("SCHEMA_INVALID", "transpose must be 'auto' or an integer")
-    config = MappingConfig(layout=default_mapping_layout(), transpose=transpose)
+    profile_value = options.get("mapping_profile")
+    if profile_value is not None and (
+        not isinstance(profile_value, str) or not profile_value.strip()
+    ):
+        raise WorkerJobError("SCHEMA_INVALID", "mapping_profile must be a non-empty string")
+    profile = str(profile_value).strip() if profile_value is not None else "lyre-21-default"
+
+    keys_value = options.get("mapping_keys")
+    if keys_value is None:
+        layout = replace(default_mapping_layout(), profile=profile)
+    else:
+        if not isinstance(keys_value, list):
+            raise WorkerJobError("SCHEMA_INVALID", "mapping_keys must be a list")
+        entries: list[KeyboardKey] = []
+        for index, item in enumerate(keys_value):
+            if not isinstance(item, dict):
+                raise WorkerJobError("SCHEMA_INVALID", f"mapping_keys[{index}] must be an object")
+            key = item.get("key")
+            pitch = item.get("pitch")
+            if not isinstance(key, str) or isinstance(pitch, bool) or not isinstance(pitch, int):
+                raise WorkerJobError(
+                    "SCHEMA_INVALID", f"mapping_keys[{index}] requires string key and integer pitch"
+                )
+            entries.append(KeyboardKey(key=key, pitch=pitch))
+        layout = MappingLayout(keys=tuple(entries), profile=profile)
+
+    config = MappingConfig(layout=layout, transpose=transpose)
     try:
         config.validate()
     except ValueError as exc:

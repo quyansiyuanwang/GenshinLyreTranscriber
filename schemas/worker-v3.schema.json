@@ -197,6 +197,26 @@
                   "minLength": 1,
                   "maxLength": 128
                 },
+                "mapping_keys": {
+                  "type": "array",
+                  "minItems": 21,
+                  "maxItems": 21,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["key", "pitch"],
+                    "properties": {
+                      "key": {
+                        "enum": ["Z", "X", "C", "V", "B", "N", "M", "A", "S", "D", "F", "G", "H", "J", "Q", "W", "E", "R", "T", "Y", "U"]
+                      },
+                      "pitch": {
+                        "type": "integer",
+                        "minimum": 48,
+                        "maximum": 83
+                      }
+                    }
+                  }
+                },
                 "filter": {
                   "$ref": "#/$defs/filter_spec"
                 },

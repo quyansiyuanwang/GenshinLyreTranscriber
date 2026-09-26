@@ -21,6 +21,8 @@ const request = (input: string, output: string): JobRequest => ({
   timing: "auto",
   bpm: null,
   transpose: "auto",
+  mapping_profile: null,
+  mapping_keys: null,
   audio_track: null,
   start_seconds: null,
   end_seconds: null,

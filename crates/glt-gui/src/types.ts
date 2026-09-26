@@ -28,6 +28,11 @@ export interface FilterSpec {
   rules: FilterRule[];
 }
 
+export interface MappingKey {
+  key: string;
+  pitch: number;
+}
+
 export interface JobRequest {
   input: string;
   output: string;
@@ -35,6 +40,8 @@ export interface JobRequest {
   timing: Timing;
   bpm: number | null;
   transpose: Transpose;
+  mapping_profile: string | null;
+  mapping_keys: MappingKey[] | null;
   audio_track: number | null;
   start_seconds: number | null;
   end_seconds: number | null;
