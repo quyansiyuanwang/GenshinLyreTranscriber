@@ -2013,6 +2013,30 @@ select {
   cursor: crosshair;
 }
 
+.waveform-stack,
+.spectrogram-stack {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.analysis-playhead-track {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.analysis-playhead-track > i {
+  display: block;
+  width: 2px;
+  height: 100%;
+  background: #f39a32;
+  box-shadow: 0 0 5px rgb(243 154 50 / 50%);
+  transform: translateX(-1px);
+}
+
 .analysis-grid {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
@@ -2092,6 +2116,23 @@ select {
 
 .piano-overlay {
   touch-action: none;
+}
+
+.piano-playhead-track {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.piano-playhead-track > i {
+  display: block;
+  width: 2px;
+  height: 100%;
+  background: #ef5c47;
+  box-shadow: 0 0 5px rgb(239 92 71 / 52%);
+  transform: translateX(-1px);
 }
 
 .piano-lanes {

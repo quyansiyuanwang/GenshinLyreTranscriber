@@ -334,14 +334,6 @@ export default function PianoRollEditor({
         color,
       );
     }
-    rectangle(
-      vertices,
-      ((positionUs - viewStartUs) / viewDurationUs) * width,
-      0,
-      2,
-      height,
-      [0.95, 0.35, 0.27],
-    );
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
@@ -357,7 +349,7 @@ export default function PianoRollEditor({
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 5);
     gl.deleteBuffer(buffer);
     gl.deleteProgram(program);
-  }, [positionUs, selected, viewDurationUs, viewStartUs, visibleDocument]);
+  }, [selected, viewDurationUs, viewStartUs, visibleDocument]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -618,6 +610,9 @@ export default function PianoRollEditor({
   const selectionLabel = selected.size
     ? `${selected.size} 个音符${selectedNote ? ` · ${selectedNote.key}/${pitchName(selectedNote.pitch)} · v${selectedNote.velocity}` : ""}`
     : "未选择音符";
+  const playheadRatio =
+    viewDurationUs > 0 ? (positionUs - viewStartUs) / viewDurationUs : 0;
+  const showPlayhead = playheadRatio >= 0 && playheadRatio <= 1;
 
   return (
     <div className="piano-roll">
@@ -662,6 +657,14 @@ export default function PianoRollEditor({
             setMarquee(null);
           }}
         />
+        {showPlayhead && (
+          <div
+            className="piano-playhead-track"
+            style={{ transform: `translateX(${playheadRatio * 100}%)` }}
+          >
+            <i />
+          </div>
+        )}
       </div>
       <div className="piano-lanes">
         <span>{formatTime(viewStartUs)}</span>

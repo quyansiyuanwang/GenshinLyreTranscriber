@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatRangeTime, normalizeRangeUs, type TimeRangeUs } from "./analysisSelection";
 import type {
@@ -82,17 +82,28 @@ function selectionRange(
   return range.endUs > range.startUs ? range : null;
 }
 
-function WaveformCanvas({
+function Playhead({ positionUs, durationUs }: { positionUs: number; durationUs: number }) {
+  if (durationUs <= 0) return null;
+  const ratio = Math.min(1, Math.max(0, positionUs / durationUs));
+  return (
+    <div
+      className="analysis-playhead-track"
+      style={{ transform: `translateX(${ratio * 100}%)` }}
+    >
+      <i />
+    </div>
+  );
+}
+
+const WaveformCanvas = memo(function WaveformCanvas({
   waveform,
   durationUs,
-  positionUs,
   selection,
   onSeek,
   onSelectionChange,
 }: {
   waveform: WaveformPayload;
   durationUs: number;
-  positionUs: number;
   selection: TimeRangeUs | null;
   onSeek: (positionUs: number) => void;
   onSelectionChange: (startUs: number | null, endUs: number | null) => void;
@@ -147,14 +158,7 @@ function WaveformCanvas({
     context.stroke();
     context.globalAlpha = 1;
 
-    const playhead = durationUs > 0 ? Math.min(1, positionUs / durationUs) : 0;
-    context.strokeStyle = "#f39a32";
-    context.lineWidth = 2;
-    context.beginPath();
-    context.moveTo(playhead * width, 0);
-    context.lineTo(playhead * width, height);
-    context.stroke();
-  }, [durationUs, positionUs, visibleSelection, waveform]);
+  }, [durationUs, visibleSelection, waveform]);
 
   function finishSelection(event: React.PointerEvent<HTMLCanvasElement>): void {
     const drag = dragRef.current;
@@ -203,19 +207,17 @@ function WaveformCanvas({
       }}
     />
   );
-}
+});
 
-function SpectrogramCanvas({
+const SpectrogramCanvas = memo(function SpectrogramCanvas({
   image,
   durationUs,
-  positionUs,
   selection,
   onSeek,
   onSelectionChange,
 }: {
   image: SpectrogramImage;
   durationUs: number;
-  positionUs: number;
   selection: TimeRangeUs | null;
   onSeek: (positionUs: number) => void;
   onSelectionChange: (startUs: number | null, endUs: number | null) => void;
@@ -261,16 +263,7 @@ function SpectrogramCanvas({
       context.lineTo(endX - 0.5, canvas.clientHeight);
       context.stroke();
     }
-    const playhead = durationUs > 0 ? Math.min(1, positionUs / durationUs) : 0;
-    context.strokeStyle = "#f39a32";
-    context.globalAlpha = 0.9;
-    context.lineWidth = 1.5;
-    context.beginPath();
-    context.moveTo(playhead * canvas.clientWidth, 0);
-    context.lineTo(playhead * canvas.clientWidth, canvas.clientHeight);
-    context.stroke();
-    context.globalAlpha = 1;
-  }, [durationUs, image, positionUs, visibleSelection]);
+  }, [durationUs, image, visibleSelection]);
 
   function finishSelection(event: React.PointerEvent<HTMLCanvasElement>): void {
     const drag = dragRef.current;
@@ -316,38 +309,66 @@ function SpectrogramCanvas({
       }}
     />
   );
-}
+});
 
-function SpectrumCanvas({ spectrum }: { spectrum: SpectrumFrame | null }) {
+const WATERFALL_COLUMNS = 256;
+const WATERFALL_HEIGHT = 256;
+
+const SpectrumCanvas = memo(function SpectrumCanvas({
+  spectrum,
+}: {
+  spectrum: SpectrumFrame | null;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const waterfall = useRef<number[][]>([]);
+  const bufferRef = useRef<HTMLCanvasElement | null>(null);
+  const imageRef = useRef<ImageData | null>(null);
   useEffect(() => {
-    if (spectrum) {
-      waterfall.current = [...waterfall.current.slice(-255), spectrum.spectrum];
-    }
     const canvas = ref.current;
     if (!canvas) return;
     const context = setupCanvas(canvas);
     if (!context) return;
+
+    let buffer = bufferRef.current;
+    let image = imageRef.current;
+    if (!buffer || !image) {
+      buffer = document.createElement("canvas");
+      buffer.width = WATERFALL_COLUMNS;
+      buffer.height = WATERFALL_HEIGHT;
+      image = buffer.getContext("2d")?.createImageData(WATERFALL_COLUMNS, WATERFALL_HEIGHT) ?? null;
+      if (!image) return;
+      bufferRef.current = buffer;
+      imageRef.current = image;
+    }
+
+    if (spectrum) {
+      const data = image.data;
+      data.copyWithin(0, 4);
+      const source = spectrum.spectrum;
+      const lastColumn = WATERFALL_COLUMNS - 1;
+      for (let y = 0; y < WATERFALL_HEIGHT; y += 1) {
+        const sourceIndex = Math.min(
+          source.length - 1,
+          Math.floor(((WATERFALL_HEIGHT - 1 - y) / WATERFALL_HEIGHT) * source.length),
+        );
+        const [red, green, blue] = intensityToColor(source[sourceIndex] ?? 0);
+        const target = (y * WATERFALL_COLUMNS + lastColumn) * 4;
+        data[target] = red;
+        data[target + 1] = green;
+        data[target + 2] = blue;
+        data[target + 3] = 255;
+      }
+      buffer.getContext("2d")?.putImageData(image, 0, 0);
+    }
+
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     context.fillStyle = "#191e21";
     context.fillRect(0, 0, width, height);
-    const history = waterfall.current;
-    if (history.length === 0) return;
-    const columnWidth = Math.max(1, width / 256);
-    history.forEach((column, columnIndex) => {
-      const x = width - (history.length - columnIndex) * columnWidth;
-      column.forEach((value, bin) => {
-        const y = height - (bin / column.length) * height;
-        const [red, green, blue] = intensityToColor(value);
-        context.fillStyle = `rgb(${red} ${green} ${blue})`;
-        context.fillRect(x, y, columnWidth + 0.5, Math.max(1, height / column.length));
-      });
-    });
+    context.imageSmoothingEnabled = false;
+    context.drawImage(buffer, 0, 0, width, height);
   }, [spectrum]);
   return <canvas ref={ref} className="waterfall-canvas" />;
-}
+});
 
 export default function AnalysisView({
   manifest,
@@ -365,7 +386,10 @@ export default function AnalysisView({
   onToggleLoop,
 }: AnalysisViewProps) {
   const durationUs = manifest.decode.duration_us;
-  const selection = selectionRange(selectionStartUs, selectionEndUs, durationUs);
+  const selection = useMemo(
+    () => selectionRange(selectionStartUs, selectionEndUs, durationUs),
+    [durationUs, selectionEndUs, selectionStartUs],
+  );
   const selectionDurationUs = selection ? selection.endUs - selection.startUs : 0;
   return (
     <section className="analysis-view">
@@ -376,14 +400,16 @@ export default function AnalysisView({
         </div>
         <span className="analysis-time">{(positionUs / 1_000_000).toFixed(2)}s</span>
       </div>
-      <WaveformCanvas
-        waveform={waveform}
-        durationUs={durationUs}
-        positionUs={positionUs}
-        selection={selection}
-        onSeek={onSeek}
-        onSelectionChange={onSelectionChange}
-      />
+      <div className="waveform-stack">
+        <WaveformCanvas
+          waveform={waveform}
+          durationUs={durationUs}
+          selection={selection}
+          onSeek={onSeek}
+          onSelectionChange={onSelectionChange}
+        />
+        <Playhead positionUs={positionUs} durationUs={durationUs} />
+      </div>
       <div className="analysis-selection">
         <span>
           {selection
@@ -412,14 +438,16 @@ export default function AnalysisView({
         <div className="analysis-tile">
           <span>全曲频谱图</span>
           {spectrogram ? (
-            <SpectrogramCanvas
-              image={spectrogram}
-              durationUs={durationUs}
-              positionUs={positionUs}
-              selection={selection}
-              onSeek={onSeek}
-              onSelectionChange={onSelectionChange}
-            />
+            <div className="spectrogram-stack">
+              <SpectrogramCanvas
+                image={spectrogram}
+                durationUs={durationUs}
+                selection={selection}
+                onSeek={onSeek}
+                onSelectionChange={onSelectionChange}
+              />
+              <Playhead positionUs={positionUs} durationUs={durationUs} />
+            </div>
           ) : (
             <div className="analysis-placeholder">生成频谱缓存中…</div>
           )}

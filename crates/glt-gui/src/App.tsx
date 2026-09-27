@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, join } from "@tauri-apps/api/path";
@@ -1330,7 +1330,7 @@ function App() {
     await switchAbSource("original");
   }
 
-  async function seekAnalysis(position: number) {
+  const seekAnalysis = useCallback(async (position: number) => {
     setPositionUs(position);
     try {
       await invoke("seek_playback", { positionUs: position });
@@ -1338,7 +1338,7 @@ function App() {
     } catch (reason) {
       setError(String(reason));
     }
-  }
+  }, []);
 
   async function pausePreview() {
     try {
@@ -1700,6 +1700,34 @@ function App() {
     setActiveFilterRule(nextIndex);
     setNotice(`已添加规则 ${nextIndex + 1}；可在图上画横向范围`);
   }
+
+  const handleAnalysisSelectionChange = useCallback(
+    (startUs: number | null, endUs: number | null) => {
+      setRequest((current) => ({
+        ...current,
+        start_seconds: startUs === null ? null : startUs / 1_000_000,
+        end_seconds: endUs === null ? null : endUs / 1_000_000,
+      }));
+    },
+    [],
+  );
+
+  const handleAnalyzeSelection = useCallback(() => {
+    const current = jobRequestRef.current;
+    void startAnalysis(current.input, current.output);
+  }, []);
+
+  const handleTranscribeSelection = useCallback(() => {
+    void startJob({ ...jobRequestRef.current });
+  }, []);
+
+  const handleToggleLoop = useCallback(() => {
+    setLoopEnabled((value) => {
+      const next = !value;
+      setNotice(next ? "已开启选区循环" : "已关闭选区循环");
+      return next;
+    });
+  }, []);
 
   const operationLabel = request.operation === "convert_midi" ? "MIDI" : "音频 / 视频";
 
@@ -2293,21 +2321,12 @@ function App() {
                   ? null
                   : Math.round(request.end_seconds * 1_000_000)
               }
-              onSeek={(position) => void seekAnalysis(position)}
-              onSelectionChange={(startUs, endUs) =>
-                setRequest((current) => ({
-                  ...current,
-                  start_seconds: startUs === null ? null : startUs / 1_000_000,
-                  end_seconds: endUs === null ? null : endUs / 1_000_000,
-                }))
-              }
-              onAnalyzeSelection={() => void startAnalysis(request.input, request.output)}
-              onTranscribeSelection={() => void startJob({ ...request })}
+              onSeek={seekAnalysis}
+              onSelectionChange={handleAnalysisSelectionChange}
+              onAnalyzeSelection={handleAnalyzeSelection}
+              onTranscribeSelection={handleTranscribeSelection}
               loopEnabled={loopEnabled}
-              onToggleLoop={() => {
-                setLoopEnabled((value) => !value);
-                setNotice(loopEnabled ? "已关闭选区循环" : "已开启选区循环");
-              }}
+              onToggleLoop={handleToggleLoop}
             />
           </section>
         )}
