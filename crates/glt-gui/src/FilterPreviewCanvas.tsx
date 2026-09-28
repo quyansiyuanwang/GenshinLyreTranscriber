@@ -26,6 +26,7 @@ interface Props {
     upper: number,
   ) => void;
   onClearRange: (ruleIndex: number, metric: FilterMetric) => void;
+  onRestoreRule: (ruleIndex: number, rule: DraftFilterRule) => void;
 }
 
 interface DragLine {
@@ -33,10 +34,14 @@ interface DragLine {
   ruleIndex: number;
   metric: FilterMetric;
   bound: FilterMetricBound;
+  originalRule: DraftFilterRule;
+  originalActiveIndex: number;
 }
 
 interface RangeDraft {
   pointerId: number;
+  ruleIndex: number;
+  originalRule: DraftFilterRule;
   metric: FilterMetric;
   anchor: number;
   current: number;
@@ -76,6 +81,7 @@ export default function FilterPreviewCanvas({
   onActiveRuleChange,
   onRangeChange,
   onClearRange,
+  onRestoreRule,
 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
   const size = useCanvasSize(ref);
@@ -295,16 +301,31 @@ export default function FilterPreviewCanvas({
     stats.matches,
   ]);
 
+  function cancelPointer(event: React.PointerEvent<HTMLCanvasElement>) {
+    const drag = dragRef.current;
+    if (drag && drag.pointerId === event.pointerId) {
+      onRestoreRule(drag.ruleIndex, drag.originalRule);
+      onActiveRuleChange(drag.originalActiveIndex);
+      dragRef.current = null;
+    }
+    if (draftRef.current?.pointerId === event.pointerId) {
+      onRestoreRule(draftRef.current.ruleIndex, draftRef.current.originalRule);
+      draftRef.current = null; setRangeDraft(null);
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
   function finishPointer(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (dragRef.current?.pointerId !== event.pointerId && draftRef.current?.pointerId !== event.pointerId) return;
     const draft = draftRef.current;
     if (draft) {
       const lower = Math.min(draft.anchor, draft.current);
       const upper = Math.max(draft.anchor, draft.current);
       const range =
         Math.abs(upper - lower) < definition.step
-          ? metricRangeAround(notes, metric, draft.anchor)
+          ? metricRangeAround(notes, draft.metric, draft.anchor)
           : { lower, upper };
-      onRangeChange(activeRuleIndex, metric, range.lower, range.upper);
+      onRangeChange(draft.ruleIndex, draft.metric, range.lower, range.upper);
     }
     dragRef.current = null;
     draftRef.current = null;
@@ -381,6 +402,8 @@ export default function FilterPreviewCanvas({
           if (createMode) {
             const draft: RangeDraft = {
               pointerId: event.pointerId,
+              ruleIndex: activeRuleIndex,
+              originalRule: { ...rules[activeRuleIndex] },
               metric,
               anchor: metricFromPointer(event),
               current: metricFromPointer(event),
@@ -404,6 +427,8 @@ export default function FilterPreviewCanvas({
             ruleIndex: nearest.ruleIndex,
             metric,
             bound: nearest.bound,
+            originalRule: { ...rules[nearest.ruleIndex] },
+            originalActiveIndex: activeRuleIndex,
           };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
@@ -413,6 +438,7 @@ export default function FilterPreviewCanvas({
             const next = { ...draft, current: metricFromPointer(event) };
             draftRef.current = next;
             setRangeDraft(next);
+            onRangeChange(draft.ruleIndex, draft.metric, Math.min(next.anchor, next.current), Math.max(next.anchor, next.current));
             return;
           }
           const drag = dragRef.current;
@@ -426,7 +452,8 @@ export default function FilterPreviewCanvas({
           }
         }}
         onPointerUp={finishPointer}
-        onPointerCancel={finishPointer}
+        onPointerCancel={cancelPointer}
+        onLostPointerCapture={cancelPointer}
       />
       <div className="filter-preview-footer">
         <div className="filter-preview-legend">

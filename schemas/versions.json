@@ -4,7 +4,8 @@
   "files": {
     "analysis-manifest-v1.schema.json": "9f6faac587195ee15ece7acd8f76932245d34198b1777244e06e97336c3d3d86",
     "candidate-cache-v1.schema.json": "8bb2778bbc71066825fbe17559805532617e6cd9b45422028bbb57e619ec3644",
-    "desktop-cancellation-v1.schema.json": "4afd13e7f467b24cebaa2876e703c5420f8c5d61f35c065139ba266da1fb59e3",
+    "desktop-cancellation-v1.schema.json": "e11f3aec020c912214291e9bf2353b4102e7624e4880af672ca9a0d1aefd6908",
+    "edit-draft-v1.schema.json": "55345d570b7b6d6be98c0cf402d6e772da086fbfdc7e3de4b1b3dfcc6ade99a2",
     "events-v1.schema.json": "cd7b1816aa63cb1155ea9ef112d29d953710f40a6abdb8310b191261f5daf065",
     "note-sequence-v1.schema.json": "408a6ea006725ac51e5572c520638e48007a25deb7fbe6cfb53c59acd560ef9d",
     "notes-v1.schema.json": "89f05c29915482d309b7d36d8be76aecbb90a9878911b9bf226974ffc252c28b",

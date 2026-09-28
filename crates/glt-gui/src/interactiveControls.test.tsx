@@ -54,6 +54,7 @@ describe("interactive controls", () => {
         onActiveRuleChange={() => undefined}
         onRangeChange={() => undefined}
         onClearRange={() => undefined}
+        onRestoreRule={() => undefined}
       />,
     );
     expect(html).toContain("候选音符 MIDI pitch / 音高 分布图");

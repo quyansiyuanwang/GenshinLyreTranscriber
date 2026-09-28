@@ -283,7 +283,7 @@ fn source_metadata(path: PathBuf) -> Result<ProjectSource, String> {
     })
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let file = File::open(path).map_err(|error| format!("cannot open source: {error}"))?;
     let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();

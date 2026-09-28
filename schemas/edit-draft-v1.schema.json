@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:edit-draft:v1",
+  "title": "Edit draft v1",
+  "description": "Desktop local recovery data; never a published revision or player artifact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "source_result",
+    "base_revision_id",
+    "base_sha256",
+    "updated_at",
+    "performance",
+    "editor_state"
+  ],
+  "properties": {
+    "format_version": {
+      "const": 1
+    },
+    "source_result": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_revision_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "performance": {
+      "$ref": "urn:genshin-lyre-transcriber:schema:performance:v1"
+    },
+    "editor_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected_ids",
+        "view_start_us",
+        "view_duration_us",
+        "snap_to_beat",
+        "tool"
+      ],
+      "properties": {
+        "selected_ids": {
+          "type": "array",
+          "maxItems": 100000,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "view_start_us": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "view_duration_us": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "snap_to_beat": {
+          "type": "boolean"
+        },
+        "tool": {
+          "enum": [
+            "select",
+            "add"
+          ]
+        }
+      }
+    }
+  }
+}

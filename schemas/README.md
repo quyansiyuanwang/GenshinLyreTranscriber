@@ -62,3 +62,15 @@ uv run --directory python pytest
 `desktop-cancellation-v1.schema.json` 定义分析、分离与路由的取消终态；仅在整个受管进程树
 回收完成后发出。点击取消不等同于收到此终态。此契约不改变 worker JSONL 或播放器事件格式。
 Rust 与前端共用 `tests/fixtures/desktop-cancellation-v1.json`，字段包括版本、操作和取消状态。
+
+
+## 桌面恢复草稿 v1
+
+`edit-draft-v1.schema.json` 是应用私有恢复数据，不是正式修订或播放器交接产物。
+它引用冻结的 Performance v1，记录源结果、基准 revision/SHA256、更新时间及选择/视口/工具状态。
+Rust、TypeScript 和 Python 共用 `tests/fixtures/edit-draft-v1.json`。worker JSONL、events-v1、
+NoteSequence-v1 均不因此升级。草稿仅保存到应用数据目录；公开工程和导出不包含本地草稿路径。
+
+桌面加载/保存响应标识 `format_version: 1`。保存与删除使用先前读取的草稿内容 SHA256 做冲突检测；
+跨进程文件锁保护校验到发布，进程退出时由操作系统释放。先落盘并同步 staging，再原子替换，
+不通过覆盖式复制伪造原子发布。Windows 路径重定向场景从实际锁文件定位物理数据目录，保证同卷发布。

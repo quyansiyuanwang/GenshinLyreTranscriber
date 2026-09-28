@@ -3432,3 +3432,14 @@ select {
 .resource-index { display: grid; gap: 4px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); }
 .resource-index > span { color: var(--accent); font-size: 9px; }
 .resource-index button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px; background: var(--chrome); border: 1px solid var(--line); color: var(--text); text-align: left; font-size: 10px; }
+.draft-save-state { padding: 4px 8px; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.draft-save-state.saved { color: var(--green); }
+.draft-save-state.dirty, .draft-save-state.saving { color: var(--accent-hot); }
+.draft-save-state.error, .draft-error { color: var(--danger); }
+.draft-recovery { padding: 9px 12px; border-bottom: 1px solid var(--accent); color: var(--text); background: #332b20; font-size: 11px; }
+.draft-recovery p { overflow-wrap: anywhere; }
+.draft-transition { width: min(560px, 90vw); border: 1px solid var(--line-bright); border-radius: 0; padding: 18px; color: var(--text); background: var(--editor); font-size: 13px; }
+.draft-transition::backdrop { background: rgb(0 0 0 / 60%); }
+.draft-transition .button-row { flex-wrap: wrap; gap: 8px; }
+.workstation [inert] { opacity: 0.65; }
+.ab-alignment-state { color: var(--muted); font-size: 10px; max-width: 190px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

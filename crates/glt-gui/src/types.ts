@@ -151,8 +151,10 @@ export interface AnalysisRequest {
 
 export interface AnalysisManifest {
   format_version: 1;
+  source?: { path: string; sha256: string; size_bytes: number };
   cache_key: string;
   decode: {
+    start_us?: number | null;
     frames: number;
     duration_us: number;
     sample_rate: number;

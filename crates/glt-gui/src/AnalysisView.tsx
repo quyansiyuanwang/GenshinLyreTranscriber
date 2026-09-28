@@ -399,7 +399,7 @@ export default function AnalysisView({
           <span className="section-number">LIVE ANALYSIS</span>
           <h3>波形、频谱与瀑布图</h3>
         </div>
-        <span className="analysis-time"><PlaybackSeconds /></span>
+        <span className="analysis-time"><PlaybackSeconds sourceHash={manifest.source?.sha256 ?? null} offsetUs={manifest.decode.start_us ?? 0} /></span>
       </div>
       <div className="waveform-stack">
         <WaveformCanvas
@@ -409,7 +409,7 @@ export default function AnalysisView({
           onSeek={onSeek}
           onSelectionChange={onSelectionChange}
         />
-        <PlaybackPlayhead durationUs={durationUs} className="analysis-playhead-track" />
+        <PlaybackPlayhead sourceHash={manifest.source?.sha256 ?? null} offsetUs={manifest.decode.start_us ?? 0} durationUs={durationUs} className="analysis-playhead-track" />
       </div>
       <div className="analysis-selection">
         <span>
@@ -447,7 +447,7 @@ export default function AnalysisView({
                 onSeek={onSeek}
                 onSelectionChange={onSelectionChange}
               />
-              <PlaybackPlayhead durationUs={durationUs} className="analysis-playhead-track" />
+              <PlaybackPlayhead sourceHash={manifest.source?.sha256 ?? null} offsetUs={manifest.decode.start_us ?? 0} durationUs={durationUs} className="analysis-playhead-track" />
             </div>
           ) : (
             <div className="analysis-placeholder">生成频谱缓存中…</div>

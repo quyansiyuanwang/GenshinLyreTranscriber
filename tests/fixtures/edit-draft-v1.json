@@ -1,0 +1,53 @@
+{
+  "format_version": 1,
+  "source_result": "C:/glt-fixture/result",
+  "base_revision_id": "performance-000",
+  "base_sha256": "56f37b53dc7ece7181223cf7c8ac1ef32f5f53a1919e38a26df7483e0ea30c1a",
+  "updated_at": "2026-09-01T00:00:00Z",
+  "performance": {
+    "format_version": 1,
+    "time_unit": "us",
+    "duration_us": 2000000,
+    "revision": {
+      "id": "performance-000",
+      "parent_id": null,
+      "source": "transcribe"
+    },
+    "source": {
+      "type": "audio",
+      "offset_us": 30000000
+    },
+    "mapping": {
+      "profile": "lyre-21-default",
+      "transpose_semitones": 0
+    },
+    "tempo_map": [],
+    "beat_grid": [],
+    "notes": [
+      {
+        "id": "n1",
+        "start_us": 100000,
+        "end_us": 400000,
+        "key": "A",
+        "pitch": 60,
+        "velocity": 90,
+        "confidence": 0.8,
+        "source_stem": "mix",
+        "candidate_id": null,
+        "original_pitch": 60,
+        "pitch_center": 60,
+        "pitch_bend_class": "stable",
+        "pitch_bends": []
+      }
+    ]
+  },
+  "editor_state": {
+    "selected_ids": [
+      "n1"
+    ],
+    "view_start_us": 0,
+    "view_duration_us": 2000000,
+    "snap_to_beat": true,
+    "tool": "select"
+  }
+}

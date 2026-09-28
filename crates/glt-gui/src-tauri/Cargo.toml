@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+jsonschema = { version = "0.57.0", default-features = false }
 base64 = "0.22.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 glt = { path = "../../glt" }

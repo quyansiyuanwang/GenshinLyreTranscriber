@@ -1,3 +1,4 @@
+import type { EditorRecoveryState } from "./editDraft";
 import { useCanvasSize } from "./useCanvasSize";
 import { PlaybackPlayhead } from "./LivePlaybackViews";
 import { playbackStore } from "./playbackRuntime";
@@ -44,6 +45,9 @@ interface Props {
   applying: boolean;
   onDocumentChange: (document: PerformanceDocument) => void;
   onApply: () => void;
+  sourceHash?: string | null;
+  initialEditorState?: EditorRecoveryState;
+  onEditorStateChange?: (state: EditorRecoveryState) => void;
 }
 
 export interface MarqueeRect {
@@ -171,15 +175,18 @@ export default function PianoRollEditor({
   applying,
   onDocumentChange,
   onApply,
+  sourceHash,
+  initialEditorState,
+  onEditorStateChange,
 }: Props) {
   const [localDocument, setLocalDocument] = useState(document);
   const [history, setHistory] = useState(emptyHistory);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [tool, setTool] = useState<"select" | "add">("select");
-  const [snapToBeat, setSnapToBeat] = useState(true);
-  const [viewStartUs, setViewStartUs] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set((initialEditorState?.selected_ids ?? []).filter((id) => document.notes.some((note) => note.id === id))));
+  const [tool, setTool] = useState<"select" | "add">(initialEditorState?.tool ?? "select");
+  const [snapToBeat, setSnapToBeat] = useState(initialEditorState?.snap_to_beat ?? true);
+  const [viewStartUs, setViewStartUs] = useState(initialEditorState?.view_start_us ?? 0);
   const [viewDurationUs, setViewDurationUs] = useState(
-    Math.max(MIN_VIEW_US, Math.min(document.duration_us, 30_000_000)),
+    initialEditorState?.view_duration_us ?? Math.max(MIN_VIEW_US, Math.min(document.duration_us, 30_000_000)),
   );
   const [dragPreview, setDragPreview] = useState<{ deltaUs: number; deltaPitch: number }>({
     deltaUs: 0,
@@ -195,6 +202,10 @@ export default function PianoRollEditor({
     () => localDocument.beat_grid.map((point) => point.at_us),
     [localDocument.beat_grid],
   );
+
+  useEffect(() => {
+    onEditorStateChange?.({ selected_ids: [...selected], tool, snap_to_beat: snapToBeat, view_start_us: viewStartUs, view_duration_us: viewDurationUs });
+  }, [selected, tool, snapToBeat, viewStartUs, viewDurationUs, onEditorStateChange]);
 
   const visibleDocument = useMemo(() => {
     if (!dragPreview.deltaUs && !dragPreview.deltaPitch) return localDocument;
@@ -653,7 +664,7 @@ export default function PianoRollEditor({
             setMarquee(null);
           }}
         />
-        <PlaybackPlayhead startUs={viewStartUs} durationUs={viewDurationUs} className="piano-playhead-track" clip />
+        <PlaybackPlayhead sourceHash={sourceHash} offsetUs={localDocument.source.offset_us} startUs={viewStartUs} durationUs={viewDurationUs} className="piano-playhead-track" clip />
       </div>
       <div className="piano-lanes">
         <span>{formatTime(viewStartUs)}</span>
@@ -675,9 +686,11 @@ export default function PianoRollEditor({
         <button
           onClick={() => {
             if (!selectedNote) return;
-            commit(splitNote(localDocument.notes, selectedNote.id, playbackStore.getPosition()));
+            const position = sourceHash === undefined ? playbackStore.getPosition() : playbackStore.getTimelinePosition(sourceHash, localDocument.source.offset_us);
+            if (position !== null) commit(splitNote(localDocument.notes, selectedNote.id, position));
           }}
-          disabled={!selectedNote}
+          disabled={!selectedNote || (sourceHash !== undefined && playbackStore.getTimeline()?.sourceHash !== sourceHash)}
+          title="需要可对齐的播放音源；候选层不可编辑"
         >
           在播放位置拆分
         </button>

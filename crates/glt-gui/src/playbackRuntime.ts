@@ -1,3 +1,4 @@
+import { positionOnTimeline, type AbAlignment } from "./abCompare";
 import { useSyncExternalStore } from "react";
 import type { PlaybackStatus, SpectrumFrame } from "./types";
 
@@ -9,12 +10,18 @@ export function createPlaybackStore(now: () => number = () => performance.now())
   let synchronized = false;
   let status: PlaybackStatus = { position_us: 0, paused: true, available: false };
   let spectrum: SpectrumFrame | null = null;
+  let timeline: AbAlignment | null = null;
   let generation = 0;
   const listeners = new Set<() => void>();
   const spectralListeners = new Set<() => void>();
   return {
     getStatus: () => status,
     getSpectrum: () => spectrum,
+    getTimeline: () => timeline,
+    setTimeline(next: AbAlignment | null) { timeline = next; listeners.forEach((listener) => listener()); },
+    getTimelinePosition(sourceHash: string | null, offsetUs: number, interpolate = true) {
+      return positionOnTimeline(interpolate ? this.getPosition() : status.position_us, timeline, sourceHash, offsetUs);
+    },
     generation: () => generation,
     invalidate() {
       synchronized = false;

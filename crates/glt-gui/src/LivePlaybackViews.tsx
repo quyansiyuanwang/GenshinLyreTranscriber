@@ -8,14 +8,15 @@ export function PlaybackClock() {
   return <>{Math.floor(seconds / 60).toString().padStart(2, "0")}:{Math.floor(seconds % 60).toString().padStart(2, "0")}.{Math.floor((seconds % 1) * 1000).toString().padStart(3, "0")}</>;
 }
 
-export function PlaybackSeconds() {
+export function PlaybackSeconds({ sourceHash, offsetUs = 0 }: { sourceHash?: string | null; offsetUs?: number }) {
   const { position_us } = usePlaybackStatus();
-  return <>{(position_us / 1_000_000).toFixed(2)}s</>;
+  const position = sourceHash === undefined ? position_us : playbackStore.getTimelinePosition(sourceHash, offsetUs, false);
+  return <>{position === null ? "独立试听" : position < 0 ? "范围外" : `${(position / 1_000_000).toFixed(2)}s`}</>;
 }
 
 export function PlaybackPlayhead({
-  startUs = 0, durationUs, className, clip = false,
-}: { startUs?: number; durationUs: number; className: string; clip?: boolean }) {
+  startUs = 0, durationUs, className, clip = false, sourceHash, offsetUs = 0,
+}: { startUs?: number; durationUs: number; className: string; clip?: boolean; sourceHash?: string | null; offsetUs?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = ref.current;
@@ -26,8 +27,9 @@ export function PlaybackPlayhead({
     const draw = () => {
       frame = 0;
       if (disposed || document.hidden || !visible) return;
-      const ratio = durationUs > 0 ? (playbackStore.getPosition() - startUs) / durationUs : -1;
-      element.style.visibility = durationUs <= 0 || (clip && (ratio < 0 || ratio > 1)) ? "hidden" : "visible";
+      const position = sourceHash === undefined ? playbackStore.getPosition() : playbackStore.getTimelinePosition(sourceHash, offsetUs);
+      const ratio = durationUs > 0 && position !== null ? (position - startUs) / durationUs : -1;
+      element.style.visibility = position === null || durationUs <= 0 || (clip && (ratio < 0 || ratio > 1)) ? "hidden" : "visible";
       element.style.transform = `translateX(${Math.max(0, Math.min(1, ratio)) * 100}%)`;
       const status = playbackStore.getStatus();
       if (status.available && !status.paused) frame = requestAnimationFrame(draw);
@@ -46,6 +48,6 @@ export function PlaybackPlayhead({
       observer.disconnect();
       document.removeEventListener("visibilitychange", sync);
     };
-  }, [startUs, durationUs, clip]);
+  }, [startUs, durationUs, clip, sourceHash, offsetUs]);
   return <div ref={ref} className={className} aria-hidden="true"><i /></div>;
 }

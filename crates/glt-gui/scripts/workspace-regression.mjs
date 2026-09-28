@@ -1,7 +1,13 @@
 // Run only in a dedicated development WebView with a non-empty published result.
 // Edits are exercised in memory and undone; no worker export is started.
-const resultDir = process.argv[2];
-if (!resultDir) throw new Error("Usage: node scripts/workspace-regression.mjs RESULT_DIR [CDP_PORT]");
+import { cpSync, mkdtempSync, lstatSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const inputResultDir = process.argv[2];
+if (!inputResultDir) throw new Error("Usage: node scripts/workspace-regression.mjs RESULT_DIR [CDP_PORT]");
+const scratch = mkdtempSync(join(tmpdir(), "glt-workspace-regression-"));
+const resultDir = join(scratch, "result");
+cpSync(inputResultDir, resultDir, { recursive: true, filter: path => !lstatSync(path).isSymbolicLink() });
 const port = Number(process.argv[3] ?? 9238);
 const pages=await fetch(`http://127.0.0.1:${port}/json/list`).then(r=>r.json());const ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);await new Promise(r=>ws.addEventListener('open',r,{once:true}));let n=0;const pending=new Map();ws.addEventListener('message',e=>{const m=JSON.parse(e.data);const p=pending.get(m.id);if(p){pending.delete(m.id);m.error?p.reject(m.error):p.resolve(m.result);}});const rpc=(method,params={})=>new Promise((resolve,reject)=>{const id=++n;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params}));});const evaljs=async expression=>{const r=await rpc('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;};const sleep=ms=>new Promise(r=>setTimeout(r,ms));const checks=[];function check(c,label){if(!c)throw new Error(label);checks.push(label);}
 const click=label=>evaljs(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)}&&b.getClientRects().length);if(!b||b.disabled)throw new Error('button not available '+${JSON.stringify(label)});b.click();})()`);
@@ -19,6 +25,7 @@ try{
  await click('分析');await click('筛选');await sleep(150);check(await evaljs(`${field}.value==='0.55'`),'filter numeric draft preserved across views');
  await click('钢琴卷帘');await sleep(100);
  await evaljs(`(()=>{const e=document.querySelector('.piano-roll');e.focus();e.dispatchEvent(new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true}));})()`);await sleep(100);check(await evaljs(`document.querySelector('.piano-toolbar').innerText`)===selected,'editor history and selection survive view switching');
+ await click('开始转换');await sleep(150);await click('放弃草稿与编辑');await sleep(150);
  await click('筛选');
  const layouts=[];
  for(const [width,height,scale] of [[1366,768,1],[1920,1080,1],[1366,768,1.25],[1366,768,1.5],[1920,1080,1.5]]){

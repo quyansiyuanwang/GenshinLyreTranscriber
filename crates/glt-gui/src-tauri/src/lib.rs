@@ -1,3 +1,4 @@
+mod edit_draft;
 mod process_tree;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -352,6 +353,24 @@ pub(crate) fn resolve_available_output(path: &Path) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+async fn media_sha256(path: PathBuf) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let before = fs::metadata(&path).map_err(|e| e.to_string())?;
+        if !before.is_file() {
+            return Err("媒体路径不是文件".to_owned());
+        }
+        let hash = project::sha256_file(&path)?;
+        let after = fs::metadata(&path).map_err(|e| e.to_string())?;
+        if before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+            return Err("媒体在校验期间发生变化，请重新载入".to_owned());
+        }
+        Ok(hash)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn read_performance(result_dir: PathBuf) -> Result<Value, String> {
     let path = result_dir.join("performance.json");
     let text = fs::read_to_string(&path)
@@ -702,6 +721,10 @@ pub fn run() {
             next_filter_output,
             next_available_output,
             read_performance,
+            media_sha256,
+            edit_draft::read_edit_session,
+            edit_draft::save_edit_draft,
+            edit_draft::delete_edit_draft,
             read_candidate_overlay,
             read_stem_set,
             next_edit_output,

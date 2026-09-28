@@ -1,5 +1,9 @@
+import ExportRevisionDialog from "./ExportRevisionDialog";
+import { EditDraftController, type DraftPublication } from "./editDraft";
+import DraftTransitionDialog from "./DraftTransitionDialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DEFAULT_LAYOUT, useWorkspaceLayout, type WorkspaceView } from "./workspaceLayout";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { join } from "@tauri-apps/api/path";
@@ -22,7 +26,6 @@ import type {
   MediaProbeDocument,
   Operation,
   CandidateNote,
-  PerformanceDocument,
   ProjectDocument,
   PlaybackStatus,
   ReportDocument,
@@ -40,7 +43,8 @@ import PianoRollEditor from "./PianoRollEditor";
 import { PlaybackClock } from "./LivePlaybackViews";
 import { playbackStore, startSerialPoll, createPollLane } from "./playbackRuntime";
 import {
-  abSwitchPosition,
+  planAbSwitch,
+  validAlignment,
   findAbSource,
   missingAbSourceMessage,
   type AbSourceOption,
@@ -306,9 +310,57 @@ function App() {
   const [clickAck, setClickAck] = useState<{ id: number; label: string } | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [report, setReport] = useState<ReportDocument | null>(null);
-  const [performance, setPerformance] = useState<PerformanceDocument | null>(null);
+  const [reportDirectory, setReportDirectory] = useState<string | null>(null);
+  const reportLoadRef = useRef(0);
+  const [drafts] = useState(() => new EditDraftController(invoke));
+  const draftState = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
+  const performance = draftState.performance;
+  const [exportChoice, setExportChoice] = useState<{ directory: string; relative: string } | null>(null);
+  const [guardReason, setGuardReason] = useState<string | null>(null);
+  const [guardBusy, setGuardBusy] = useState(false);
+  const [guardError, setGuardError] = useState<string | null>(null);
+  const guardResolver = useRef<((allow: boolean) => void) | null>(null);
+  const pendingDraftPublication = useRef<DraftPublication | null>(null);
+  const editLaunchRef = useRef(false);
+  const jobLaunchRef = useRef(false);
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const requestDraftGuard = useCallback(async (reason: string) => {
+    if (!drafts.getSnapshot().dirty) return true;
+    if (guardResolver.current) return false;
+    setGuardReason(reason); setGuardError(null);
+    return new Promise<boolean>((resolve) => { guardResolver.current = resolve; });
+  }, [drafts]);
+  async function resolveDraftGuard(choice: "save" | "discard" | "cancel" | "abandon") {
+    if (guardBusy || !guardResolver.current) return;
+    if (choice === "cancel") {
+      guardResolver.current(false); guardResolver.current = null; setGuardReason(null); return;
+    }
+    setGuardBusy(true);
+    try {
+      if (choice === "save") await drafts.flush();
+      else if (choice === "abandon") { await drafts.abandonLocal(); setNotice("已按选择放弃本窗口编辑；磁盘草稿未更改"); }
+      else await drafts.discard();
+      guardResolver.current?.(true); guardResolver.current = null; setGuardReason(null);
+    } catch (reason) { setGuardError(String(reason)); }
+    finally { setGuardBusy(false); }
+  }
+  useEffect(() => {
+    let disposed = false; let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onCloseRequested(async (event) => {
+      if (!drafts.getSnapshot().dirty) return;
+      event.preventDefault();
+      if (await requestDraftGuard("关闭窗口")) {
+        try { await getCurrentWindow().destroy(); } catch (reason) { setError(`关闭窗口失败：${String(reason)}`); }
+      }
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch((reason) => setError(`未保存保护初始化失败，请勿直接关闭：${String(reason)}`));
+    return () => { disposed = true; unlisten?.(); };
+  }, [drafts, requestDraftGuard]);
   const [candidateNotes, setCandidateNotes] = useState<CandidateNote[]>([]);
   const [editApplying, setEditApplying] = useState(false);
+  const activeAudioRef = useRef<AbSourceOption | null>(null);
+  const [abAlignmentNotice, setAbAlignmentNotice] = useState("尚未开始试听；缺少元数据时使用独立时间轴");
+  const [mediaIdentity, setMediaIdentity] = useState<{ path: string; hash: string } | null>(null);
   const [abSource, setAbSource] = useState("preview");
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [separationRunning, setSeparationRunning] = useState(false);
@@ -441,6 +493,7 @@ function App() {
     (artifact) => artifact.kind === "preview_wav",
   );
 
+  const canRefilter = !!result?.result.artifacts.some((artifact) => artifact.kind === "candidate_cache");
   const counts = useMemo(() => Object.entries(report?.counts ?? {}), [report]);
   const queueSummary = useMemo(() => queueCounts(queueItems), [queueItems]);
   const desktopPresets = useMemo(
@@ -452,6 +505,9 @@ function App() {
     [candidateNotes, filterRules],
   );
   const inputIsResult = !!result && request.input.replace(/\\/g, "/").toLowerCase() === result.result.output_dir.replace(/\\/g, "/").toLowerCase();
+  const inputMetadata = (reportDirectory === result?.result.output_dir ? report?.input : undefined) as { sha256?: unknown; segment_start_us?: unknown } | undefined;
+  const resultSourceHash = typeof inputMetadata?.sha256 === "string" && /^[0-9a-f]{64}$/.test(inputMetadata.sha256) ? inputMetadata.sha256 : null;
+  const resultOffset = typeof inputMetadata?.segment_start_us === "number" ? inputMetadata.segment_start_us : null;
   const abOptions = useMemo<AbSourceOption[]>(() => {
     const options: AbSourceOption[] = [
       {
@@ -461,8 +517,11 @@ function App() {
           ? `${result.result.output_dir}\\${previewArtifact.relative_path}`
           : null,
         primary: "mapped",
+        alignment: performance && resultSourceHash && resultOffset === performance.source.offset_us
+          ? { sourceHash: resultSourceHash, offsetUs: resultOffset, durationUs: performance.duration_us } : null,
       },
-      { id: "original", label: "原音", path: inputIsResult ? null : request.input || null, primary: "original" },
+      { id: "original", label: "原音", path: inputIsResult ? null : request.input || null, primary: "original", alignment: mediaIdentity?.path === request.input && mediaProbe && mediaProbe.path.replace(/\\/g, "/").toLowerCase() === request.input.replace(/\\/g, "/").toLowerCase()
+        ? { sourceHash: mediaIdentity.hash, offsetUs: 0, durationUs: mediaProbe.duration_us } : null },
     ];
     for (const artifact of result?.result.artifacts ?? []) {
       if (artifact.kind === "instrumental_wav" || artifact.kind === "routed_audio") {
@@ -479,12 +538,14 @@ function App() {
         options.push({
           id: `stem-${stem.role}`,
           label: stemLabel(stem.role),
+          alignment: { sourceHash: stemSet.source.sha256, offsetUs: 0, durationUs: stem.duration_us },
           path: `${parentPath(stemSetPath)}\\${stem.relative_path}`,
           primary: "extra",
         });
       }
       options.push({
         id: "instrumental",
+        alignment: { sourceHash: stemSet.source.sha256, offsetUs: 0, durationUs: stemSet.instrumental.duration_us },
         label: "Instrumental",
         path: `${parentPath(stemSetPath)}\\${stemSet.instrumental.relative_path}`,
         primary: "extra",
@@ -494,7 +555,17 @@ function App() {
       options.push({ id: "routed_audio", label: "路由", path: routedAudioPath, primary: "extra" });
     }
     return options;
-  }, [previewArtifact, request.input, inputIsResult, result, routedAudioPath, stemSet, stemSetPath]);
+  }, [previewArtifact, request.input, inputIsResult, result, routedAudioPath, stemSet, stemSetPath, mediaIdentity, mediaProbe, performance, resultSourceHash, resultOffset]);
+  useEffect(() => {
+    const active = activeAudioRef.current;
+    if (!active || validAlignment(active.alignment)) return;
+    const verified = abOptions.find((option) => option.path === active.path && validAlignment(option.alignment));
+    if (verified && validAlignment(verified.alignment)) {
+      activeAudioRef.current = { ...active, alignment: verified.alignment };
+      playbackStore.setTimeline(verified.alignment);
+      setAbAlignmentNotice("音源身份已校验，可按原素材时间对齐");
+    }
+  }, [abOptions]);
   const hasActiveAbSource = abOptions.some((option) => option.id === abSource && option.path);
   const abOriginal = abOptions.find((option) => option.primary === "original");
   const abMapped = abOptions.find((option) => option.primary === "mapped");
@@ -557,6 +628,18 @@ function App() {
   }, [filterRules.length]);
 
   useEffect(() => {
+    let current = true;
+    setMediaIdentity(null);
+    if (!request.input || inputIsResult || isMidi(request.input)) return;
+    const timer = setTimeout(() => {
+      void invoke<string>("media_sha256", { path: request.input }).then((hash) => {
+        if (current) setMediaIdentity({ path: request.input, hash });
+      }).catch((reason) => { if (current) setAbAlignmentNotice(`源文件校验不可用，独立试听：${String(reason)}`); });
+    }, 500);
+    return () => { current = false; clearTimeout(timer); };
+  }, [request.input, inputIsResult]);
+
+  useEffect(() => {
     if (!request.input || isMidi(request.input)) {
       setMediaProbe(null);
       setMediaProbeError(null);
@@ -593,26 +676,14 @@ function App() {
   useEffect(() => {
     let current = true;
     const directory = result?.result.output_dir;
-    if (!directory) {
-      setPerformance(null);
-      setCandidateNotes([]);
-      return;
-    }
-    // Result identities, not generic revision names, own editor history.
-    setPerformance(null);
+    void drafts.load(directory ?? null);
     setCandidateNotes([]);
-    void invoke<PerformanceDocument>("read_performance", { resultDir: directory })
-      .then((value) => { if (current) setPerformance(value); })
-      .catch((reason) => {
-        if (!current) return;
-        setPerformance(null);
-        setNotice(`performance: ${String(reason)}`);
-      });
+    if (!directory) return () => drafts.cancelLoad();
     void invoke<CandidateNote[]>("read_candidate_overlay", { resultDir: directory })
       .then((value) => { if (current) setCandidateNotes(value); })
       .catch(() => { if (current) setCandidateNotes([]); });
-    return () => { current = false; };
-  }, [result?.result.output_dir]);
+    return () => { current = false; drafts.cancelLoad(); };
+  }, [result?.result.output_dir, drafts]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -627,19 +698,28 @@ function App() {
       }
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
-    void listen<JobResult>("job-finished", ({ payload }) => {
+    void listen<JobResult>("job-finished", async ({ payload }) => {
+      if (pendingDraftPublication.current && pendingRevisionRef.current?.kind === "performance-edit" && pendingRevisionRef.current.path === payload.result.output_dir) {
+        const publication = pendingDraftPublication.current;
+        pendingDraftPublication.current = null;
+        try { await drafts.publicationSucceeded(publication); }
+        catch (reason) { setError(`版本已发布，但恢复草稿清理失败，原草稿已保留：${String(reason)}`); }
+      }
+      editLaunchRef.current = false; jobLaunchRef.current = false;
       setRunning(false);
       setEditApplying(false);
       setFraction(1);
       setStage("completed");
       setResult(payload);
-      setLayout((current) => ({ ...current, view: pendingRevisionRef.current?.kind === "edit" ? "editor" : "filter" }));
+      setLayout((current) => ({ ...current, view: pendingRevisionRef.current?.kind === "performance-edit" ? "editor" : "filter" }));
       setRecentOutputs((current) => addRecentPath(current, payload.result.output_dir));
       setPlayback("idle");
       setNotice("转换完成");
+      const reportEpoch = ++reportLoadRef.current;
+      setReport(null); setReportDirectory(null);
       void invoke<ReportDocument>("read_report", { resultDir: payload.result.output_dir })
-        .then(setReport)
-        .catch((reason) => setError(String(reason)));
+        .then((value) => { if (reportEpoch === reportLoadRef.current) { setReport(value); setReportDirectory(payload.result.output_dir); } })
+        .catch((reason) => { if (reportEpoch === reportLoadRef.current) setError(String(reason)); });
       const pending = pendingRevisionRef.current;
       if (pending && pending.path === payload.result.output_dir) {
         pendingRevisionRef.current = null;
@@ -651,6 +731,7 @@ function App() {
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<string>("job-failed", ({ payload }) => {
+      editLaunchRef.current = false; jobLaunchRef.current = false; pendingDraftPublication.current = null;
       setRunning(false);
       setEditApplying(false);
       setStage("failed");
@@ -662,6 +743,7 @@ function App() {
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen("job-cancelled", () => {
+      editLaunchRef.current = false; jobLaunchRef.current = false; pendingDraftPublication.current = null;
       setRunning(false);
       setEditApplying(false);
       setStage("cancelled");
@@ -774,8 +856,9 @@ function App() {
     const status = await invoke<PlaybackStatus>("playback_status");
     if (!isCurrent() || generation !== playbackStore.generation()) return;
     playbackStore.setStatus(status);
-    const range = request.start_seconds !== null && request.end_seconds !== null
-      ? { startUs: Math.round(request.start_seconds * 1_000_000), endUs: Math.round(request.end_seconds * 1_000_000) }
+    const timeline = playbackStore.getTimeline();
+    const range = timeline && timeline.sourceHash === mediaIdentity?.hash && request.start_seconds !== null && request.end_seconds !== null
+      ? { startUs: Math.max(0, Math.round(request.start_seconds * 1_000_000) - timeline.offsetUs), endUs: Math.min(timeline.durationUs, Math.round(request.end_seconds * 1_000_000) - timeline.offsetUs) }
       : null;
     if (!loopSeekingRef.current && shouldLoopSeek(status.position_us, range, loopEnabled, status.paused, status.available)) {
       loopSeekingRef.current = true;
@@ -786,7 +869,7 @@ function App() {
         }
       } finally { loopSeekingRef.current = false; }
     }
-  }, (reason) => { playbackStore.freeze(); setPlaybackError(`无法更新播放状态：${String(reason)}`); }, 50, statusLane.current), [loopEnabled, request.start_seconds, request.end_seconds]);
+  }, (reason) => { playbackStore.freeze(); setPlaybackError(`无法更新播放状态：${String(reason)}`); }, 50, statusLane.current), [loopEnabled, request.start_seconds, request.end_seconds, mediaIdentity]);
 
   useEffect(() => {
     if (!analysisManifest?.spectral || !analysisDirectory || !analysisVisible) return;
@@ -796,8 +879,10 @@ function App() {
       if (document.hidden || playbackCommandBusyRef.current) return;
       const status = playbackStore.getStatus();
       const generation = playbackStore.generation();
+      const analysisPosition = status.available ? playbackStore.getTimelinePosition(analysisManifest.source?.sha256 ?? null, analysisManifest.decode.start_us ?? 0, false) : 0;
+      if (analysisPosition === null || analysisPosition < 0 || analysisPosition > analysisManifest.decode.duration_us) return;
       const frame = Math.min(analysisManifest.spectral!.frames - 1, Math.max(0,
-        Math.round(status.position_us / ((analysisManifest.spectral!.hop_size * 1_000_000) / analysisManifest.decode.sample_rate))));
+        Math.round(analysisPosition / ((analysisManifest.spectral!.hop_size * 1_000_000) / analysisManifest.decode.sample_rate))));
       if (frame < 0 || (frame === lastFrame && generation === lastGeneration)) return;
       const spectrum = await invoke<SpectrumFrame>("analysis_spectrum", { directory: analysisDirectory, frame });
       if (!isCurrent() || generation !== playbackStore.generation()) return;
@@ -924,7 +1009,9 @@ function App() {
     }
   }
 
-  async function applyInput(path: string, analyze = true) {
+  async function applyInput(path: string, analyze = true, checkDraft = true) {
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再更换素材"); return; }
+    if (checkDraft && !(await requestDraftGuard("更换素材"))) return;
     if (await invoke<boolean>("path_is_directory", { path })) {
       await openResultPath(path);
       return;
@@ -1149,10 +1236,14 @@ function App() {
     await openResultPath(selected);
   }
 
-  async function openResultPath(selected: string) {
+  async function openResultPath(selected: string, fromLaunch = false) {
+    if (runningRef.current || editLaunchRef.current || (!fromLaunch && jobLaunchRef.current)) { setError("任务运行中，请等待完成或取消后再替换结果"); return; }
+    if (!(await requestDraftGuard("替换结果"))) return;
     try {
+      const reportEpoch = ++reportLoadRef.current;
       const opened = await invoke<ReportDocument>("read_report", { resultDir: selected });
-      setReport(opened);
+      if (reportEpoch !== reportLoadRef.current) return;
+      setReport(opened); setReportDirectory(selected);
       setRecentOutputs((current) => addRecentPath(current, selected));
       setResult({
         job_id: "opened-result",
@@ -1171,12 +1262,16 @@ function App() {
   }
 
   async function startJob(next = request, waitForCompletion = false): Promise<string | null> {
+    if (runningRef.current || editLaunchRef.current || jobLaunchRef.current) { if (waitForCompletion) throw new QueueCancelledError("任务运行中"); return null; }
+    jobLaunchRef.current = true;
+    let submitted = false;
+    try {
     if (
       (next.operation === "transcribe" || next.operation === "convert_midi") &&
       next.input.trim() &&
       (await invoke<boolean>("path_is_directory", { path: next.input }))
     ) {
-      await openResultPath(next.input);
+      await openResultPath(next.input, true);
       if (waitForCompletion) throw new Error("结果目录已作为结果打开，不进入批量转录");
       return null;
     }
@@ -1191,6 +1286,10 @@ function App() {
       return null;
     }
     setError(null);
+    if (!(await requestDraftGuard("运行新任务并替换结果"))) {
+      if (waitForCompletion) throw new QueueCancelledError("已取消新任务，保留当前编辑");
+      return null;
+    }
     setWarnings([]);
     // Keep the last successful result and unsaved editor state until publication succeeds.
     setRunning(true);
@@ -1214,6 +1313,7 @@ function App() {
         }
       }
       const startedOutput = await invoke<string>("start_job", { request: effective });
+      submitted = true;
       if (startedOutput !== effective.output) {
         effective = { ...effective, output: startedOutput };
         if (effective.operation !== "refilter") setRequest(effective);
@@ -1229,6 +1329,7 @@ function App() {
       if (waitForCompletion) throw reason;
       return null;
     }
+    } finally { if (!submitted) jobLaunchRef.current = false; }
   }
 
   async function cancelJob() {
@@ -1241,12 +1342,14 @@ function App() {
   }
 
   async function createProject() {
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
     const selected = await saveDialog({
       title: "创建 GenshinLyreTranscriber 工程",
       defaultPath: request.input ? `${request.input.split(/[/\\]/).pop()}.gltproj` : "project.gltproj",
       filters: [{ name: "GLT Project", extensions: ["gltproj"] }],
     });
     if (typeof selected !== "string") return;
+    if (!(await requestDraftGuard("创建工程"))) return;
     const path = selected.endsWith(".gltproj") ? selected : `${selected}.gltproj`;
     const name = path.split(/[/\\]/).pop()?.replace(/\.gltproj$/i, "") || "project";
     try {
@@ -1264,6 +1367,7 @@ function App() {
   }
 
   async function openProject() {
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
     const selected = await openDialog({
       multiple: false,
       directory: false,
@@ -1271,12 +1375,13 @@ function App() {
       filters: [{ name: "GLT Project", extensions: ["gltproj"] }],
     });
     if (typeof selected !== "string") return;
+    if (!(await requestDraftGuard("打开工程"))) return;
     try {
       const document = await invoke<ProjectDocument>("project_open", { path: selected });
       setProject(document);
       setProjectPath(selected);
       if (document.source?.path) {
-        await applyInput(document.source.path);
+        await applyInput(document.source.path, true, false);
       }
       setNotice("工程已打开");
     } catch (reason) {
@@ -1295,6 +1400,8 @@ function App() {
   }
 
   async function closeProject() {
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
+    if (!(await requestDraftGuard("关闭工程"))) return;
     try {
       await invoke("project_close");
       setProject(null);
@@ -1372,18 +1479,22 @@ function App() {
       playbackStore.invalidate();
       setNotice(`正在准备播放：${option.label}`);
       const status = await invoke<PlaybackStatus>("playback_status");
-      const position = abSwitchPosition(status, playbackStore.getStatus().position_us);
+      const plan = planAbSwitch(activeAudioRef.current, option, status.position_us, status.available);
+      const position = plan.positionUs;
       await invoke("play_ab_source", {
         path: option.path,
         volume,
         positionUs: position,
       });
+      activeAudioRef.current = { ...option };
+      playbackStore.setTimeline(validAlignment(option.alignment) ? option.alignment : null);
+      setAbAlignmentNotice(plan.message);
       playbackStore.setStatus({ position_us: position, available: true, paused: false });
       setAbSource(sourceId);
       setPlayback(sourceId === "original" ? "playing-source" : "playing");
       setPlaybackError(null);
       setError(null);
-      setNotice(`正在播放：${option.label}`);
+      setNotice(`正在播放：${option.label} · ${plan.message}`);
     } catch (reason) {
       setPlayback("error");
       setPlaybackError(String(reason));
@@ -1418,6 +1529,17 @@ function App() {
     }
   }, []);
 
+  async function seekFromAnalysis(position: number) {
+    const timeline = playbackStore.getTimeline();
+    if (!analysisManifest?.source || !timeline || timeline.sourceHash !== analysisManifest.source.sha256) {
+      setPlaybackError("当前试听无法与此分析缓存对齐，请播放对应原音后定位"); return;
+    }
+    const local = position + (analysisManifest.decode.start_us ?? 0) - timeline.offsetUs;
+    const bounded = Math.max(0, Math.min(timeline.durationUs - 1, local));
+    await seekAnalysis(bounded);
+    if (bounded !== local) setAbAlignmentNotice("分析定位超出当前音源范围，已定位到有效边界");
+  }
+
   async function pausePreview() {
     if (playbackCommandBusyRef.current) return;
     playbackCommandBusyRef.current = true;
@@ -1443,6 +1565,8 @@ function App() {
     try {
       playbackStore.invalidate();
       await invoke("stop_preview");
+      activeAudioRef.current = null;
+      playbackStore.setTimeline(null);
       playbackStore.setStatus({ position_us: 0, paused: true, available: false });
       setPlayback("idle");
       setNotice("试听已停止");
@@ -1736,12 +1860,14 @@ function App() {
   }
 
   async function applyEditRevision() {
-    if (!result || !performance) return;
+    if (!result || !performance || runningRef.current || jobLaunchRef.current || editLaunchRef.current || draftState.recoveryPending) return;
+    editLaunchRef.current = true;
     setRunning(true);
     setEditApplying(true);
     setError(null);
     setStage("validating");
     try {
+      pendingDraftPublication.current = await drafts.preparePublication();
       const output = await invoke<string>("next_edit_output", {
         source: result.result.output_dir,
       });
@@ -1760,6 +1886,7 @@ function App() {
       });
       setNotice(`正在导出 ${output.split(/[/\\]/).pop()}`);
     } catch (reason) {
+      editLaunchRef.current = false; jobLaunchRef.current = false; pendingDraftPublication.current = null;
       setRunning(false);
       setEditApplying(false);
       setError(String(reason));
@@ -1835,11 +1962,11 @@ function App() {
     (startUs: number | null, endUs: number | null) => {
       setRequest((current) => ({
         ...current,
-        start_seconds: startUs === null ? null : startUs / 1_000_000,
-        end_seconds: endUs === null ? null : endUs / 1_000_000,
+        start_seconds: startUs === null ? null : (startUs + (analysisManifest?.decode.start_us ?? 0)) / 1_000_000,
+        end_seconds: endUs === null ? null : (endUs + (analysisManifest?.decode.start_us ?? 0)) / 1_000_000,
       }));
     },
-    [],
+    [analysisManifest?.decode.start_us],
   );
 
   const handleAnalyzeSelection = useCallback(() => {
@@ -2026,7 +2153,7 @@ function App() {
 
           <div className="tool-context">
             <span>ACTIVE SOURCE</span>
-            <strong title={findAbSource(abOptions, abSource)?.path ?? request.input}>{hasActiveAbSource ? findAbSource(abOptions, abSource)?.label : sourceName}</strong>
+            <strong title={activeAudioRef.current?.path ?? request.input}>{activeAudioRef.current?.label ?? sourceName}</strong>
           </div>
 
           <select aria-label="试听音源" className="transport-source" value={abSource} disabled={playbackBusy} onChange={(event) => void switchAbSource(event.target.value)}>
@@ -2039,6 +2166,10 @@ function App() {
             {running ? stage : notice}
           </div>
 
+          <span className="ab-alignment-state" title={abAlignmentNotice}>{abAlignmentNotice}</span>
+          <span className={`draft-save-state ${draftState.status}`} role="status" title="草稿不是工程保存，也不是已发布音符版本">
+            {draftState.recoveryPending ? "草稿待恢复" : draftState.status === "saving" ? "草稿保存中…" : draftState.status === "error" ? "草稿保存/加载异常" : draftState.dirty ? draftState.status === "saved" ? "草稿已保存 · 未发布" : "编辑待保存 · 未发布" : "无未发布编辑"}
+          </span>
           <div className="toolbar-progress" aria-hidden="true">
             <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? (running ? 0 : 1)) * 100))}%` }} />
           </div>
@@ -2281,6 +2412,17 @@ function App() {
         <button aria-pressed={layout.inspector} title="展开或收起检查器" onClick={() => setLayout((current) => ({ ...current, inspector: !current.inspector }))}>检查器</button>
       </nav>
       <main className="workspace" aria-label="中央工作区">
+        {(draftState.recoveryPending || draftState.error) && <section className="draft-recovery" aria-label="恢复草稿">
+          <strong>{draftState.recoveryPending ? "发现未发布的恢复草稿" : "恢复草稿状态"}</strong>
+          {draftState.session?.draft && <p>{new Date(draftState.session.draft.updated_at).toLocaleString()} · {draftState.session.draft.performance.notes.length} 音符</p>}
+          {draftState.error && <p role="alert">{draftState.error}</p>}
+          {draftState.recoveryPending && <div className="button-row">
+            <button disabled={!draftState.session?.can_restore || running} onClick={() => { drafts.restore(); showView("editor"); }}>恢复草稿</button>
+            <button disabled={running} onClick={() => { if (!guardResolver.current) { setGuardReason("放弃已有恢复草稿（不可撤销）"); setGuardError(null); guardResolver.current = () => undefined; } }}>放弃已有草稿</button>
+          </div>}
+          {draftState.error && !draftState.dirty && result && <button disabled={running} onClick={() => void drafts.load(result.result.output_dir)}>重新检查基准与草稿</button>}
+          {draftState.status === "error" && draftState.dirty && <button onClick={() => void drafts.flush().catch((reason) => setError(String(reason)))}>重试保存草稿</button>}
+        </section>}
         <div id="view-analysis" role="tabpanel" hidden={layout.view !== "analysis"}>
           {!analysisManifest && <div className="workspace-empty"><strong>音频分析</strong><p>从左侧载入素材，再分析波形与频谱。分析与转录各自独立。</p><button disabled={!request.input || analysisRunning} title={!request.input ? "请先载入素材" : "分析当前音频范围"} onClick={() => void startAnalysis(request.input, request.output)}>分析当前范围</button></div>}
 
@@ -2317,14 +2459,14 @@ function App() {
               selectionStartUs={
                 request.start_seconds === null
                   ? null
-                  : Math.round(request.start_seconds * 1_000_000)
+                  : Math.round(request.start_seconds * 1_000_000) - (analysisManifest.decode.start_us ?? 0)
               }
               selectionEndUs={
                 request.end_seconds === null
                   ? null
-                  : Math.round(request.end_seconds * 1_000_000)
+                  : Math.round(request.end_seconds * 1_000_000) - (analysisManifest.decode.start_us ?? 0)
               }
-              onSeek={seekAnalysis}
+              onSeek={(position) => void seekFromAnalysis(position)}
               onSelectionChange={handleAnalysisSelectionChange}
               onAnalyzeSelection={handleAnalyzeSelection}
               onTranscribeSelection={handleTranscribeSelection}
@@ -2540,9 +2682,9 @@ function App() {
                 <strong>{result.result.output_dir}</strong>
               </div>
               <div className="filter-actions" hidden={layout.view !== "filter"}>
-                <button onClick={() => void applyPreset("auto")}>自动检测</button>
-                <button onClick={() => void applyPreset("balanced")}>balanced</button>
-                <button onClick={() => void applyPreset("melody")}>melody</button>
+                <button disabled={running || !canRefilter} title={canRefilter ? "从完整候选重新筛选" : "缺少候选缓存，请重新转录"} onClick={() => void applyPreset("auto")}>自动检测</button>
+                <button disabled={running || !canRefilter} title={canRefilter ? "从完整候选重新筛选" : "缺少候选缓存，请重新转录"} onClick={() => void applyPreset("balanced")}>balanced</button>
+                <button disabled={running || !canRefilter} title={canRefilter ? "从完整候选重新筛选" : "缺少候选缓存，请重新转录"} onClick={() => void applyPreset("melody")}>melody</button>
                 <button onClick={() => showView("filter")}>图形筛选</button>
               </div>
             </div>
@@ -2568,6 +2710,7 @@ function App() {
                   <small>拖动阈值即时重算；“应用横向阈值”后才生成新的不可变结果目录。</small>
                 </div>
                 <FilterPreviewCanvas
+                  onRestoreRule={(index, original) => setFilterRules((current) => current.map((rule, i) => i === index ? original : rule))}
                   notes={candidateNotes}
                   rules={filterRules}
                   activeRuleIndex={activeFilterRule}
@@ -2587,14 +2730,17 @@ function App() {
             </div>
 
             </div>
-            <div id="view-editor" role="tabpanel" hidden={layout.view !== "editor"}>
+            <div id="view-editor" role="tabpanel" hidden={layout.view !== "editor"} inert={running || editApplying || draftState.recoveryPending}>
             {performance && (
               <PianoRollEditor
-                key={`${result.result.output_dir}:${performance.revision.id}`}
+                key={`${result.result.output_dir}:${performance.revision.id}:${draftState.editorKey}`}
                 document={performance}
                 candidates={candidateNotes}
                 applying={editApplying}
-                onDocumentChange={setPerformance}
+                sourceHash={resultSourceHash}
+                initialEditorState={draftState.editor}
+                onEditorStateChange={drafts.updateEditor}
+                onDocumentChange={drafts.updatePerformance}
                 onApply={() => void applyEditRevision()}
               />
             )}
@@ -2950,6 +3096,7 @@ function App() {
         </div>
         <div hidden={layout.view !== "filter"}>
           <p className="inspector-help">组内 AND，组间 OR；音高按原始 MIDI 匹配。图形调整只预览，应用才生成新结果。</p>
+          {result && !canRefilter && <p className="inspector-help">此结果缺少候选缓存，不能重新筛选。请重新转录；已有试听与导出仍可使用。</p>}
           {result ? <div className="filter-inspector">
                 {filterRules.map((rule, index) => (
                   <div
@@ -3040,21 +3187,21 @@ function App() {
                       添加横向阈值组
                     </button>
                   )}
-                  <button className="primary-button" onClick={() => void applyManualFilter()}>
+                  <button className="primary-button" disabled={running || !canRefilter} title={canRefilter ? "应用规则并生成新版本" : "缺少候选缓存，请重新转录"} onClick={() => void applyManualFilter()}>
                     应用横向阈值
                   </button>
                 </div>
           </div> : <p>载入含候选缓存的结果后可筛选。</p>}
         </div>
         <div hidden={layout.view !== "editor"}>
-          {performance && <div className="inspector-help"><strong>映射编辑层</strong><p>{performance.notes.length} 音符 · {(performance.duration_us / 1_000_000).toFixed(2)}s</p><p>候选为只读参考。当前编辑仅在会话内保存，请发布 edit-NN 版本后再退出。</p></div>}
+          {performance && <div className="inspector-help"><strong>映射编辑层</strong><p>{performance.notes.length} 音符 · {(performance.duration_us / 1_000_000).toFixed(2)}s</p><p>候选为只读参考。恢复草稿自动保存到应用数据目录，不属于已发布版本；正式导出请发布 edit-NN。恢复时保留选择、缩放与工具，撤销历史从恢复点重新开始。</p></div>}
           {result && <><div className="revision-label">当前发布目录：{result.result.output_dir}</div>
             <div className="result-grid">
               <div className="preview-card">
                 <div className="ab-compare-heading">
                   <div>
-                    <span>A/B 同轨对比</span>
-                    <strong>{previewArtifact ? "原音与映射试听共用播放位置" : "缺少 preview.wav，仅可播放原音"}</strong>
+                    <span>A/B 试听与时间对齐</span>
+                    <strong>{abAlignmentNotice}</strong>
                   </div>
                   <small><PlaybackClock /></small>
                 </div>
@@ -3126,12 +3273,10 @@ function App() {
                 {result.result.artifacts.map((artifact) => (
                   <button
                     key={`${artifact.kind}-${artifact.relative_path}`}
-                    onClick={() =>
-                      void openLocalPath(
-                        `${result.result.output_dir}\\${artifact.relative_path}`,
-                        `产物 ${artifact.relative_path}`,
-                      )
-                    }
+                    onClick={() => {
+                      if (draftState.dirty || draftState.recoveryPending) setExportChoice({ directory: result.result.output_dir, relative: artifact.relative_path });
+                      else void openLocalPath(`${result.result.output_dir}\\${artifact.relative_path}`, `产物 ${artifact.relative_path}`);
+                    }}
                   >
                     <span>{artifact.kind}</span>
                     <strong>{artifact.relative_path}</strong>
@@ -3364,6 +3509,11 @@ function App() {
           </section>
         </div>
       </footer>
+      {exportChoice && <ExportRevisionDialog revision={exportChoice.directory}
+        onSaved={() => { const choice = exportChoice; setExportChoice(null); void openLocalPath(`${choice.directory}\\${choice.relative}`, `已发布产物 ${choice.relative}`); }}
+        onPublish={() => { setExportChoice(null); if (draftState.recoveryPending) { showView("editor"); setNotice("请先恢复或放弃已有草稿，再发布编辑版本"); } else void applyEditRevision(); }}
+        onCancel={() => setExportChoice(null)} />}
+      {guardReason && <DraftTransitionDialog canSave={draftState.dirty} reason={guardReason} busy={guardBusy} error={guardError} onChoice={(choice) => void resolveDraftGuard(choice)} />}
       {toast && (
         <div
           key={toast.id}
