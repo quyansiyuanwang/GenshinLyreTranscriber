@@ -127,16 +127,30 @@ glt-local-full-separator-component-windows-x64.zip
 从桌面端安装：
 
 1. 启动 GenshinLyreTranscriber。
-2. 左侧 `SEPARATOR COMPONENT` 点击“安装组件”；未安装时“分离与路由”区域也会显示安装入口。
+2. 左侧 `SEPARATOR COMPONENT` 点击“安装 / 修复组件”；未安装时“分离与路由”区域也会显示安装入口。
 3. 选择上述 ZIP，等待显示 `Demucs 4.1.0` 和 `htdemucs`。
 
-安装目录固定为：
+默认安装目录为：
 
 ```text
 %APPDATA%\com.quyansiyuanwang.genshinlyretranscriber\separator
 ```
 
 组件包含运行时哈希、模型清单和许可证，安装时会逐项校验；损坏或被修改的 ZIP 会被拒绝。
+
+也支持便携组件：将完整组件 ZIP 解压到主程序旁的 `separator` 文件夹，确保
+`separator/separator-component-v1.json` 与 `separator/worker/glt-separator-worker.exe`
+都存在，重启后优先使用此目录。界面左侧会显示实际使用的组件路径。
+不要只复制 exe；还需要 `_internal`、模型与许可证。
+
+如果出现 `separator file is missing`，展开左侧组件错误详情检查实际路径，使用完整组件 ZIP
+重新安装。某些受打包宿主管理的进程会重定向 AppData，导致辅助工具与独立启动的软件看到
+不同文件；这种情况下可使用非 AppData 路径下的便携组件。不要关闭路径或哈希校验来绕过错误。
+
+如果出现 `unknown field workerPath`、`stemSet` 或 `maxVoices`，这是旧桌面端请求字段错误，
+不是模型缺失。请更新 GUI；无需重新下载模型。分离和路由的重复操作会选择新的输出目录，
+不覆盖已有结果。
+
 
 ## 兼容谱与精确谱听起来不同
 

@@ -238,7 +238,7 @@ export default function PianoRollEditor({
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, select")) return;
+      if (!target?.closest(".piano-roll") || target.closest("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         event.shiftKey ? redo() : undo();
@@ -615,7 +615,7 @@ export default function PianoRollEditor({
   const showPlayhead = playheadRatio >= 0 && playheadRatio <= 1;
 
   return (
-    <div className="piano-roll">
+    <div className="piano-roll" tabIndex={0} aria-label="钢琴卷帘编辑区">
       <div className="piano-toolbar">
         <div className="button-row">
           <button className={tool === "select" ? "primary-button" : "ghost-button"} onClick={() => setTool("select")}>选择</button>

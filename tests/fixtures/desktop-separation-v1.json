@@ -1,0 +1,17 @@
+{
+  "separation": {
+    "component": "component",
+    "input": "song.flac",
+    "output": "stems",
+    "model": "htdemucs",
+    "worker_path": null
+  },
+  "routing": {
+    "stem_set": "stems/stem-set.json",
+    "output": "routing",
+    "mode": "solo",
+    "max_voices": 3,
+    "plan": null,
+    "worker_path": null
+  }
+}

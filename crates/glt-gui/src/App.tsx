@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { appDataDir, join } from "@tauri-apps/api/path";
+import { join } from "@tauri-apps/api/path";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -33,7 +33,8 @@ import type {
   SpectrumFrame,
   WaveformPayload,
 } from "./types";
-import AnalysisView from "./AnalysisView";
+import { LiveAnalysisView as AnalysisView, LivePianoRollEditor as PianoRollEditor, PlaybackClock } from "./LivePlaybackViews";
+import { playbackStore, startSerialPoll } from "./playbackRuntime";
 import {
   abSwitchPosition,
   findAbSource,
@@ -48,7 +49,6 @@ import { filterMetricDefinition, type FilterMetric } from "./filterMetrics";
 import ParameterSlider from "./ParameterSlider";
 import { addRecentPath, parseRecentPaths } from "./recentPaths";
 import { shouldLoopSeek } from "./playbackLoop";
-import PianoRollEditor from "./PianoRollEditor";
 import SegmentedControl from "./SegmentedControl";
 import { buildCustomRoutingPlan, defaultStemRoute, type StemRouteControl, type StemTarget } from "./routingPlan";
 import {
@@ -80,6 +80,8 @@ import {
   parsePortableConfig,
   serializePortableConfig,
 } from "./portableConfig";
+
+import { separationArgs, routingArgs } from "./separationRequests";
 
 type NumericDraftFilterKey = Exclude<keyof DraftFilterRule, "enabled">;
 
@@ -226,14 +228,6 @@ function countLabel(key: string): string {
   return labels[key] ?? key;
 }
 
-function formatClock(valueUs: number): string {
-  const totalSeconds = Math.max(0, valueUs) / 1_000_000;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  const milliseconds = Math.floor((totalSeconds % 1) * 1000);
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
-}
-
 function stemLabel(role: string): string {
   const labels: Record<string, string> = {
     vocals: "人声",
@@ -327,16 +321,19 @@ function App() {
   const [project, setProject] = useState<ProjectDocument | null>(null);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [separatorStatus, setSeparatorStatus] = useState<SeparatorComponentStatus | null>(null);
+  const [separatorInstalling, setSeparatorInstalling] = useState(false);
+  const separatorInstallRef = useRef(false);
   const [separatorDirectory, setSeparatorDirectory] = useState<string | null>(null);
   const [analysisManifest, setAnalysisManifest] = useState<AnalysisManifest | null>(null);
   const [analysisDirectory, setAnalysisDirectory] = useState<string | null>(null);
   const [analysisWaveform, setAnalysisWaveform] = useState<WaveformPayload | null>(null);
   const [analysisSpectrogram, setAnalysisSpectrogram] = useState<SpectrogramImage | null>(null);
-  const [analysisSpectrum, setAnalysisSpectrum] = useState<SpectrumFrame | null>(null);
+  const setAnalysisSpectrum = playbackStore.setSpectrum;
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisStage, setAnalysisStage] = useState("idle");
   const [analysisFraction, setAnalysisFraction] = useState<number | null>(null);
-  const [positionUs, setPositionUs] = useState(0);
+  const playbackCommandBusyRef = useRef(false);
+  const [playbackBusy, setPlaybackBusy] = useState(false);
   const [playback, setPlayback] = useState("idle");
   const [loopEnabled, setLoopEnabled] = useState(false);
   const loopSeekingRef = useRef(false);
@@ -509,8 +506,7 @@ function App() {
     invoke<DoctorInfo>("doctor")
       .then(setDoctor)
       .catch((reason) => setNotice(`worker: ${String(reason)}`));
-    void appDataDir()
-      .then((root) => join(root, "separator"))
+    void invoke<string>("separator_component_directory")
       .then(async (directory) => {
         setSeparatorDirectory(directory);
         setSeparatorStatus(
@@ -722,68 +718,45 @@ function App() {
     };
   }, []);
 
+  useEffect(() => startSerialPoll(async (isCurrent) => {
+    if (playbackCommandBusyRef.current) return;
+    const generation = playbackStore.generation();
+    const status = await invoke<PlaybackStatus>("playback_status");
+    if (!isCurrent() || generation !== playbackStore.generation()) return;
+    playbackStore.setStatus(status);
+    const range = request.start_seconds !== null && request.end_seconds !== null
+      ? { startUs: Math.round(request.start_seconds * 1_000_000), endUs: Math.round(request.end_seconds * 1_000_000) }
+      : null;
+    if (!loopSeekingRef.current && shouldLoopSeek(status.position_us, range, loopEnabled, status.paused, status.available)) {
+      loopSeekingRef.current = true;
+      try {
+        await invoke("seek_playback", { positionUs: range!.startUs });
+        if (isCurrent() && generation === playbackStore.generation()) {
+          playbackStore.setStatus({ ...status, position_us: range!.startUs });
+        }
+      } finally { loopSeekingRef.current = false; }
+    }
+  }, (reason) => setPlaybackError(`无法更新播放状态：${String(reason)}`)), [loopEnabled, request.start_seconds, request.end_seconds]);
+
   useEffect(() => {
     if (!analysisManifest?.spectral || !analysisDirectory) return;
-    const timer = window.setInterval(() => {
-      void invoke<PlaybackStatus>("playback_status")
-        .then(async (status) => {
-          setPositionUs(status.position_us);
-          const range =
-            request.start_seconds !== null && request.end_seconds !== null
-              ? {
-                  startUs: Math.round(request.start_seconds * 1_000_000),
-                  endUs: Math.round(request.end_seconds * 1_000_000),
-                }
-              : null;
-          if (
-            !loopSeekingRef.current &&
-            shouldLoopSeek(
-              status.position_us,
-              range,
-              loopEnabled,
-              status.paused,
-              status.available,
-            )
-          ) {
-            loopSeekingRef.current = true;
-            try {
-              await invoke("seek_playback", { positionUs: range!.startUs });
-              setPositionUs(range!.startUs);
-              setNotice("循环选区：已回到起点");
-            } finally {
-              window.setTimeout(() => {
-                loopSeekingRef.current = false;
-              }, 120);
-            }
-          }
-          if (status.paused || !status.available) return;
-          const frame = Math.min(
-            analysisManifest.spectral!.frames - 1,
-            Math.max(
-              0,
-              Math.round(
-                status.position_us /
-                  ((analysisManifest.spectral!.hop_size * 1_000_000) /
-                    analysisManifest.decode.sample_rate),
-              ),
-            ),
-          );
-          const spectrum = await invoke<SpectrumFrame>("analysis_spectrum", {
-            directory: analysisDirectory,
-            frame,
-          });
-          setAnalysisSpectrum(spectrum);
-        })
-        .catch(() => undefined);
-    }, 50);
-    return () => window.clearInterval(timer);
-  }, [
-    analysisDirectory,
-    analysisManifest,
-    loopEnabled,
-    request.end_seconds,
-    request.start_seconds,
-  ]);
+    let lastFrame = -1;
+    let lastGeneration = -1;
+    return startSerialPoll(async (isCurrent) => {
+      if (document.hidden || playbackCommandBusyRef.current) return;
+      const status = playbackStore.getStatus();
+      if (status.paused || !status.available) return;
+      const generation = playbackStore.generation();
+      const frame = Math.min(analysisManifest.spectral!.frames - 1, Math.max(0,
+        Math.round(status.position_us / ((analysisManifest.spectral!.hop_size * 1_000_000) / analysisManifest.decode.sample_rate))));
+      if (frame < 0 || (frame === lastFrame && generation === lastGeneration)) return;
+      const spectrum = await invoke<SpectrumFrame>("analysis_spectrum", { directory: analysisDirectory, frame });
+      if (!isCurrent() || generation !== playbackStore.generation()) return;
+      playbackStore.setSpectrum(spectrum);
+      lastFrame = frame;
+      lastGeneration = generation;
+    }, (reason) => setPlaybackError(`频谱读取失败，已保留最后有效画面：${String(reason)}`));
+  }, [analysisDirectory, analysisManifest]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1257,6 +1230,7 @@ function App() {
   }
 
   async function installSeparator() {
+    if (separatorInstallRef.current || separationRunning || routingRunning) return;
     if (!separatorDirectory) {
       setError("分离组件目录尚未初始化，请稍后重试");
       return;
@@ -1269,15 +1243,22 @@ function App() {
     });
     if (typeof archive !== "string") return;
     try {
+      separatorInstallRef.current = true;
+      setSeparatorInstalling(true);
+      setNotice("正在解压并校验分离组件，请勿关闭程序");
       const status = await invoke<SeparatorComponentStatus>("separator_component_install", {
         archive,
         target: separatorDirectory,
         overwrite: true,
       });
       setSeparatorStatus(status);
-      setNotice("分离组件已安装");
+      if (!status.installed) throw new Error(status.error ?? "组件校验失败");
+      setNotice("分离组件已安装并通过校验");
     } catch (reason) {
-      setError(String(reason));
+      setError(`分离组件安装失败：${String(reason)}。请选择完整组件 ZIP 重试，不要只复制 exe。`);
+    } finally {
+      separatorInstallRef.current = false;
+      setSeparatorInstalling(false);
     }
   }
 
@@ -1297,20 +1278,25 @@ function App() {
   }
 
   async function switchAbSource(sourceId: string) {
+    if (playbackCommandBusyRef.current) return;
     const option = findAbSource(abOptions, sourceId);
     if (!option?.path) {
       setPlaybackError(missingAbSourceMessage(option));
       return;
     }
     try {
+      playbackCommandBusyRef.current = true;
+      setPlaybackBusy(true);
+      playbackStore.invalidate();
       setNotice(`正在准备播放：${option.label}`);
       const status = await invoke<PlaybackStatus>("playback_status");
-      const position = abSwitchPosition(status, positionUs);
+      const position = abSwitchPosition(status, playbackStore.getStatus().position_us);
       await invoke("play_ab_source", {
         path: option.path,
         volume,
         positionUs: position,
       });
+      playbackStore.setStatus({ position_us: position, available: true, paused: false });
       setAbSource(sourceId);
       setPlayback(sourceId === "original" ? "playing-source" : "playing");
       setPlaybackError(null);
@@ -1319,6 +1305,9 @@ function App() {
     } catch (reason) {
       setPlayback("error");
       setPlaybackError(String(reason));
+    } finally {
+      playbackCommandBusyRef.current = false;
+      setPlaybackBusy(false);
     }
   }
 
@@ -1331,9 +1320,10 @@ function App() {
   }
 
   const seekAnalysis = useCallback(async (position: number) => {
-    setPositionUs(position);
+    playbackStore.invalidate();
     try {
       await invoke("seek_playback", { positionUs: position });
+      playbackStore.setStatus({ ...playbackStore.getStatus(), position_us: position });
       setNotice(`播放位置：${(position / 1_000_000).toFixed(2)}s`);
     } catch (reason) {
       setError(String(reason));
@@ -1450,26 +1440,32 @@ function App() {
   }
 
   async function startSeparation() {
-    const model = separatorStatus?.models[0];
-    const output = await join(result?.result.output_dir ?? request.output, "stems");
-    if (!request.input || !separatorDirectory || !model) {
+    if (separationRunning || routingRunning || separatorInstallRef.current) return;
+    if (!request.input || !separatorDirectory) {
       setError("请先选择源文件并安装至少一个分离模型");
       return;
     }
     setSeparationRunning(true);
     setSeparationStage("validating");
     setSeparationFraction(0);
-    setNotice("正在分离四轨");
+    setNotice("正在校验分离组件");
     try {
-      await invoke("start_separation", {
-        request: {
-          component: separatorDirectory,
-          input: request.input,
-          output,
-          model: model.id,
-          workerPath: request.worker_path,
-        },
-      });
+      const status = await invoke<SeparatorComponentStatus>("separator_component_status", { directory: separatorDirectory });
+      setSeparatorStatus(status);
+      const model = status.models.find((entry) => entry.verified);
+      if (!status.installed || !model) {
+        throw new Error(`分离组件不可用，请使用左侧「安装 / 修复组件」选择完整 ZIP。${status.error ?? "没有已校验模型"}`);
+      }
+      const base = await join(result?.result.output_dir ?? request.output, "stems");
+      const output = await invoke<string>("next_available_output", { path: base });
+      setNotice("正在分离四轨");
+      await invoke("start_separation", separationArgs({
+        component: separatorDirectory,
+        input: request.input,
+        output,
+        model: model.id,
+        worker_path: request.worker_path,
+      }));
     } catch (reason) {
       setSeparationRunning(false);
       setError(String(reason));
@@ -1569,15 +1565,11 @@ function App() {
   }
 
   async function startRouting() {
+    if (separationRunning || routingRunning || separatorInstallRef.current) return;
     if (!stemSetPath) {
       setError("请先完成 stem 分离");
       return;
     }
-    const output = await join(
-      result?.result.output_dir ?? request.output,
-      "routing",
-      routingMode,
-    );
     const customPlan =
       routingMode === "custom" && stemSet
         ? buildCustomRoutingPlan(
@@ -1589,16 +1581,16 @@ function App() {
     setRoutingRunning(true);
     setNotice(`正在生成路由试听：${routingMode}`);
     try {
-      await invoke("start_routing", {
-        request: {
-          stemSet: stemSetPath,
-          output,
-          mode: routingMode,
-          maxVoices: request.max_voices,
-          plan: customPlan,
-          workerPath: request.worker_path,
-        },
-      });
+      const base = await join(result?.result.output_dir ?? request.output, "routing", routingMode);
+      const output = await invoke<string>("next_available_output", { path: base });
+      await invoke("start_routing", routingArgs({
+        stem_set: stemSetPath,
+        output,
+        mode: routingMode,
+        max_voices: request.max_voices,
+        plan: customPlan,
+        worker_path: request.worker_path,
+      }));
     } catch (reason) {
       setRoutingRunning(false);
       setError(String(reason));
@@ -1929,17 +1921,23 @@ function App() {
               ? separatorStatus.models.map((model) => model.id).join(" / ")
               : "选择本地 separator-component ZIP；不会静默下载"}
           </small>
+          {separatorStatus?.error && (
+            <details className="separator-error">
+              <summary>组件不可用：请安装完整组件 ZIP 或重新安装修复</summary>
+              <pre>{separatorStatus.error}</pre>
+            </details>
+          )}
           {separatorDirectory && (
             <small className="separator-directory" title={separatorDirectory}>
               {separatorDirectory}
             </small>
           )}
           <div className="project-actions">
-            <button onClick={() => void installSeparator()}>
-              {separatorStatus?.installed ? "升级组件" : "安装组件"}
+            <button disabled={separatorInstalling || separationRunning || routingRunning} onClick={() => void installSeparator()}>
+              {separatorInstalling ? "正在安装并校验…" : separatorStatus?.installed ? "升级组件" : "安装 / 修复组件"}
             </button>
             {separatorStatus?.installed && (
-              <button onClick={() => void uninstallSeparator()}>卸载</button>
+              <button disabled={separatorInstalling || separationRunning || routingRunning} onClick={() => void uninstallSeparator()}>卸载</button>
             )}
             <button onClick={() => void copySeparatorPath()}>复制目录</button>
           </div>
@@ -1952,8 +1950,8 @@ function App() {
             <button
               className="transport-button"
               onClick={() => void seekAnalysis(0)}
-              disabled={!analysisManifest}
-              title="回到开头"
+              disabled={!hasActiveAbSource || playbackBusy}
+              title={hasActiveAbSource ? "回到开头" : "请先播放一个音源"}
             >
               |◀
             </button>
@@ -1963,8 +1961,8 @@ function App() {
             <button
               className="transport-button play"
               onClick={() => void playSource()}
-              disabled={!request.input}
-              title="播放原音"
+              disabled={!request.input || playbackBusy}
+              title={!request.input ? "请先载入素材" : playbackBusy ? "正在准备音源，请稍候" : "播放原音"}
             >
               ▶
             </button>
@@ -1980,7 +1978,7 @@ function App() {
 
           <div className="transport-readout">
             <span>TIME</span>
-            <strong>{formatClock(positionUs)}</strong>
+            <strong><PlaybackClock /></strong>
           </div>
 
           <div className="transport-readout compact">
@@ -2309,8 +2307,6 @@ function App() {
               manifest={analysisManifest}
               waveform={analysisWaveform}
               spectrogram={analysisSpectrogram}
-              spectrum={analysisSpectrum}
-              positionUs={positionUs}
               selectionStartUs={
                 request.start_seconds === null
                   ? null
@@ -3085,7 +3081,6 @@ function App() {
                 key={performance.revision.id}
                 document={performance}
                 candidates={candidateNotes}
-                positionUs={positionUs}
                 applying={editApplying}
                 onDocumentChange={setPerformance}
                 onApply={() => void applyEditRevision()}
@@ -3099,7 +3094,7 @@ function App() {
                     <span>A/B 同轨对比</span>
                     <strong>{previewArtifact ? "原音与映射试听共用播放位置" : "缺少 preview.wav，仅可播放原音"}</strong>
                   </div>
-                  <small>{formatClock(positionUs)}</small>
+                  <small><PlaybackClock /></small>
                 </div>
                 <div className="ab-slots">
                   <button
@@ -3198,7 +3193,7 @@ function App() {
       )}
       {clickAck && (
         <div key={clickAck.id} className="click-ack" role="status" aria-live="polite">
-          已受理 · {clickAck.label}
+          已点击 · {clickAck.label}（执行结果见任务状态）
         </div>
       )}
     </div>

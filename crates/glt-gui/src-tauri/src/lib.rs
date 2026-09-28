@@ -668,6 +668,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            separation::separator_component_directory,
             separation::separator_component_status,
             separation::separator_component_install,
             separation::separator_component_uninstall,

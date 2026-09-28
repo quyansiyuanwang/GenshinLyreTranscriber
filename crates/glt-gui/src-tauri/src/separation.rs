@@ -205,6 +205,27 @@ fn spawn_json_process(
     Ok(())
 }
 
+// Portable components avoid per-process AppData redirection on packaged Windows hosts.
+#[tauri::command]
+pub fn separator_component_directory(app: AppHandle) -> Result<PathBuf, String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    Ok(component_directory_for(&executable, &app_data))
+}
+
+fn component_directory_for(executable: &Path, app_data: &Path) -> PathBuf {
+    if let Some(parent) = executable.parent() {
+        let portable = parent.join("separator");
+        if portable.join(MANIFEST_NAME).is_file() {
+            return portable;
+        }
+    }
+    app_data.join("separator")
+}
+
 #[tauri::command]
 pub fn separator_component_status(directory: PathBuf) -> SeparatorComponentStatus {
     match inspect_component(&directory) {
@@ -411,7 +432,10 @@ fn verify_file(
 ) -> Result<(), String> {
     let path = root.join(relative);
     if !path.is_file() {
-        return Err(format!("separator file is missing: {relative}"));
+        return Err(format!(
+            "separator file is missing: {relative}; resolved path: {}. Reinstall the complete separator component ZIP; copying the executable alone is not sufficient.",
+            path.display()
+        ));
     }
     if let Some(expected) = expected_size
         && path.metadata().map_err(|error| error.to_string())?.len() != expected
@@ -470,6 +494,48 @@ mod tests {
     use uuid::Uuid;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn portable_component_is_preferred_only_when_manifest_exists() {
+        let root = std::env::temp_dir().join(format!("glt-portable-component-{}", Uuid::new_v4()));
+        let executable = root.join("app/glt-gui.exe");
+        let app_data = root.join("app-data");
+        assert_eq!(
+            component_directory_for(&executable, &app_data),
+            app_data.join("separator")
+        );
+        let portable = root.join("app/separator");
+        fs::create_dir_all(&portable).unwrap();
+        fs::write(portable.join(MANIFEST_NAME), b"{}").unwrap();
+        assert_eq!(component_directory_for(&executable, &app_data), portable);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn desktop_requests_match_shared_frontend_fixture() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/desktop-separation-v1.json"
+        ))
+        .unwrap();
+        let separation: SeparationRequest =
+            serde_json::from_value(fixture["separation"].clone()).unwrap();
+        assert_eq!(separation.model, "htdemucs");
+        assert!(separation.worker_path.is_none());
+        let routing: RoutingRequest = serde_json::from_value(fixture["routing"].clone()).unwrap();
+        assert_eq!(routing.max_voices, Some(3));
+        assert_eq!(routing.stem_set, PathBuf::from("stems/stem-set.json"));
+        let mut invalid = fixture["separation"].clone();
+        invalid["workerPath"] = Value::Null;
+        assert!(serde_json::from_value::<SeparationRequest>(invalid).is_err());
+    }
+
+    #[test]
+    fn missing_runtime_reports_resolved_path_and_repair_action() {
+        let root = std::env::temp_dir().join(format!("glt-missing-component-{}", Uuid::new_v4()));
+        let error = verify_file(&root, "worker/glt-separator-worker.exe", None, None).unwrap_err();
+        assert!(error.contains(&root.display().to_string()));
+        assert!(error.contains("complete separator component ZIP"));
+    }
 
     #[test]
     fn component_install_status_and_uninstall_round_trip() {
