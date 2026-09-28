@@ -1,3 +1,4 @@
+import { useCanvasSize } from "./useCanvasSize";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { liveFilterStats } from "./filterPreview";
@@ -77,6 +78,7 @@ export default function FilterPreviewCanvas({
   onClearRange,
 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const size = useCanvasSize(ref);
   const dragRef = useRef<DragLine | null>(null);
   const draftRef = useRef<RangeDraft | null>(null);
   const [metric, setMetric] = useState<FilterMetric>("pitch");
@@ -278,6 +280,7 @@ export default function FilterPreviewCanvas({
     }
   }, [
     activeRange.lower,
+    size,
     activeRange.upper,
     activeRuleIndex,
     definition,

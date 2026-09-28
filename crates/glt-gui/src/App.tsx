@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_LAYOUT, useWorkspaceLayout, type WorkspaceView } from "./workspaceLayout";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { join } from "@tauri-apps/api/path";
@@ -261,6 +262,11 @@ function loadRecentPaths(key: string): string[] {
 class QueueCancelledError extends Error {}
 
 function App() {
+  const { layout, setLayout, storageError: layoutError } = useWorkspaceLayout();
+  function showView(view: WorkspaceView) {
+    setLayout((current) => ({ ...current, view }));
+  }
+
   const [request, setRequest] = useState<JobRequest>(DEFAULT_REQUEST);
   const [customPresets, setCustomPresets] = useState(() =>
     loadCustomPresets(
@@ -274,7 +280,6 @@ function App() {
     loadRecentPaths("glt.recentOutputs"),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
   const [mappingOpen, setMappingOpen] = useState(false);
   const [filterRules, setFilterRules] = useState<DraftFilterRule[]>([{ ...EMPTY_RULE }]);
   const [activeFilterRule, setActiveFilterRule] = useState(0);
@@ -446,6 +451,7 @@ function App() {
     () => liveFilterStats(candidateNotes, filterRules),
     [candidateNotes, filterRules],
   );
+  const inputIsResult = !!result && request.input.replace(/\\/g, "/").toLowerCase() === result.result.output_dir.replace(/\\/g, "/").toLowerCase();
   const abOptions = useMemo<AbSourceOption[]>(() => {
     const options: AbSourceOption[] = [
       {
@@ -456,7 +462,7 @@ function App() {
           : null,
         primary: "mapped",
       },
-      { id: "original", label: "原音", path: request.input || null, primary: "original" },
+      { id: "original", label: "原音", path: inputIsResult ? null : request.input || null, primary: "original" },
     ];
     for (const artifact of result?.result.artifacts ?? []) {
       if (artifact.kind === "instrumental_wav" || artifact.kind === "routed_audio") {
@@ -488,7 +494,7 @@ function App() {
       options.push({ id: "routed_audio", label: "路由", path: routedAudioPath, primary: "extra" });
     }
     return options;
-  }, [previewArtifact, request.input, result, routedAudioPath, stemSet, stemSetPath]);
+  }, [previewArtifact, request.input, inputIsResult, result, routedAudioPath, stemSet, stemSetPath]);
   const hasActiveAbSource = abOptions.some((option) => option.id === abSource && option.path);
   const abOriginal = abOptions.find((option) => option.primary === "original");
   const abMapped = abOptions.find((option) => option.primary === "mapped");
@@ -592,6 +598,9 @@ function App() {
       setCandidateNotes([]);
       return;
     }
+    // Result identities, not generic revision names, own editor history.
+    setPerformance(null);
+    setCandidateNotes([]);
     void invoke<PerformanceDocument>("read_performance", { resultDir: directory })
       .then((value) => { if (current) setPerformance(value); })
       .catch((reason) => {
@@ -624,6 +633,7 @@ function App() {
       setFraction(1);
       setStage("completed");
       setResult(payload);
+      setLayout((current) => ({ ...current, view: pendingRevisionRef.current?.kind === "edit" ? "editor" : "filter" }));
       setRecentOutputs((current) => addRecentPath(current, payload.result.output_dir));
       setPlayback("idle");
       setNotice("转换完成");
@@ -1152,6 +1162,7 @@ function App() {
           artifacts: opened.artifacts ?? [],
         },
       });
+      setLayout((current) => ({ ...current, view: "filter" }));
       setNotice("既有结果已打开");
       setError(null);
     } catch (reason) {
@@ -1858,7 +1869,11 @@ function App() {
     : "未载入素材";
 
   return (
-    <div className="app-shell" onClickCapture={acknowledgeButtonClick}>
+    <div className="app-shell workstation" data-view={layout.view} style={{
+      "--resource-width": layout.resources ? `${layout.resourceWidth}px` : "0px",
+      "--inspector-width": layout.inspector ? `${layout.inspectorWidth}px` : "0px",
+      "--task-height": layout.tasks ? `${layout.taskHeight}px` : error || warnings.length ? "110px" : "48px",
+    } as CSSProperties} onClickCapture={acknowledgeButtonClick}>
       <header className="daw-menubar">
         <div className="daw-app-mark">
           <span>GLT</span>
@@ -1908,23 +1923,13 @@ function App() {
           <details className="daw-menu">
             <summary>视图</summary>
             <div className="daw-menu-popover">
-              {[
-                ["输入与编曲", "#source"],
-                ["音质检查器", "#tuning"],
-                ["节奏与片段", "#timing"],
-                ["结果与钢琴卷帘", "#result"],
-              ].map(([label, target]) => (
-                <button
-                  key={target}
-                  onClick={(event) => {
-                    event.currentTarget.closest("details")?.removeAttribute("open");
-                    document.querySelector(target)?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    setNotice(`已定位：${label}`);
-                  }}
-                >
-                  {label}
-                </button>
+              {([['analysis', '分析'], ['filter', '筛选'], ['editor', '钢琴卷帘']] as const).map(([view, label]) => (
+                <button key={view} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showView(view); }}>{label}</button>
               ))}
+              <button onClick={() => setLayout({ ...DEFAULT_LAYOUT })}>恢复默认布局</button>
+              <label>资源宽度<input type="range" aria-label="资源宽度" min="200" max="360" value={layout.resourceWidth} onChange={(event) => setLayout((current) => ({ ...current, resourceWidth: Number(event.target.value) }))} /></label>
+              <label>检查器宽度<input type="range" aria-label="检查器宽度" min="250" max="420" value={layout.inspectorWidth} onChange={(event) => setLayout((current) => ({ ...current, inspectorWidth: Number(event.target.value) }))} /></label>
+              <label>任务区高度<input type="range" aria-label="任务区高度" min="120" max="320" value={layout.taskHeight} onChange={(event) => setLayout((current) => ({ ...current, taskHeight: Number(event.target.value) }))} /></label>
             </div>
           </details>
           <details className="daw-menu">
@@ -1959,7 +1964,88 @@ function App() {
         </div>
       </header>
 
-      <aside className="sidebar">
+        <header className="hero">
+          <div className="transport-strip" aria-label="播放传输控制">
+            <button
+              className="transport-button"
+              onClick={() => void seekAnalysis(0)}
+              disabled={!hasActiveAbSource || playbackBusy}
+              title={hasActiveAbSource ? "回到开头" : "请先播放一个音源"}
+            >
+              |◀
+            </button>
+            <button className="transport-button" onClick={() => void stopPreview()} title="停止">
+              ■
+            </button>
+            <button
+              className="transport-button play"
+              onClick={() => void switchAbSource(findAbSource(abOptions, abSource)?.path ? abSource : "original")}
+              disabled={(!request.input && !hasActiveAbSource) || playbackBusy}
+              title={!request.input ? "请先载入素材" : playbackBusy ? "正在准备音源，请稍候" : "播放原音"}
+            >
+              ▶
+            </button>
+            <button
+              className="transport-button"
+              onClick={() => void pausePreview()}
+              disabled={!hasActiveAbSource || playbackBusy}
+              title="暂停"
+            >
+              Ⅱ
+            </button>
+          </div>
+
+          <div className="transport-readout">
+            <span>TIME</span>
+            <strong><PlaybackClock /></strong>
+          </div>
+
+          <div className="transport-readout compact">
+            <span>TEMPO</span>
+            <strong>{tempoLabel ? `${Number(tempoLabel).toFixed(3)} BPM` : "AUTO BPM"}</strong>
+          </div>
+
+          <div className="transport-readout compact">
+            <span>GRID</span>
+            <strong>{request.timing.toUpperCase()}</strong>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="tool-cluster">
+            {analysisRunning && <button className="danger-button" disabled={analysisCancelling} onClick={() => void cancelAnalysis()}>{analysisCancelling ? "正在回收分析进程…" : "取消分析"}</button>}
+            <button className="ghost-button" onClick={chooseInput}>
+              载入素材
+            </button>
+            <button className="ghost-button" onClick={() => void openResult()}>
+              打开结果
+            </button>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="tool-context">
+            <span>ACTIVE SOURCE</span>
+            <strong title={findAbSource(abOptions, abSource)?.path ?? request.input}>{hasActiveAbSource ? findAbSource(abOptions, abSource)?.label : sourceName}</strong>
+          </div>
+
+          <select aria-label="试听音源" className="transport-source" value={abSource} disabled={playbackBusy} onChange={(event) => void switchAbSource(event.target.value)}>
+            {abOptions.map((option) => <option key={option.id} value={option.id} disabled={!option.path}>{option.label}{!option.path ? "（不可用）" : ""}</option>)}
+          </select>
+          <button aria-pressed={loopEnabled} title="按当前时间选区循环" onClick={handleToggleLoop}>循环</button>
+          <input aria-label="播放音量" className="transport-volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => void updateVolume(Number(event.target.value))} />
+          <div className={`run-state ${running ? "running" : ""}`}>
+            <span />
+            {running ? stage : notice}
+          </div>
+
+          <div className="toolbar-progress" aria-hidden="true">
+            <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? (running ? 0 : 1)) * 100))}%` }} />
+          </div>
+        </header>
+
+
+      <aside className="sidebar" hidden={!layout.resources} aria-label="资源与工程">
         <div className="brand">
           <div className="brand-mark">GLT</div>
           <div>
@@ -1973,21 +2059,126 @@ function App() {
           <strong>工作站</strong>
         </div>
 
-        <nav>
-          <a href="#source" className="nav-item active">
-            <span>01</span> 输入与编曲
-          </a>
-          <a href="#tuning" className="nav-item">
-            <span>02</span> 音质检查器
-          </a>
-          <a href="#timing" className="nav-item">
-            <span>03</span> 节奏与移调
-          </a>
-          <a href="#result" className="nav-item">
-            <span>04</span> 结果与钢琴卷帘
-          </a>
-        </nav>
+        <section id="source" className="panel source-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="section-number">01</span>
+              <h2>输入与输出</h2>
+            </div>
+            <button className="ghost-button" onClick={chooseInput}>
+              选择文件
+            </button>
+          </div>
 
+          <div className="arrange-ruler" aria-hidden="true">
+            {["1", "2", "3", "4", "5", "6", "7", "8"].map((beat) => (
+              <span key={beat}>{beat}</span>
+            ))}
+          </div>
+
+          <div className="lane-header">
+            <span>TRACK 01</span>
+            <strong>TRANSCRIPTION INPUT</strong>
+            <i className={request.input ? "loaded" : ""}>{request.input ? "LOADED" : "EMPTY"}</i>
+          </div>
+
+          <button className="dropzone" onClick={chooseInput} onDragOver={(event) => event.preventDefault()}>
+            <span className="drop-icon">↓</span>
+            <strong>{request.input ? request.input.split(/[/\\]/).pop() : "拖入音频、视频或 MIDI"}</strong>
+            <small>{request.input || "支持 FLAC、WAV、MP3、MP4、MKV、MID、MIDI 等"}</small>
+          </button>
+
+          <div className="field-row">
+            <label className="field grow">
+              <span>{inputIsResult ? "结果目录（非媒体文件）" : "媒体文件路径"}</span>
+              <input
+                value={request.input}
+                onChange={(event) => {
+                  const path = event.target.value;
+                  const operation = operationForPath(path);
+                  setRequest((current) => ({
+                    ...current,
+                    input: path,
+                    operation,
+                    timing: operation === "convert_midi" ? "preserve" : current.timing,
+                  }));
+                }}
+                placeholder="选择或拖入文件"
+              />
+            </label>
+            <label className="field grow">
+              <span>输出目录</span>
+              <div className="joined-input">
+                <input
+                  value={request.output}
+                  onChange={(event) =>
+                    setRequest((current) => ({ ...current, output: event.target.value }))
+                  }
+                  placeholder="结果目录"
+                />
+                <button
+                  type="button"
+                  disabled={!request.input}
+                  onClick={() =>
+                    setRequest((current) => ({
+                      ...current,
+                      output: parentPath(current.input),
+                    }))
+                  }
+                >
+                  同目录
+                </button>
+                <button type="button" onClick={() => void chooseOutput()}>
+                  浏览
+                </button>
+              </div>
+            </label>
+          </div>
+          <div className="hint-row">
+            <span className="pill">{inputIsResult ? "结果目录 / 只读来源" : operationLabel}</span>
+            <span>输入 MIDI 会自动切换到 preserve，避免覆盖已有 tempo map。</span>
+          </div>
+
+          {recentInputs.length > 0 && (
+            <div className="recent-path-strip">
+              <span>最近素材</span>
+              <div>
+                {recentInputs.slice(0, 5).map((path) => (
+                  <button type="button" key={path} title={path} onClick={() => void applyInput(path)}>
+                    {path.split(/[/\\]/).pop() || path}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setRecentInputs([])}>清空</button>
+            </div>
+          )}
+
+          {recentOutputs.length > 0 && (
+            <div className="recent-path-strip">
+              <span>最近输出</span>
+              <div>
+                {recentOutputs.slice(0, 5).map((path) => (
+                  <button
+                    type="button"
+                    key={path}
+                    title={path}
+                    onClick={() => setRequest((current) => ({ ...current, output: path }))}
+                  >
+                    {path.split(/[/\\]/).pop() || path}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => setRecentOutputs([])}>清空</button>
+            </div>
+          )}
+
+        </section>
+
+        {(result || abExtras.length > 0) && <div className="resource-index">
+          {result && <><span>结果目录 · 已发布</span><button title={result.result.output_dir} onClick={() => showView("filter")}>{result.result.output_dir.split(/[/\\]/).pop()}</button></>}
+          {abExtras.length > 0 && <span>分轨 / 路由 · 点击试听</span>}
+          {abExtras.map((option) => <button key={option.id} disabled={!option.path || playbackBusy} title={option.path ?? "来源不可用"} onClick={() => void switchAbSource(option.id)}>{option.label}</button>)}
+        </div>}
         <div className="worker-card">
           <span className={`status-dot ${doctor ? "online" : "offline"}`} />
           <div>
@@ -2071,340 +2262,27 @@ function App() {
         </div>
       </aside>
 
-      <main className="workspace">
-        <header className="hero">
-          <div className="transport-strip" aria-label="播放传输控制">
-            <button
-              className="transport-button"
-              onClick={() => void seekAnalysis(0)}
-              disabled={!hasActiveAbSource || playbackBusy}
-              title={hasActiveAbSource ? "回到开头" : "请先播放一个音源"}
-            >
-              |◀
-            </button>
-            <button className="transport-button" onClick={() => void stopPreview()} title="停止">
-              ■
-            </button>
-            <button
-              className="transport-button play"
-              onClick={() => void playSource()}
-              disabled={!request.input || playbackBusy}
-              title={!request.input ? "请先载入素材" : playbackBusy ? "正在准备音源，请稍候" : "播放原音"}
-            >
-              ▶
-            </button>
-            <button
-              className="transport-button"
-              onClick={() => void pausePreview()}
-              disabled={!hasActiveAbSource || playbackBusy}
-              title="暂停"
-            >
-              Ⅱ
-            </button>
-          </div>
-
-          <div className="transport-readout">
-            <span>TIME</span>
-            <strong><PlaybackClock /></strong>
-          </div>
-
-          <div className="transport-readout compact">
-            <span>TEMPO</span>
-            <strong>{tempoLabel ? `${Number(tempoLabel).toFixed(3)} BPM` : "AUTO BPM"}</strong>
-          </div>
-
-          <div className="transport-readout compact">
-            <span>GRID</span>
-            <strong>{request.timing.toUpperCase()}</strong>
-          </div>
-
-          <div className="toolbar-separator" />
-
-          <div className="tool-cluster">
-            {analysisRunning && <button className="danger-button" disabled={analysisCancelling} onClick={() => void cancelAnalysis()}>{analysisCancelling ? "正在回收分析进程…" : "取消分析"}</button>}
-            <button className="ghost-button" onClick={chooseInput}>
-              载入素材
-            </button>
-            <button className="ghost-button" onClick={() => void openResult()}>
-              打开结果
-            </button>
-          </div>
-
-          <div className="toolbar-separator" />
-
-          <div className="tool-context">
-            <span>ACTIVE SOURCE</span>
-            <strong title={request.input}>{sourceName}</strong>
-          </div>
-
-          <div className={`run-state ${running ? "running" : ""}`}>
-            <span />
-            {running ? stage : notice}
-          </div>
-
-          <div className="toolbar-progress" aria-hidden="true">
-            <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? (running ? 0 : 1)) * 100))}%` }} />
-          </div>
-        </header>
-
-        <section id="source" className="panel source-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="section-number">01</span>
-              <h2>输入与输出</h2>
-            </div>
-            <button className="ghost-button" onClick={chooseInput}>
-              选择文件
-            </button>
-          </div>
-
-          <div className="arrange-ruler" aria-hidden="true">
-            {["1", "2", "3", "4", "5", "6", "7", "8"].map((beat) => (
-              <span key={beat}>{beat}</span>
-            ))}
-          </div>
-
-          <div className="lane-header">
-            <span>TRACK 01</span>
-            <strong>TRANSCRIPTION INPUT</strong>
-            <i className={request.input ? "loaded" : ""}>{request.input ? "LOADED" : "EMPTY"}</i>
-          </div>
-
-          <button className="dropzone" onClick={chooseInput} onDragOver={(event) => event.preventDefault()}>
-            <span className="drop-icon">↓</span>
-            <strong>{request.input ? request.input.split(/[/\\]/).pop() : "拖入音频、视频或 MIDI"}</strong>
-            <small>{request.input || "支持 FLAC、WAV、MP3、MP4、MKV、MID、MIDI 等"}</small>
-          </button>
-
-          <div className="field-row">
-            <label className="field grow">
-              <span>输入路径</span>
-              <input
-                value={request.input}
-                onChange={(event) => {
-                  const path = event.target.value;
-                  const operation = operationForPath(path);
-                  setRequest((current) => ({
-                    ...current,
-                    input: path,
-                    operation,
-                    timing: operation === "convert_midi" ? "preserve" : current.timing,
-                  }));
-                }}
-                placeholder="选择或拖入文件"
-              />
-            </label>
-            <label className="field grow">
-              <span>输出目录</span>
-              <div className="joined-input">
-                <input
-                  value={request.output}
-                  onChange={(event) =>
-                    setRequest((current) => ({ ...current, output: event.target.value }))
-                  }
-                  placeholder="结果目录"
-                />
-                <button
-                  type="button"
-                  disabled={!request.input}
-                  onClick={() =>
-                    setRequest((current) => ({
-                      ...current,
-                      output: parentPath(current.input),
-                    }))
-                  }
-                >
-                  同目录
-                </button>
-                <button type="button" onClick={() => void chooseOutput()}>
-                  浏览
-                </button>
-              </div>
-            </label>
-          </div>
-          <div className="hint-row">
-            <span className="pill">{operationLabel}</span>
-            <span>输入 MIDI 会自动切换到 preserve，避免覆盖已有 tempo map。</span>
-          </div>
-
-          {recentInputs.length > 0 && (
-            <div className="recent-path-strip">
-              <span>最近素材</span>
-              <div>
-                {recentInputs.slice(0, 5).map((path) => (
-                  <button type="button" key={path} title={path} onClick={() => void applyInput(path)}>
-                    {path.split(/[/\\]/).pop() || path}
-                  </button>
-                ))}
-              </div>
-              <button type="button" onClick={() => setRecentInputs([])}>清空</button>
-            </div>
-          )}
-
-          {recentOutputs.length > 0 && (
-            <div className="recent-path-strip">
-              <span>最近输出</span>
-              <div>
-                {recentOutputs.slice(0, 5).map((path) => (
-                  <button
-                    type="button"
-                    key={path}
-                    title={path}
-                    onClick={() => setRequest((current) => ({ ...current, output: path }))}
-                  >
-                    {path.split(/[/\\]/).pop() || path}
-                  </button>
-                ))}
-              </div>
-              <button type="button" onClick={() => setRecentOutputs([])}>清空</button>
-            </div>
-          )}
-
-          <section className="queue-workbench">
-            <div className="queue-heading">
-              <div>
-                <span>BATCH QUEUE</span>
-                <strong>批量转录队列</strong>
-                <small>单 worker 顺序执行，失败不会阻断后续素材。</small>
-              </div>
-              <div className="queue-actions">
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={queueRunning}
-                  onClick={() => void chooseQueueInputs()}
-                >
-                  添加多个
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={queueRunning || running || queueSummary.pending === 0}
-                  onClick={() => void runQueue()}
-                >
-                  {queueRunning ? "队列运行中" : "开始队列"}
-                </button>
-                <button
-                  type="button"
-                  disabled={queueRunning || queueSummary.failed + queueSummary.cancelled === 0}
-                  onClick={() => void runQueue(retryableQueueIds(queueItemsRef.current))}
-                >
-                  重试失败
-                </button>
-                <button
-                  type="button"
-                  disabled={!queueRunning}
-                  onClick={() => void skipCurrentQueueItem()}
-                >
-                  跳过当前
-                </button>
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={!queueRunning}
-                  onClick={() => void cancelQueue()}
-                >
-                  停止队列
-                </button>
-                <button
-                  type="button"
-                  disabled={queueRunning || queueSummary.pending === 0}
-                  onClick={syncPendingQueueParameters}
-                >
-                  同步当前参数
-                </button>
-                <button type="button" onClick={clearFinishedQueueItems}>
-                  清理完成
-                </button>
-              </div>
-            </div>
-            <div className="queue-summary">
-              {[
-                ["待处理", queueSummary.pending, "pending"],
-                ["处理中", queueSummary.running, "running"],
-                ["完成", queueSummary.done, "done"],
-                ["失败", queueSummary.failed, "failed"],
-                ["已取消", queueSummary.cancelled, "cancelled"],
-              ].map(([label, value, status]) => (
-                <span className={String(status)} key={String(status)}>
-                  <i />
-                  {label}
-                  <strong>{value}</strong>
-                </span>
-              ))}
-              <div className="queue-overall-track" title="队列完成比例">
-                <i
-                  style={{
-                    width: `${queueSummary.total ? ((queueSummary.done + queueSummary.failed + queueSummary.cancelled) / queueSummary.total) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-            </div>
-            {queueItems.length === 0 ? (
-              <button type="button" className="queue-empty" onClick={() => void chooseQueueInputs()}>
-                <strong>拖入多个文件，或点击这里批量添加</strong>
-                <small>每项使用独立输出目录；应用重启后会保留完成和失败状态。</small>
-              </button>
-            ) : (
-              <div className="queue-list">
-                {queueItems.map((item, index) => (
-                  <article className={`queue-item ${item.status}`} key={item.id}>
-                    <div className="queue-item-index">{String(index + 1).padStart(2, "0")}</div>
-                    <div className="queue-item-copy">
-                      <strong title={item.request.input}>
-                        {item.request.input.split(/[/\\]/).pop() || item.request.input}
-                      </strong>
-                      <small title={item.request.output}>输出：{item.request.output}</small>
-                      {item.error && <small className="queue-error">{item.error}</small>}
-                    </div>
-                    <div className="queue-item-state">
-                      <span>{queueStatusLabel(item.status)}</span>
-                      {item.status === "running" && queueCurrentId === item.id && (
-                        <div className="queue-item-progress">
-                          <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? 0) * 100))}%` }} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="queue-item-actions">
-                      <button
-                        type="button"
-                        disabled={queueRunning}
-                        onClick={() => void applyInput(item.request.input, false)}
-                      >
-                        载入
-                      </button>
-                      {(item.status === "failed" || item.status === "cancelled") && (
-                        <button
-                          type="button"
-                          className="primary-button"
-                          disabled={queueRunning || running}
-                          onClick={() => void runQueue([item.id])}
-                        >
-                          重试
-                        </button>
-                      )}
-                      {item.result_dir && (
-                        <button
-                          type="button"
-                          onClick={() => void openLocalPath(item.result_dir!, "队列结果目录")}
-                        >
-                          打开
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={queueRunning}
-                        onClick={() => removeQueuedItem(item.id)}
-                      >
-                        移除
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-        </section>
+      <nav className="workspace-tabs" aria-label="工作区视图">
+        <button aria-pressed={layout.resources} title="展开或收起资源区" onClick={() => setLayout((current) => ({ ...current, resources: !current.resources }))}>资源</button>
+        <div role="tablist" aria-label="中央编辑视图">
+          {([['analysis', '分析'], ['filter', '筛选'], ['editor', '钢琴卷帘']] as const).map(([view, label]) => (
+            <button key={view} role="tab" aria-selected={layout.view === view} aria-controls={`view-${view}`} tabIndex={layout.view === view ? 0 : -1} onKeyDown={(event) => {
+              if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              const views: WorkspaceView[] = ["analysis", "filter", "editor"];
+              const index = views.indexOf(view);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+              showView(views[next]);
+              const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]");
+              buttons?.[next].focus();
+            }} onClick={() => showView(view)}>{label}</button>
+          ))}
+        </div>
+        <button aria-pressed={layout.inspector} title="展开或收起检查器" onClick={() => setLayout((current) => ({ ...current, inspector: !current.inspector }))}>检查器</button>
+      </nav>
+      <main className="workspace" aria-label="中央工作区">
+        <div id="view-analysis" role="tabpanel" hidden={layout.view !== "analysis"}>
+          {!analysisManifest && <div className="workspace-empty"><strong>音频分析</strong><p>从左侧载入素材，再分析波形与频谱。分析与转录各自独立。</p><button disabled={!request.input || analysisRunning} title={!request.input ? "请先载入素材" : "分析当前音频范围"} onClick={() => void startAnalysis(request.input, request.output)}>分析当前范围</button></div>}
 
         {analysisManifest && analysisWaveform && (
           <section className="panel analysis-panel">
@@ -2633,6 +2511,102 @@ function App() {
           </section>
         )}
 
+        </div>
+        {!result && layout.view !== "analysis" && <div className="workspace-empty"><strong>尚未载入结果</strong><p>请先转录素材，或打开已有结果。切换视图不会清除编辑。</p><button onClick={() => void openResult()}>打开结果</button></div>}
+        {result && (
+          <section hidden={layout.view === "analysis"} id="result" className="panel result-panel">
+            <div className="panel-heading">
+              <div>
+                <span className="section-number">04</span>
+                <h2>结果、筛选与试听</h2>
+                {(running || stage === "failed" || stage === "cancelled") && <small>保留上次成功结果；新结果仅在处理成功后替换</small>}
+              </div>
+              <div className="button-row">
+                <button className="ghost-button" onClick={() => void openResult()}>
+                  打开已有结果
+                </button>
+                <button
+                  className="ghost-button"
+                  onClick={() => void openLocalPath(result.result.output_dir, "结果目录")}
+                >
+                  打开结果目录
+                </button>
+              </div>
+            </div>
+
+            <div className="result-summary">
+              <div className="result-path">
+                <span>结果目录</span>
+                <strong>{result.result.output_dir}</strong>
+              </div>
+              <div className="filter-actions" hidden={layout.view !== "filter"}>
+                <button onClick={() => void applyPreset("auto")}>自动检测</button>
+                <button onClick={() => void applyPreset("balanced")}>balanced</button>
+                <button onClick={() => void applyPreset("melody")}>melody</button>
+                <button onClick={() => showView("filter")}>图形筛选</button>
+              </div>
+            </div>
+
+            <div id="view-filter" role="tabpanel" hidden={layout.view !== "filter"}>
+              <div className="filter-editor">
+                <div className="filter-live-preview">
+                  <div className="filter-live-copy">
+                    <span>即时筛选预览</span>
+                    <strong>
+                      {filterPreview.total === 0
+                        ? "没有候选缓存"
+                        : `保留 ${filterPreview.matched} · 删除 ${filterPreview.removed} · ${Math.round((filterPreview.matched / Math.max(1, filterPreview.total)) * 100)}%`}
+                    </strong>
+                  </div>
+                  <div className="filter-live-track">
+                    <i
+                      style={{
+                        width: `${filterPreview.total ? (filterPreview.matched / filterPreview.total) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <small>拖动阈值即时重算；“应用横向阈值”后才生成新的不可变结果目录。</small>
+                </div>
+                <FilterPreviewCanvas
+                  notes={candidateNotes}
+                  rules={filterRules}
+                  activeRuleIndex={activeFilterRule}
+                  onActiveRuleChange={setActiveFilterRule}
+                  onRangeChange={updateRuleMetricRange}
+                  onClearRange={clearRuleMetric}
+                />
+              </div>
+
+            <div className="stats-grid">
+              {counts.map(([key, value]) => (
+                <div className="stat" key={key}>
+                  <span>{countLabel(key)}</span>
+                  <strong>{value}</strong>
+                </div>
+              ))}
+            </div>
+
+            </div>
+            <div id="view-editor" role="tabpanel" hidden={layout.view !== "editor"}>
+            {performance && (
+              <PianoRollEditor
+                key={`${result.result.output_dir}:${performance.revision.id}`}
+                document={performance}
+                candidates={candidateNotes}
+                applying={editApplying}
+                onDocumentChange={setPerformance}
+                onApply={() => void applyEditRevision()}
+              />
+            )}
+            {!performance && <p>该结果没有可编辑 Performance，仍可在右侧打开产物。</p>}
+            </div>
+
+          </section>
+        )}
+      </main>
+      <aside className="workspace-inspector" hidden={!layout.inspector} aria-label="当前视图检查器">
+        <div className="inspector-title">{layout.view === "analysis" ? "分析 / 转录参数" : layout.view === "filter" ? "筛选规则草稿" : "编辑 / 导出"}</div>
+        <div hidden={layout.view !== "analysis"}>
         <section id="tuning" className="panel">
           <div className="panel-heading">
             <div>
@@ -2973,139 +2947,10 @@ function App() {
           </div>
         </section>
 
-        <div className="run-bar">
-          <div className="progress-copy">
-            <strong>{running ? stage : "准备开始"}</strong>
-            <span>{fraction === null ? "进度未知" : `${Math.round(fraction * 100)}%`}</span>
-          </div>
-          <div className="progress-track">
-            <div
-              className={fraction === null && running ? "indeterminate" : ""}
-              style={{ width: `${fraction === null ? 32 : fraction * 100}%` }}
-            />
-          </div>
-          <div className={`operation-console ${operationLogOpen ? "open" : ""}`}>
-            <button
-              type="button"
-              className="operation-console-toggle"
-              aria-expanded={operationLogOpen}
-              onClick={() => setOperationLogOpen((value) => !value)}
-            >
-              操作记录
-              <span>{operationLog.length}</span>
-            </button>
-            {operationLogOpen && (
-              <div className="operation-console-popover">
-                <header>
-                  <strong>操作记录</strong>
-                  <button type="button" onClick={() => setOperationLog([])}>
-                    清空
-                  </button>
-                </header>
-                {operationLog.length === 0 ? (
-                  <p>尚无操作。每次载入、分析、转换、筛选和错误都会记录在这里。</p>
-                ) : (
-                  <ol>
-                    {operationLog.map((entry) => (
-                      <li className={entry.kind} key={entry.id}>
-                        <time>{entry.time}</time>
-                        <span>{entry.message}</span>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-            )}
-          </div>
-          {running ? (
-            <button className="danger-button" onClick={() => void cancelJob()}>
-              取消任务
-            </button>
-          ) : (
-            <button
-              className="primary-button"
-              disabled={running}
-              title={!request.input ? "请先载入素材" : !request.output ? "请先选择输出目录" : "开始转录"}
-              onClick={() => void startJob()}
-            >
-              开始转换
-            </button>
-          )}
         </div>
-
-        {(error || warnings.length > 0) && (
-          <section className="alerts">
-            {error && <div className="alert error">{error}</div>}
-            {warnings.map((warning, index) => (
-              <div className="alert warning" key={`${warning}-${index}`}>
-                {warning}
-              </div>
-            ))}
-          </section>
-        )}
-
-        {result && (
-          <section id="result" className="panel result-panel">
-            <div className="panel-heading">
-              <div>
-                <span className="section-number">04</span>
-                <h2>结果、筛选与试听</h2>
-                {(running || stage === "failed" || stage === "cancelled") && <small>保留上次成功结果；新结果仅在处理成功后替换</small>}
-              </div>
-              <div className="button-row">
-                <button className="ghost-button" onClick={() => void openResult()}>
-                  打开已有结果
-                </button>
-                <button
-                  className="ghost-button"
-                  onClick={() => void openLocalPath(result.result.output_dir, "结果目录")}
-                >
-                  打开结果目录
-                </button>
-              </div>
-            </div>
-
-            <div className="result-summary">
-              <div className="result-path">
-                <span>结果目录</span>
-                <strong>{result.result.output_dir}</strong>
-              </div>
-              <div className="filter-actions">
-                <button onClick={() => void applyPreset("auto")}>自动检测</button>
-                <button onClick={() => void applyPreset("balanced")}>balanced</button>
-                <button onClick={() => void applyPreset("melody")}>melody</button>
-                <button onClick={() => setFilterOpen((value) => !value)}>手动筛选</button>
-              </div>
-            </div>
-
-            {filterOpen && (
-              <div className="filter-editor">
-                <div className="filter-live-preview">
-                  <div className="filter-live-copy">
-                    <span>即时筛选预览</span>
-                    <strong>
-                      {filterPreview.total === 0
-                        ? "没有候选缓存"
-                        : `保留 ${filterPreview.matched} · 删除 ${filterPreview.removed} · ${Math.round((filterPreview.matched / Math.max(1, filterPreview.total)) * 100)}%`}
-                    </strong>
-                  </div>
-                  <div className="filter-live-track">
-                    <i
-                      style={{
-                        width: `${filterPreview.total ? (filterPreview.matched / filterPreview.total) * 100 : 0}%`,
-                      }}
-                    />
-                  </div>
-                  <small>拖动阈值即时重算；“应用横向阈值”后才生成新的不可变结果目录。</small>
-                </div>
-                <FilterPreviewCanvas
-                  notes={candidateNotes}
-                  rules={filterRules}
-                  activeRuleIndex={activeFilterRule}
-                  onActiveRuleChange={setActiveFilterRule}
-                  onRangeChange={updateRuleMetricRange}
-                  onClearRange={clearRuleMetric}
-                />
+        <div hidden={layout.view !== "filter"}>
+          <p className="inspector-help">组内 AND，组间 OR；音高按原始 MIDI 匹配。图形调整只预览，应用才生成新结果。</p>
+          {result ? <div className="filter-inspector">
                 {filterRules.map((rule, index) => (
                   <div
                     className={`filter-rule ${activeFilterRule === index ? "active" : ""}`}
@@ -3199,29 +3044,11 @@ function App() {
                     应用横向阈值
                   </button>
                 </div>
-              </div>
-            )}
-
-            <div className="stats-grid">
-              {counts.map(([key, value]) => (
-                <div className="stat" key={key}>
-                  <span>{countLabel(key)}</span>
-                  <strong>{value}</strong>
-                </div>
-              ))}
-            </div>
-
-            {performance && (
-              <PianoRollEditor
-                key={performance.revision.id}
-                document={performance}
-                candidates={candidateNotes}
-                applying={editApplying}
-                onDocumentChange={setPerformance}
-                onApply={() => void applyEditRevision()}
-              />
-            )}
-
+          </div> : <p>载入含候选缓存的结果后可筛选。</p>}
+        </div>
+        <div hidden={layout.view !== "editor"}>
+          {performance && <div className="inspector-help"><strong>映射编辑层</strong><p>{performance.notes.length} 音符 · {(performance.duration_us / 1_000_000).toFixed(2)}s</p><p>候选为只读参考。当前编辑仅在会话内保存，请发布 edit-NN 版本后再退出。</p></div>}
+          {result && <><div className="revision-label">当前发布目录：{result.result.output_dir}</div>
             <div className="result-grid">
               <div className="preview-card">
                 <div className="ab-compare-heading">
@@ -3313,9 +3140,230 @@ function App() {
                 ))}
               </div>
             </div>
+          </>}
+        </div>
+      </aside>
+      <footer className="workspace-tasks" aria-label="任务与日志">
+        <button className="task-drawer-toggle" aria-expanded={layout.tasks} onClick={() => setLayout((current) => ({ ...current, tasks: !current.tasks }))}>{layout.tasks ? "收起任务" : "展开任务"}</button>
+        <div className="run-bar">
+          <div className="progress-copy">
+            <strong>{running ? stage : "准备开始"}</strong>
+            <span>{fraction === null ? "进度未知" : `${Math.round(fraction * 100)}%`}</span>
+          </div>
+          <div className="progress-track">
+            <div
+              className={fraction === null && running ? "indeterminate" : ""}
+              style={{ width: `${fraction === null ? 32 : fraction * 100}%` }}
+            />
+          </div>
+          <div className={`operation-console ${operationLogOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="operation-console-toggle"
+              aria-expanded={operationLogOpen}
+              onClick={() => setOperationLogOpen((value) => !value)}
+            >
+              操作记录
+              <span>{operationLog.length}</span>
+            </button>
+            {operationLogOpen && (
+              <div className="operation-console-popover">
+                <header>
+                  <strong>操作记录</strong>
+                  <button type="button" onClick={() => setOperationLog([])}>
+                    清空
+                  </button>
+                </header>
+                {operationLog.length === 0 ? (
+                  <p>尚无操作。每次载入、分析、转换、筛选和错误都会记录在这里。</p>
+                ) : (
+                  <ol>
+                    {operationLog.map((entry) => (
+                      <li className={entry.kind} key={entry.id}>
+                        <time>{entry.time}</time>
+                        <span>{entry.message}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            )}
+          </div>
+          {running ? (
+            <button className="danger-button" onClick={() => void cancelJob()}>
+              取消任务
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              disabled={running}
+              title={!request.input ? "请先载入素材" : !request.output ? "请先选择输出目录" : "开始转录"}
+              onClick={() => void startJob()}
+            >
+              开始转换
+            </button>
+          )}
+        </div>
+
+        {(error || warnings.length > 0) && (
+          <section className="alerts">
+            {error && <div className="alert error">{error}</div>}
+            {warnings.map((warning, index) => (
+              <div className="alert warning" key={`${warning}-${index}`}>
+                {warning}
+              </div>
+            ))}
           </section>
         )}
-      </main>
+
+        <div hidden={!layout.tasks} className="task-drawer-content">
+          {layoutError && <p role="alert">{layoutError}</p>}
+          <section className="queue-workbench">
+            <div className="queue-heading">
+              <div>
+                <span>BATCH QUEUE</span>
+                <strong>批量转录队列</strong>
+                <small>单 worker 顺序执行，失败不会阻断后续素材。</small>
+              </div>
+              <div className="queue-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={queueRunning}
+                  onClick={() => void chooseQueueInputs()}
+                >
+                  添加多个
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={queueRunning || running || queueSummary.pending === 0}
+                  onClick={() => void runQueue()}
+                >
+                  {queueRunning ? "队列运行中" : "开始队列"}
+                </button>
+                <button
+                  type="button"
+                  disabled={queueRunning || queueSummary.failed + queueSummary.cancelled === 0}
+                  onClick={() => void runQueue(retryableQueueIds(queueItemsRef.current))}
+                >
+                  重试失败
+                </button>
+                <button
+                  type="button"
+                  disabled={!queueRunning}
+                  onClick={() => void skipCurrentQueueItem()}
+                >
+                  跳过当前
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={!queueRunning}
+                  onClick={() => void cancelQueue()}
+                >
+                  停止队列
+                </button>
+                <button
+                  type="button"
+                  disabled={queueRunning || queueSummary.pending === 0}
+                  onClick={syncPendingQueueParameters}
+                >
+                  同步当前参数
+                </button>
+                <button type="button" onClick={clearFinishedQueueItems}>
+                  清理完成
+                </button>
+              </div>
+            </div>
+            <div className="queue-summary">
+              {[
+                ["待处理", queueSummary.pending, "pending"],
+                ["处理中", queueSummary.running, "running"],
+                ["完成", queueSummary.done, "done"],
+                ["失败", queueSummary.failed, "failed"],
+                ["已取消", queueSummary.cancelled, "cancelled"],
+              ].map(([label, value, status]) => (
+                <span className={String(status)} key={String(status)}>
+                  <i />
+                  {label}
+                  <strong>{value}</strong>
+                </span>
+              ))}
+              <div className="queue-overall-track" title="队列完成比例">
+                <i
+                  style={{
+                    width: `${queueSummary.total ? ((queueSummary.done + queueSummary.failed + queueSummary.cancelled) / queueSummary.total) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+            {queueItems.length === 0 ? (
+              <button type="button" className="queue-empty" onClick={() => void chooseQueueInputs()}>
+                <strong>拖入多个文件，或点击这里批量添加</strong>
+                <small>每项使用独立输出目录；应用重启后会保留完成和失败状态。</small>
+              </button>
+            ) : (
+              <div className="queue-list">
+                {queueItems.map((item, index) => (
+                  <article className={`queue-item ${item.status}`} key={item.id}>
+                    <div className="queue-item-index">{String(index + 1).padStart(2, "0")}</div>
+                    <div className="queue-item-copy">
+                      <strong title={item.request.input}>
+                        {item.request.input.split(/[/\\]/).pop() || item.request.input}
+                      </strong>
+                      <small title={item.request.output}>输出：{item.request.output}</small>
+                      {item.error && <small className="queue-error">{item.error}</small>}
+                    </div>
+                    <div className="queue-item-state">
+                      <span>{queueStatusLabel(item.status)}</span>
+                      {item.status === "running" && queueCurrentId === item.id && (
+                        <div className="queue-item-progress">
+                          <i style={{ width: `${Math.max(0, Math.min(100, (fraction ?? 0) * 100))}%` }} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="queue-item-actions">
+                      <button
+                        type="button"
+                        disabled={queueRunning}
+                        onClick={() => void applyInput(item.request.input, false)}
+                      >
+                        载入
+                      </button>
+                      {(item.status === "failed" || item.status === "cancelled") && (
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={queueRunning || running}
+                          onClick={() => void runQueue([item.id])}
+                        >
+                          重试
+                        </button>
+                      )}
+                      {item.result_dir && (
+                        <button
+                          type="button"
+                          onClick={() => void openLocalPath(item.result_dir!, "队列结果目录")}
+                        >
+                          打开
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={queueRunning}
+                        onClick={() => removeQueuedItem(item.id)}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </footer>
       {toast && (
         <div
           key={toast.id}
