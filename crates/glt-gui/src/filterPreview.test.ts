@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activePitchLines, liveFilterStats, matchesDraftRule } from "./filterPreview";
+import { activePitchLines, liveFilterStats, matchesDraftRule, rulesToFilter } from "./filterPreview";
 import type { CandidateNote, DraftFilterRule } from "./types";
 
 function note(overrides: Partial<CandidateNote> = {}): CandidateNote {
@@ -53,4 +53,16 @@ describe("live filter preview", () => {
     const stats = liveFilterStats(candidates, [rule({ pitchMax: "64" }), rule({ pitchMin: "76" })]);
     expect(stats).toEqual({ total: 3, matched: 2, removed: 1, perRule: [1, 1], matches: [true, false, true] });
   });
+});
+
+it("exports no enabled rules as a reproducible unfiltered specification", () => {
+  expect(rulesToFilter([])).toEqual({ format_version: 1, rules: [] });
+  expect(rulesToFilter([rule({ enabled: false, pitchMin: "80", pitchMax: "40" })])).toEqual({ format_version: 1, rules: [] });
+});
+it("rejects invalid or reversed filter bounds instead of silently substituting defaults", () => {
+  expect(() => rulesToFilter([rule({ confidenceMin: "bad" })])).toThrow();
+  expect(() => rulesToFilter([rule({ pitchMin: "80", pitchMax: "40" })])).toThrow();
+  expect(() => rulesToFilter([rule({ velocityMax: "128" })])).toThrow();
+  expect(() => rulesToFilter([rule({ pitchMin: "60.5" })])).toThrow();
+  expect(rulesToFilter([rule({ confidenceMin: "0", confidenceMax: "1" })]).rules[0].confidence).toEqual({ min: 0, max: 1 });
 });

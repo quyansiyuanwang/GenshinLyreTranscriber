@@ -32,10 +32,24 @@ export function range(
   };
 }
 
-export function rulesToFilter(rules: DraftFilterRule[]): FilterSpec | null {
+export function rulesToFilter(rules: DraftFilterRule[]): FilterSpec {
   const converted: FilterRule[] = [];
   for (const rule of rules) {
     if (!rule.enabled || !hasRuleValue(rule)) continue;
+    for (const [minimumKey, maximumKey, minimum, maximum, integer] of [
+      ["confidenceMin", "confidenceMax", 0, 1, false],
+      ["durationMin", "durationMax", 0, 3_600_000, true],
+      ["velocityMin", "velocityMax", 1, 127, true],
+      ["pitchMin", "pitchMax", 0, 127, true],
+    ] as const) {
+      const lowerText = rule[minimumKey].trim();
+      const upperText = rule[maximumKey].trim();
+      const lower = lowerText ? Number(lowerText) : minimum;
+      const upper = upperText ? Number(upperText) : maximum;
+      if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower < minimum || upper > maximum || lower > upper || (integer && (!Number.isInteger(lower) || !Number.isInteger(upper)))) {
+        throw new Error(`规则 ${rules.indexOf(rule) + 1} 的 ${minimumKey}/${maximumKey} 无效：范围应为 ${minimum}..${maximum}，下限不能大于上限${integer ? "，且必须是整数" : ""}`);
+      }
+    }
     converted.push({
       enabled: true,
       confidence: range(rule.confidenceMin, rule.confidenceMax, 0, 1),
@@ -44,7 +58,7 @@ export function rulesToFilter(rules: DraftFilterRule[]): FilterSpec | null {
       pitch: range(rule.pitchMin, rule.pitchMax, 0, 127),
     });
   }
-  return converted.length ? { format_version: 1, rules: converted } : null;
+  return { format_version: 1, rules: converted };
 }
 
 function within(value: number, limits: { min: number; max: number } | undefined): boolean {

@@ -1,9 +1,12 @@
+use crate::process_tree::ProcessTree;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,17 +16,75 @@ use zip::ZipArchive;
 
 const MANIFEST_NAME: &str = "separator-component-v1.json";
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SeparationState {
-    running: AtomicBool,
-    child: Mutex<Option<Child>>,
+    running: Arc<AtomicBool>,
+    cancelled: Arc<AtomicBool>,
+    child: Arc<Mutex<Option<ProcessTree>>>,
 }
 
 impl SeparationState {
-    fn lock_child(&self) -> Result<std::sync::MutexGuard<'_, Option<Child>>, String> {
+    fn lock_child(&self) -> Result<std::sync::MutexGuard<'_, Option<ProcessTree>>, String> {
         self.child
             .lock()
             .map_err(|_| "separation process state is unavailable".to_owned())
+    }
+}
+
+// The guard is shared by jobs and component mutations, and releases on every error path.
+struct OperationGuard(Arc<AtomicBool>);
+impl OperationGuard {
+    fn acquire(state: &SeparationState) -> Result<Self, String> {
+        if state
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err("分离、路由或组件维护正在进行，请等待完成后重试".to_owned());
+        }
+        Ok(Self(Arc::clone(&state.running)))
+    }
+}
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn drain_diagnostics(mut stream: impl Read) -> String {
+    const LIMIT: usize = 16 * 1024;
+    let mut tail = std::collections::VecDeque::with_capacity(LIMIT);
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => {
+                for byte in &buffer[..count] {
+                    if tail.len() == LIMIT {
+                        tail.pop_front();
+                    }
+                    tail.push_back(*byte);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&tail.into_iter().collect::<Vec<_>>()).into_owned()
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CancellationEvent {
+    format_version: u8,
+    operation: &'static str,
+    state: &'static str,
+}
+
+impl CancellationEvent {
+    fn new(operation: &'static str) -> Self {
+        Self {
+            format_version: 1,
+            operation,
+            state: "cancelled",
+        }
     }
 }
 
@@ -67,101 +128,126 @@ pub struct SeparatorComponentStatus {
 }
 
 #[tauri::command]
-pub fn start_separation(
-    app: AppHandle,
-    state: State<'_, SeparationState>,
-    request: SeparationRequest,
-) -> Result<(), String> {
-    let spec = glt::desktop::worker_spec(request.worker_path)?;
-    let mut command = Command::new(&spec.program);
-    command.args(&spec.args).envs(spec.env);
-    if let Some(directory) = spec.working_directory {
-        command.current_dir(directory);
-    }
-    command
-        .arg("separate")
-        .arg("--component")
-        .arg(&request.component)
-        .arg("--input")
-        .arg(&request.input)
-        .arg("--output")
-        .arg(&request.output)
-        .arg("--model")
-        .arg(&request.model);
-    spawn_json_process(app, &state, command, "separation")
-}
-
-#[tauri::command]
-pub fn start_routing(
-    app: AppHandle,
-    state: State<'_, SeparationState>,
-    request: RoutingRequest,
-) -> Result<(), String> {
-    let spec = glt::desktop::worker_spec(request.worker_path)?;
-    let mut command = Command::new(&spec.program);
-    command.args(&spec.args).envs(spec.env);
-    if let Some(directory) = spec.working_directory {
-        command.current_dir(directory);
-    }
-    command
-        .arg("route")
-        .arg("--stem-set")
-        .arg(&request.stem_set)
-        .arg("--output")
-        .arg(&request.output);
-    if let Some(plan) = request.plan {
-        let encoded = serde_json::to_string(&plan).map_err(|error| error.to_string())?;
-        command.arg("--plan-json").arg(encoded);
-    } else {
-        command.arg("--mode").arg(&request.mode);
-        if let Some(max_voices) = request.max_voices {
-            command.arg("--max-voices").arg(max_voices.to_string());
+pub async fn start_separation(app: AppHandle, request: SeparationRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let spec = glt::desktop::worker_spec(request.worker_path)?;
+        let mut command = Command::new(&spec.program);
+        command.args(&spec.args).envs(spec.env);
+        if let Some(directory) = spec.working_directory {
+            command.current_dir(directory);
         }
-    }
-    spawn_json_process(app, &state, command, "routing")
+        command
+            .arg("separate")
+            .arg("--component")
+            .arg(&request.component)
+            .arg("--input")
+            .arg(&request.input)
+            .arg("--output")
+            .arg(&request.output)
+            .arg("--model")
+            .arg(&request.model);
+        let state = app.state::<SeparationState>();
+        spawn_json_process(app.clone(), &state, command, "separation")
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn cancel_separation(state: State<'_, SeparationState>) -> Result<(), String> {
-    if let Some(child) = state.lock_child()?.as_mut() {
-        child.kill().map_err(|error| error.to_string())?;
+pub async fn start_routing(app: AppHandle, request: RoutingRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let spec = glt::desktop::worker_spec(request.worker_path)?;
+        let mut command = Command::new(&spec.program);
+        command.args(&spec.args).envs(spec.env);
+        if let Some(directory) = spec.working_directory {
+            command.current_dir(directory);
+        }
+        command
+            .arg("route")
+            .arg("--stem-set")
+            .arg(&request.stem_set)
+            .arg("--output")
+            .arg(&request.output);
+        if let Some(plan) = request.plan {
+            let encoded = serde_json::to_string(&plan).map_err(|error| error.to_string())?;
+            command.arg("--plan-json").arg(encoded);
+        } else {
+            command.arg("--mode").arg(&request.mode);
+            if let Some(max_voices) = request.max_voices {
+                command.arg("--max-voices").arg(max_voices.to_string());
+            }
+        }
+        let state = app.state::<SeparationState>();
+        spawn_json_process(app.clone(), &state, command, "routing")
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn cancel_separation(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<SeparationState>();
+        cancel_process(&state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn cancel_process(state: &SeparationState) -> Result<(), String> {
+    let mut slot = state.lock_child()?;
+    if let Some(process) = slot.as_mut() {
+        process.terminate().map_err(|error| error.to_string())?;
+        state.cancelled.store(true, Ordering::SeqCst);
     }
     Ok(())
 }
 
-fn spawn_json_process(
+pub(crate) fn spawn_json_process(
     app: AppHandle,
     state: &SeparationState,
     mut command: Command,
     prefix: &'static str,
 ) -> Result<(), String> {
-    if state.running.swap(true, Ordering::SeqCst) {
-        return Err(format!("a {prefix} job is already running"));
-    }
+    let guard = OperationGuard::acquire(state)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            state.running.store(false, Ordering::SeqCst);
-            return Err(format!("cannot start {prefix} worker: {error}"));
-        }
-    };
-    let stdout = child
+    let mut slot = state.lock_child()?;
+    state.cancelled.store(false, Ordering::SeqCst);
+    let mut process = ProcessTree::spawn(&mut command)
+        .map_err(|error| format!("cannot start {prefix} worker: {error}"))?;
+    let stdout = process
+        .child
         .stdout
         .take()
-        .ok_or_else(|| format!("{prefix} stdout is unavailable"))?;
-    let stderr = child.stderr.take();
-    *state.lock_child()? = Some(child);
+        .ok_or("worker stdout is unavailable")?;
+    let stderr = process
+        .child
+        .stderr
+        .take()
+        .ok_or("worker stderr is unavailable")?;
+    *slot = Some(process);
+    drop(slot);
+    let status = state.clone();
     std::thread::spawn(move || {
-        let mut terminal = false;
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            let Ok(payload) = serde_json::from_str::<Value>(&line) else {
+        let stderr_reader = std::thread::spawn(move || drain_diagnostics(stderr));
+        let mut reader = BufReader::new(stdout);
+        let mut terminal: Option<Result<Value, String>> = None;
+        loop {
+            let mut line = Vec::new();
+            // A malformed worker must not force an unbounded line allocation.
+            match reader.by_ref().take(1_048_577).read_until(b'\n', &mut line) {
+                Ok(0) => break,
+                Err(error) => {
+                    terminal = Some(Err(error.to_string()));
+                    break;
+                }
+                Ok(_) if line.len() > 1_048_576 => {
+                    terminal = Some(Err("worker protocol line exceeds 1 MiB".to_owned()));
+                    break;
+                }
+                _ => {}
+            }
+            let Ok(payload) = serde_json::from_slice::<Value>(&line) else {
                 continue;
             };
             match payload.get("type").and_then(Value::as_str) {
@@ -169,38 +255,83 @@ fn spawn_json_process(
                     let _ = app.emit(&format!("{prefix}-progress"), payload);
                 }
                 Some("result") => {
-                    terminal = true;
-                    let _ = app.emit(&format!("{prefix}-finished"), payload);
+                    terminal = Some(Ok(payload));
+                    break;
                 }
                 Some("error") => {
-                    terminal = true;
-                    let message = payload
+                    terminal = Some(Err(payload
                         .get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("worker failed")
-                        .to_owned();
-                    let _ = app.emit(&format!("{prefix}-failed"), message);
+                        .to_owned()));
+                    break;
                 }
                 _ => {}
             }
         }
-        let status = app.state::<SeparationState>();
-        let mut process = status.lock_child().ok().and_then(|mut value| value.take());
-        if let Some(process) = process.as_mut() {
-            let _ = process.wait();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut exit_ok = false;
+        loop {
+            let finished = match status.lock_child() {
+                Ok(mut slot) => match slot.as_mut() {
+                    Some(process) => match process.child.try_wait() {
+                        Ok(Some(exit)) => {
+                            exit_ok = exit.success();
+                            true
+                        }
+                        Ok(None) => false,
+                        Err(_) => true,
+                    },
+                    None => true,
+                },
+                Err(_) => true,
+            };
+            if finished || status.cancelled.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        if !terminal {
-            let details = stderr
-                .map(|mut stream| {
-                    let mut text = String::new();
-                    let _ = stream.read_to_string(&mut text);
-                    text
-                })
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "worker exited without a terminal message".to_owned());
-            let _ = app.emit(&format!("{prefix}-failed"), details);
+        let cleanup = status.lock_child().and_then(|mut slot| {
+            if let Some(mut process) = slot.take() {
+                process.finish().map_err(|error| error.to_string())
+            } else {
+                Ok(())
+            }
+        });
+        let details = stderr_reader
+            .join()
+            .unwrap_or_else(|_| "stderr reader failed".to_owned());
+        let cancelled = status.cancelled.load(Ordering::SeqCst);
+        // Terminal notifications are emitted only after cleanup and lock release.
+        drop(guard);
+        if let Err(error) = cleanup {
+            let _ = app.emit(
+                &format!("{prefix}-failed"),
+                format!("worker cleanup failed: {error}"),
+            );
+        } else if cancelled {
+            let _ = app.emit(
+                &format!("{prefix}-cancelled"),
+                CancellationEvent::new(prefix),
+            );
+        } else {
+            match terminal {
+                Some(Ok(payload)) if exit_ok => {
+                    let _ = app.emit(&format!("{prefix}-finished"), payload);
+                }
+                Some(Err(error)) => {
+                    let _ = app.emit(&format!("{prefix}-failed"), error);
+                }
+                _ => {
+                    let details = if details.trim().is_empty() {
+                        "worker exited without a successful terminal result".to_owned()
+                    } else {
+                        details
+                    };
+                    let _ = app.emit(&format!("{prefix}-failed"), details);
+                }
+            }
         }
-        status.running.store(false, Ordering::SeqCst);
     });
     Ok(())
 }
@@ -227,7 +358,15 @@ fn component_directory_for(executable: &Path, app_data: &Path) -> PathBuf {
 }
 
 #[tauri::command]
-pub fn separator_component_status(directory: PathBuf) -> SeparatorComponentStatus {
+pub async fn separator_component_status(
+    directory: PathBuf,
+) -> Result<SeparatorComponentStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_component_status(directory))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn inspect_component_status(directory: PathBuf) -> SeparatorComponentStatus {
     match inspect_component(&directory) {
         Ok((manifest, models)) => SeparatorComponentStatus {
             installed: true,
@@ -256,11 +395,14 @@ pub fn separator_component_status(directory: PathBuf) -> SeparatorComponentStatu
 
 #[tauri::command]
 pub async fn separator_component_install(
+    state: State<'_, SeparationState>,
     archive: PathBuf,
     target: PathBuf,
     overwrite: bool,
 ) -> Result<SeparatorComponentStatus, String> {
+    let guard = OperationGuard::acquire(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
         install_separator_component(archive, target, overwrite)
     })
     .await
@@ -282,47 +424,87 @@ fn install_separator_component(
         .parent()
         .ok_or_else(|| "separator component target has no parent".to_owned())?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let staging = parent.join(format!(
-        ".{}-partial",
-        target.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    if staging.exists() {
-        fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
-    }
-    fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
-    let result = (|| {
+    let staging = parent.join(format!(".separator-{}-partial", Uuid::new_v4()));
+    fs::create_dir(&staging).map_err(|error| error.to_string())?;
+    let result: Result<(), String> = (|| {
         extract_archive(&archive, &staging)?;
         inspect_component(&staging)?;
-        if target.exists() {
-            if !overwrite {
-                return Err(format!(
-                    "separator component already exists: {}",
-                    target.display()
-                ));
-            }
-            fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
-        }
-        move_directory(&staging, &target)?;
+        publish_component(&staging, &target, overwrite, move_directory)?;
         Ok(())
     })();
-    if result.is_err() {
+    if staging.exists() {
         let _ = fs::remove_dir_all(&staging);
     }
     result?;
-    Ok(separator_component_status(target))
+    Ok(inspect_component_status(target))
+}
+
+fn publish_component(
+    staging: &Path,
+    target: &Path,
+    overwrite: bool,
+    mover: impl Fn(&Path, &Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let backup = target.with_file_name(format!(".separator-{}-backup", Uuid::new_v4()));
+    let had_previous = target.exists();
+    if had_previous {
+        if !overwrite {
+            return Err(format!(
+                "separator component already exists: {}",
+                target.display()
+            ));
+        }
+        // Do not replace an unrelated user directory.
+        if !target.join(MANIFEST_NAME).is_file() {
+            return Err("target is not a separator component directory".to_owned());
+        }
+        mover(target, &backup).map_err(|error| {
+            format!(
+                "{error}; previous component backup location: {}",
+                backup.display()
+            )
+        })?;
+    }
+    let publish = mover(staging, target).and_then(|()| inspect_component(target).map(|_| ()));
+    if let Err(error) = publish {
+        if target.exists()
+            && let Err(cleanup) = fs::remove_dir_all(target)
+        {
+            return Err(format!(
+                "{error}; cannot remove failed publication: {cleanup}; previous component retained at {}",
+                backup.display()
+            ));
+        }
+        if had_previous && let Err(restore) = mover(&backup, target) {
+            return Err(format!(
+                "{error}; rollback failed: {restore}; previous component retained at {}",
+                backup.display()
+            ));
+        }
+        return Err(error);
+    }
+    // Cleanup is best effort: preserving a backup is safer than reporting a usable install as failed.
+    if had_previous {
+        let _ = fs::remove_dir_all(&backup);
+    }
+    Ok(())
 }
 
 fn move_directory(source: &Path, target: &Path) -> Result<(), String> {
+    if target.exists() {
+        return Err(format!(
+            "move destination already exists: {}",
+            target.display()
+        ));
+    }
     if fs::rename(source, target).is_ok() {
         return Ok(());
-    }
-    if target.exists() {
-        fs::remove_dir_all(target).map_err(|error| error.to_string())?;
     }
     if let Err(error) = copy_directory(source, target) {
         let _ = fs::remove_dir_all(target);
         return Err(error);
     }
+    // Copy completed before deleting the source, including cross-volume/EFS fallback.
     fs::remove_dir_all(source).map_err(|error| error.to_string())
 }
 
@@ -347,7 +529,20 @@ fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn separator_component_uninstall(target: PathBuf) -> Result<(), String> {
+pub async fn separator_component_uninstall(
+    state: State<'_, SeparationState>,
+    target: PathBuf,
+) -> Result<(), String> {
+    let guard = OperationGuard::acquire(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        uninstall_separator_component(target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn uninstall_separator_component(target: PathBuf) -> Result<(), String> {
     if !target.join(MANIFEST_NAME).is_file() {
         return Err(format!(
             "not a separator component directory: {}",
@@ -414,6 +609,9 @@ fn inspect_component(root: &Path) -> Result<(Value, Vec<SeparatorModelStatus>), 
             model.get("sha256").and_then(Value::as_str),
             model.get("size_bytes").and_then(Value::as_u64),
         )?;
+        if relative.ends_with(".bundle.json") {
+            verify_model_bundle(root, relative)?;
+        }
         statuses.push(SeparatorModelStatus {
             id: id.to_owned(),
             quality: quality.to_owned(),
@@ -424,17 +622,67 @@ fn inspect_component(root: &Path) -> Result<(Value, Vec<SeparatorModelStatus>), 
     Ok((manifest, statuses))
 }
 
+fn verify_model_bundle(root: &Path, relative: &str) -> Result<(), String> {
+    let bundle_path = root.join(relative);
+    let bundle: Value =
+        serde_json::from_slice(&fs::read(&bundle_path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("invalid model bundle: {error}"))?;
+    if bundle.get("format_version").and_then(Value::as_u64) != Some(1) {
+        return Err("unsupported model bundle version".to_owned());
+    }
+    let files = bundle
+        .get("files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty())
+        .ok_or("model bundle has no weight files")?;
+    let model_root = bundle_path.parent().ok_or("model bundle has no parent")?;
+    for file in files {
+        let path = file
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .ok_or("model weight path is missing")?;
+        let hash = file
+            .get("sha256")
+            .and_then(Value::as_str)
+            .ok_or("model weight hash is missing")?;
+        let size = file
+            .get("size_bytes")
+            .and_then(Value::as_u64)
+            .ok_or("model weight size is missing")?;
+        verify_file(model_root, path, Some(hash), Some(size))?;
+    }
+    Ok(())
+}
+
 fn verify_file(
     root: &Path,
     relative: &str,
     expected_hash: Option<&str>,
     expected_size: Option<u64>,
 ) -> Result<(), String> {
+    if Path::new(relative).components().any(|component| {
+        !matches!(
+            component,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    }) {
+        return Err(format!(
+            "separator path must stay inside the component: {relative}"
+        ));
+    }
     let path = root.join(relative);
     if !path.is_file() {
         return Err(format!(
             "separator file is missing: {relative}; resolved path: {}. Reinstall the complete separator component ZIP; copying the executable alone is not sufficient.",
             path.display()
+        ));
+    }
+    let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_path = path.canonicalize().map_err(|error| error.to_string())?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(format!(
+            "separator path escapes component: {}; use a non-redirected portable component directory",
+            canonical_path.display()
         ));
     }
     if let Some(expected) = expected_size
@@ -496,6 +744,117 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     #[test]
+    fn cancellation_event_matches_shared_fixture() {
+        let expected: Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/desktop-cancellation-v1.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(CancellationEvent::new("separation")).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn operation_guard_excludes_all_mutations_and_releases_on_error() {
+        let state = SeparationState::default();
+        let guard = OperationGuard::acquire(&state).unwrap();
+        assert!(OperationGuard::acquire(&state).is_err());
+        drop(guard);
+        assert!(OperationGuard::acquire(&state).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbose_worker_does_not_block_stdout_or_cancellation() {
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "[Console]::Error.Write(('x' * 2000000)); [Console]::Out.WriteLine('ready'); Start-Sleep -Seconds 120"]);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut tree = ProcessTree::spawn(&mut command).unwrap();
+        let stderr = tree.child.stderr.take().unwrap();
+        let drainer = std::thread::spawn(move || drain_diagnostics(stderr));
+        let mut ready = String::new();
+        BufReader::new(tree.child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready.trim(), "ready");
+        tree.finish().unwrap();
+        assert_eq!(drainer.join().unwrap().len(), 16 * 1024);
+    }
+
+    #[test]
+    fn diagnostics_are_drained_but_only_bounded_tail_is_retained() {
+        let mut input = vec![b'x'; 2 * 1024 * 1024];
+        input.extend_from_slice(b"FINAL ERROR");
+        let tail = drain_diagnostics(std::io::Cursor::new(input));
+        assert_eq!(tail.len(), 16 * 1024);
+        assert!(tail.ends_with("FINAL ERROR"));
+    }
+
+    #[test]
+    fn failed_publication_restores_previous_component() {
+        let root = std::env::temp_dir().join(format!("glt-component-rollback-{}", Uuid::new_v4()));
+        let target = root.join("installed");
+        let staging = root.join("staging");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(target.join(MANIFEST_NAME), b"old manifest").unwrap();
+        fs::write(target.join("user-marker"), b"old runtime").unwrap();
+        let result = publish_component(&staging, &target, true, |from, to| {
+            if from == staging {
+                return Err("simulated publication failure".to_owned());
+            }
+            move_directory(from, to)
+        });
+        assert!(
+            result
+                .unwrap_err()
+                .contains("simulated publication failure")
+        );
+        assert_eq!(
+            fs::read(target.join("user-marker")).unwrap(),
+            b"old runtime"
+        );
+        assert!(staging.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_failure_preserves_backup_and_reports_its_location() {
+        let root = std::env::temp_dir().join(format!("glt-component-backup-{}", Uuid::new_v4()));
+        let target = root.join("installed");
+        let staging = root.join("staging");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(target.join(MANIFEST_NAME), b"old manifest").unwrap();
+        let result = publish_component(&staging, &target, true, |from, to| {
+            if from != target {
+                return Err("simulated locked target".to_owned());
+            }
+            move_directory(from, to)
+        });
+        let error = result.unwrap_err();
+        let backup = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .ends_with("-backup")
+            })
+            .unwrap();
+        assert!(error.contains(&backup.display().to_string()));
+        assert_eq!(
+            fs::read(backup.join(MANIFEST_NAME)).unwrap(),
+            b"old manifest"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn portable_component_is_preferred_only_when_manifest_exists() {
         let root = std::env::temp_dir().join(format!("glt-portable-component-{}", Uuid::new_v4()));
         let executable = root.join("app/glt-gui.exe");
@@ -545,7 +904,17 @@ mod tests {
         fs::create_dir_all(source.join("licenses")).unwrap();
         fs::write(source.join("worker/worker.exe"), b"runtime").unwrap();
         fs::write(source.join("licenses/THIRD_PARTY.txt"), b"MIT").unwrap();
-        fs::write(source.join("worker/models/htdemucs.bundle.json"), b"{}").unwrap();
+        fs::write(source.join("worker/models/weights.bin"), b"weights").unwrap();
+        let bundle = serde_json::json!({"format_version": 1, "files": [{
+            "relative_path": "weights.bin", "size_bytes": 7,
+            "sha256": sha256_file(&source.join("worker/models/weights.bin")).unwrap()
+        }]});
+        let bundle_bytes = serde_json::to_vec(&bundle).unwrap();
+        fs::write(
+            source.join("worker/models/htdemucs.bundle.json"),
+            &bundle_bytes,
+        )
+        .unwrap();
         let manifest = serde_json::json!({
             "format_version": 1,
             "component_id": "demucs-cpu",
@@ -563,7 +932,7 @@ mod tests {
                 "relative_path": "worker/models/htdemucs.bundle.json",
                 "sha256": sha256_file(&source.join("worker/models/htdemucs.bundle.json")).unwrap(),
                 "logical_sha256": "a".repeat(64),
-                "size_bytes": 2,
+                "size_bytes": bundle_bytes.len(),
                 "source_url": "https://example.invalid/model",
                 "license_name": "MIT"
             }]
@@ -584,6 +953,7 @@ mod tests {
             "worker/worker.exe",
             "licenses/THIRD_PARTY.txt",
             "worker/models/htdemucs.bundle.json",
+            "worker/models/weights.bin",
         ] {
             writer.start_file(relative, options).unwrap();
             writer
@@ -596,7 +966,26 @@ mod tests {
         let installed = install_separator_component(archive, target.clone(), false).unwrap();
         assert!(installed.installed);
         assert_eq!(installed.models.len(), 1);
-        separator_component_uninstall(target.clone()).unwrap();
+        let bad_archive = root.join("broken.zip");
+        fs::write(&bad_archive, b"not a zip").unwrap();
+        assert!(install_separator_component(bad_archive, target.clone(), true).is_err());
+        assert!(inspect_component_status(target.clone()).installed);
+        let invalid_archive = root.join("missing-runtime.zip");
+        let mut writer = ZipWriter::new(File::create(&invalid_archive).unwrap());
+        writer
+            .start_file(MANIFEST_NAME, SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(&fs::read(source.join(MANIFEST_NAME)).unwrap())
+            .unwrap();
+        writer.finish().unwrap();
+        assert!(install_separator_component(invalid_archive, target.clone(), true).is_err());
+        assert!(inspect_component_status(target.clone()).installed);
+        fs::write(target.join("worker/models/weights.bin"), b"corrupt").unwrap();
+        let corrupted = inspect_component_status(target.clone());
+        assert!(!corrupted.installed);
+        assert!(corrupted.error.unwrap().contains("hash mismatch"));
+        uninstall_separator_component(target.clone()).unwrap();
         assert!(!target.exists());
         let _ = fs::remove_dir_all(root);
     }

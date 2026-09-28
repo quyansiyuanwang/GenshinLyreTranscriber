@@ -1,30 +1,20 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::Command;
 
+use crate::separation::{SeparationState, cancel_process, spawn_json_process};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager};
 
 const ANALYSIS_MANIFEST: &str = "analysis-manifest-v1.json";
 
 #[derive(Default)]
 pub struct AnalysisState {
-    running: AtomicBool,
-    child: Mutex<Option<Child>>,
-}
-
-impl AnalysisState {
-    fn lock_child(&self) -> Result<std::sync::MutexGuard<'_, Option<Child>>, String> {
-        self.child
-            .lock()
-            .map_err(|_| "analysis process state is unavailable".to_owned())
-    }
+    process: SeparationState,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -74,130 +64,51 @@ pub struct PlaybackStatus {
 }
 
 #[tauri::command]
-pub fn start_analysis(
-    app: AppHandle,
-    state: State<'_, AnalysisState>,
-    request: AnalysisRequest,
-) -> Result<(), String> {
-    if state.running.swap(true, Ordering::SeqCst) {
-        return Err("an analysis job is already running".to_owned());
-    }
-    let spec = glt::desktop::worker_spec(request.worker_path.clone())?;
-    let mut command = Command::new(&spec.program);
-    command.args(&spec.args);
-    command.envs(spec.env);
-    if let Some(directory) = spec.working_directory {
-        command.current_dir(directory);
-    }
-    command.arg("analyze");
-    command.arg("--input").arg(&request.input);
-    command.arg("--output").arg(&request.output);
-    if let Some(track) = request.audio_track {
-        command.arg("--audio-track").arg(track.to_string());
-    }
-    if let Some(start) = request.start_us {
-        command.arg("--start-us").arg(start.to_string());
-    }
-    if let Some(end) = request.end_us {
-        command.arg("--end-us").arg(end.to_string());
-    }
-    command
-        .arg("--fft-size")
-        .arg(request.fft_size.to_string())
-        .arg("--hop-size")
-        .arg(request.hop_size.to_string())
-        .arg("--window")
-        .arg(&request.window);
-    if request.spectral {
-        command.arg("--spectral");
-    }
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    if cfg!(windows) {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cannot start analysis worker: {error}"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "analysis stdout is unavailable".to_owned())?;
-    *state.lock_child()? = Some(child);
-
-    std::thread::spawn(move || {
-        let mut failed = false;
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else {
-                failed = true;
-                break;
-            };
-            let Ok(payload) = serde_json::from_str::<Value>(&line) else {
-                failed = true;
-                continue;
-            };
-            match payload.get("type").and_then(Value::as_str) {
-                Some("progress") => {
-                    let _ = app.emit("analysis-progress", payload);
-                }
-                Some("result") => {
-                    let _ = app.emit(
-                        "analysis-progress",
-                        serde_json::json!({
-                            "type": "progress",
-                            "stage": "completed",
-                            "fraction": 1.0
-                        }),
-                    );
-                    let _ = app.emit("analysis-finished", payload);
-                }
-                Some("error") => {
-                    failed = true;
-                    let _ = app.emit(
-                        "analysis-failed",
-                        payload
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("analysis failed"),
-                    );
-                }
-                _ => {}
-            }
+pub async fn start_analysis(app: AppHandle, request: AnalysisRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let spec = glt::desktop::worker_spec(request.worker_path.clone())?;
+        let mut command = Command::new(&spec.program);
+        command.args(&spec.args);
+        command.envs(spec.env);
+        if let Some(directory) = spec.working_directory {
+            command.current_dir(directory);
         }
-
+        command.arg("analyze");
+        command.arg("--input").arg(&request.input);
+        command.arg("--output").arg(&request.output);
+        if let Some(track) = request.audio_track {
+            command.arg("--audio-track").arg(track.to_string());
+        }
+        if let Some(start) = request.start_us {
+            command.arg("--start-us").arg(start.to_string());
+        }
+        if let Some(end) = request.end_us {
+            command.arg("--end-us").arg(end.to_string());
+        }
+        command
+            .arg("--fft-size")
+            .arg(request.fft_size.to_string())
+            .arg("--hop-size")
+            .arg(request.hop_size.to_string())
+            .arg("--window")
+            .arg(&request.window);
+        if request.spectral {
+            command.arg("--spectral");
+        }
         let state = app.state::<AnalysisState>();
-        let mut guard = match state.lock_child() {
-            Ok(guard) => guard,
-            Err(_) => return,
-        };
-        let status = guard.as_mut().and_then(|child| child.wait().ok());
-        let mut stderr = String::new();
-        if let Some(mut child) = guard.take()
-            && let Some(mut stream) = child.stderr.take()
-            && stream.read_to_string(&mut stderr).is_ok()
-            && !stderr.trim().is_empty()
-        {
-            failed = true;
-            let _ = app.emit("analysis-failed", stderr);
-        }
-        drop(guard);
-        if !failed && !status.is_some_and(|value| value.success()) {
-            let _ = app.emit("analysis-failed", "analysis worker exited unsuccessfully");
-        }
-        state.running.store(false, Ordering::SeqCst);
-    });
-    Ok(())
+        spawn_json_process(app.clone(), &state.process, command, "analysis")
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn cancel_analysis(state: State<'_, AnalysisState>) -> Result<(), String> {
-    let mut guard = state.lock_child()?;
-    if let Some(child) = guard.as_mut() {
-        child
-            .kill()
-            .map_err(|error| format!("cannot cancel analysis: {error}"))?;
-    }
-    Ok(())
+pub async fn cancel_analysis(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        cancel_process(&app.state::<AnalysisState>().process)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

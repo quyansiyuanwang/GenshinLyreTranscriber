@@ -12,3 +12,8 @@ describe("desktop separation wire contract", () => {
       .toEqual({ request: fixture.routing });
   });
 });
+
+it("recognizes the versioned desktop cancellation event", async () => {
+  const { default: event } = await import("../../../tests/fixtures/desktop-cancellation-v1.json");
+  expect(event).toEqual({ format_version: 1, operation: "separation", state: "cancelled" });
+});

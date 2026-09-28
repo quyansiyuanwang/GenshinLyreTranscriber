@@ -8,6 +8,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 
 import type {
   AnalysisFinished,
+  DesktopCancellation,
   AnalysisManifest,
   AnalysisProgress,
   DoctorInfo,
@@ -304,6 +305,9 @@ function App() {
   const [abSource, setAbSource] = useState("preview");
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [separationRunning, setSeparationRunning] = useState(false);
+  const [separationCancelling, setSeparationCancelling] = useState(false);
+  const separatorStartingRef = useRef(false);
+  const separatorCancelRequestedRef = useRef(false);
   const [separationStage, setSeparationStage] = useState("idle");
   const [separationFraction, setSeparationFraction] = useState<number | null>(null);
   const [stemSetPath, setStemSetPath] = useState<string | null>(null);
@@ -330,6 +334,9 @@ function App() {
   const [analysisSpectrogram, setAnalysisSpectrogram] = useState<SpectrogramImage | null>(null);
   const setAnalysisSpectrum = playbackStore.setSpectrum;
   const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisCancelling, setAnalysisCancelling] = useState(false);
+  const analysisStartingRef = useRef(false);
+  const analysisCancelRequestedRef = useRef(false);
   const [analysisStage, setAnalysisStage] = useState("idle");
   const [analysisFraction, setAnalysisFraction] = useState<number | null>(null);
   const playbackCommandBusyRef = useRef(false);
@@ -647,13 +654,14 @@ function App() {
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<SeparationProgress>("separation-progress", ({ payload }) => {
-      setSeparationRunning(payload.stage !== "completed");
+      setSeparationRunning(true);
       setSeparationStage(payload.stage);
       setSeparationFraction(payload.fraction);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<SeparationFinished>("separation-finished", ({ payload }) => {
       setSeparationRunning(false);
+      setSeparationCancelling(false);
       setSeparationStage("completed");
       setSeparationFraction(1);
       setStemSetPath(payload.stem_set_path);
@@ -673,16 +681,18 @@ function App() {
 
     void listen<string>("separation-failed", ({ payload }) => {
       setSeparationRunning(false);
+      setSeparationCancelling(false);
       setSeparationStage("failed");
       setError(`分离失败：${payload}`);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
-    void listen<SeparationProgress>("routing-progress", ({ payload }) => {
-      setRoutingRunning(payload.stage !== "completed");
+    void listen<SeparationProgress>("routing-progress", () => {
+      setRoutingRunning(true);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<RoutingFinished>("routing-finished", ({ payload }) => {
       setRoutingRunning(false);
+      setSeparationCancelling(false);
       setRoutedAudioPath(payload.routed_audio);
       setNotice(`${payload.mode} 路由试听已生成`);
       void recordRevision("routing-preview", parentPath(payload.routing_plan_path), null);
@@ -690,24 +700,47 @@ function App() {
 
     void listen<string>("routing-failed", ({ payload }) => {
       setRoutingRunning(false);
+      setSeparationCancelling(false);
       setError(`路由失败：${payload}`);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
+    for (const operation of ["separation", "routing"]) {
+      void listen<DesktopCancellation>(`${operation}-cancelled`, ({ payload }) => {
+        if (payload.format_version !== 1 || payload.state !== "cancelled") return;
+        setSeparationRunning(false);
+        setRoutingRunning(false);
+        setSeparationCancelling(false);
+        setSeparationStage("cancelled");
+        setNotice("分离 / 路由已取消，后台进程已回收");
+      }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+    }
+
     void listen<AnalysisProgress>("analysis-progress", ({ payload }) => {
-      setAnalysisRunning(payload.stage !== "completed");
+      setAnalysisRunning(true);
       setAnalysisStage(payload.stage);
       setAnalysisFraction(payload.fraction);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<AnalysisFinished>("analysis-finished", ({ payload }) => {
       setAnalysisRunning(false);
+      setAnalysisCancelling(false);
+      setAnalysisFraction(1);
       setAnalysisDirectory(payload.directory);
       setNotice(payload.cache_hit ? "分析缓存已加载" : "音频分析完成");
       void loadAnalysisViews(payload.directory);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
+    void listen<DesktopCancellation>("analysis-cancelled", ({ payload }) => {
+      if (payload.format_version !== 1 || payload.state !== "cancelled") return;
+      setAnalysisRunning(false);
+      setAnalysisCancelling(false);
+      setAnalysisStage("cancelled");
+      setNotice("分析已取消，后台进程已回收");
+    }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
+
     void listen<string>("analysis-failed", ({ payload }) => {
       setAnalysisRunning(false);
+      setAnalysisCancelling(false);
       setAnalysisStage("failed");
       setError(`分析失败：${payload}`);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
@@ -775,29 +808,54 @@ function App() {
     return () => unlisten?.();
   }, []);
 
+  async function cancelAnalysis() {
+    if (analysisCancelling) return;
+    analysisCancelRequestedRef.current = true;
+    setAnalysisCancelling(true);
+    setNotice("正在取消并回收分析进程");
+    if (analysisStartingRef.current) return;
+    try { await invoke("cancel_analysis"); }
+    catch (reason) { setAnalysisCancelling(false); setError(`取消分析失败：${String(reason)}`); }
+  }
+
   async function startAnalysis(path: string, output: string) {
+    if (analysisRunning || analysisStartingRef.current) return;
     if (!path.trim()) {
       setError("请先载入音频或视频素材");
       return;
     }
-    if (await invoke<boolean>("path_is_directory", { path })) {
-      await openResultPath(path);
-      return;
-    }
-    if (!output.trim()) {
-      setError("请先选择输出目录");
-      return;
-    }
-    if (isMidi(path)) {
-      setError("MIDI 输入无需音频分析，可直接开始转换");
-      return;
-    }
-    setNotice("正在分析当前范围");
-    const directory = await join(output, "analysis");
+    analysisStartingRef.current = true;
+    analysisCancelRequestedRef.current = false;
+    setAnalysisCancelling(false);
     setAnalysisRunning(true);
-    setAnalysisStage("validating");
-    setAnalysisFraction(0);
     try {
+      if (await invoke<boolean>("path_is_directory", { path })) {
+        await openResultPath(path);
+        setAnalysisRunning(false);
+        return;
+      }
+      if (!output.trim()) {
+        setAnalysisRunning(false);
+        setError("请先选择输出目录");
+        return;
+      }
+      if (isMidi(path)) {
+        setAnalysisRunning(false);
+        setError("MIDI 输入无需音频分析，可直接开始转换");
+        return;
+      }
+      setNotice("正在分析当前范围");
+      const directory = await join(output, "analysis");
+      setAnalysisRunning(true);
+      setAnalysisStage("validating");
+      setAnalysisFraction(0);
+      if (analysisCancelRequestedRef.current) {
+        setAnalysisRunning(false);
+        setAnalysisCancelling(false);
+        setAnalysisStage("cancelled");
+        setNotice("已取消，未启动分析进程");
+        return;
+      }
       await invoke("start_analysis", {
         request: {
           input: path,
@@ -816,9 +874,13 @@ function App() {
           worker_path: jobRequestRef.current.worker_path,
         },
       });
+      if (analysisCancelRequestedRef.current) await invoke("cancel_analysis");
     } catch (reason) {
       setAnalysisRunning(false);
+      setAnalysisCancelling(false);
       setError(String(reason));
+    } finally {
+      analysisStartingRef.current = false;
     }
   }
 
@@ -1115,8 +1177,7 @@ function App() {
     }
     setError(null);
     setWarnings([]);
-    setResult(null);
-    setReport(null);
+    // Keep the last successful result and unsaved editor state until publication succeeds.
     setRunning(true);
     setStage("validating");
     setFraction(0);
@@ -1133,14 +1194,14 @@ function App() {
         const available = await invoke<string>("next_available_output", { path: next.output });
         if (available !== next.output) {
           effective = { ...next, output: available };
-          setRequest(effective);
+          if (effective.operation !== "refilter") setRequest(effective);
           setNotice(`输出目录已存在，自动改用 ${available.split(/[/\\]/).pop()}`);
         }
       }
       const startedOutput = await invoke<string>("start_job", { request: effective });
       if (startedOutput !== effective.output) {
         effective = { ...effective, output: startedOutput };
-        setRequest(effective);
+        if (effective.operation !== "refilter") setRequest(effective);
         setNotice(`输出目录已自动编号为 ${startedOutput.split(/[/\\]/).pop()}`);
       }
       if (completion) await completion;
@@ -1235,16 +1296,16 @@ function App() {
       setError("分离组件目录尚未初始化，请稍后重试");
       return;
     }
-    const archive = await openDialog({
-      multiple: false,
-      directory: false,
-      title: "选择分离组件 ZIP",
-      filters: [{ name: "Separator component", extensions: ["zip"] }],
-    });
-    if (typeof archive !== "string") return;
+    separatorInstallRef.current = true;
+    setSeparatorInstalling(true);
     try {
-      separatorInstallRef.current = true;
-      setSeparatorInstalling(true);
+      const archive = await openDialog({
+        multiple: false,
+        directory: false,
+        title: "选择分离组件 ZIP",
+        filters: [{ name: "Separator component", extensions: ["zip"] }],
+      });
+      if (typeof archive !== "string") { setNotice("已取消组件安装"); return; }
       setNotice("正在解压并校验分离组件，请勿关闭程序");
       const status = await invoke<SeparatorComponentStatus>("separator_component_install", {
         archive,
@@ -1263,7 +1324,10 @@ function App() {
   }
 
   async function uninstallSeparator() {
-    if (!separatorDirectory) return;
+    if (!separatorDirectory || separatorInstallRef.current || separationRunning || routingRunning) return;
+    separatorInstallRef.current = true;
+    setSeparatorInstalling(true);
+    setNotice("正在卸载分离组件");
     try {
       await invoke("separator_component_uninstall", { target: separatorDirectory });
       setSeparatorStatus(
@@ -1273,7 +1337,10 @@ function App() {
       );
       setNotice("分离组件已卸载");
     } catch (reason) {
-      setError(String(reason));
+      setError(`组件卸载失败：${String(reason)}`);
+    } finally {
+      separatorInstallRef.current = false;
+      setSeparatorInstalling(false);
     }
   }
 
@@ -1376,7 +1443,6 @@ function App() {
         preview_wav: true,
         overwrite: false,
       };
-      setRequest(next);
       await startJob(next);
     } catch (reason) {
       setError(`应用筛选预设失败：${String(reason)}`);
@@ -1398,12 +1464,8 @@ function App() {
 
   async function applyManualFilter() {
     if (!result) return;
-    const filter = rulesToFilter(filterRules);
-    if (!filter) {
-      setError("请至少填写一条有效筛选范围");
-      return;
-    }
     try {
+      const filter = rulesToFilter(filterRules);
       const output = await invoke<string>("next_filter_output", {
         source: result.result.output_dir,
       });
@@ -1417,9 +1479,7 @@ function App() {
         preview_wav: true,
         overwrite: false,
       };
-      setRequest(next);
-      setFilterOpen(false);
-      setNotice(`正在应用 ${filter.rules.length} 组筛选规则`);
+      setNotice(filter.rules.length ? `正在应用 ${filter.rules.length} 组筛选规则` : "正在应用无属性筛选版本，仍执行结构清理");
       await startJob(next);
     } catch (reason) {
       setError(`应用手动筛选失败：${String(reason)}`);
@@ -1439,12 +1499,29 @@ function App() {
     }
   }
 
+  async function cancelSeparation() {
+    if (separationCancelling) return;
+    separatorCancelRequestedRef.current = true;
+    setSeparationCancelling(true);
+    setNotice("正在取消并回收分离 / 路由进程，请稍候");
+    if (separatorStartingRef.current) return;
+    try {
+      await invoke("cancel_separation");
+    } catch (reason) {
+      setSeparationCancelling(false);
+      setError(`取消失败：${String(reason)}`);
+    }
+  }
+
   async function startSeparation() {
-    if (separationRunning || routingRunning || separatorInstallRef.current) return;
+    if (separationRunning || routingRunning || separatorInstallRef.current || separatorStartingRef.current) return;
     if (!request.input || !separatorDirectory) {
       setError("请先选择源文件并安装至少一个分离模型");
       return;
     }
+    separatorStartingRef.current = true;
+    separatorCancelRequestedRef.current = false;
+    setSeparationCancelling(false);
     setSeparationRunning(true);
     setSeparationStage("validating");
     setSeparationFraction(0);
@@ -1458,6 +1535,13 @@ function App() {
       }
       const base = await join(result?.result.output_dir ?? request.output, "stems");
       const output = await invoke<string>("next_available_output", { path: base });
+      if (separatorCancelRequestedRef.current) {
+        setSeparationRunning(false);
+        setSeparationCancelling(false);
+        setSeparationStage("cancelled");
+        setNotice("已取消，未启动分离进程");
+        return;
+      }
       setNotice("正在分离四轨");
       await invoke("start_separation", separationArgs({
         component: separatorDirectory,
@@ -1466,9 +1550,13 @@ function App() {
         model: model.id,
         worker_path: request.worker_path,
       }));
+      if (separatorCancelRequestedRef.current) await invoke("cancel_separation");
     } catch (reason) {
       setSeparationRunning(false);
+      setSeparationCancelling(false);
       setError(String(reason));
+    } finally {
+      separatorStartingRef.current = false;
     }
   }
 
@@ -1565,7 +1653,7 @@ function App() {
   }
 
   async function startRouting() {
-    if (separationRunning || routingRunning || separatorInstallRef.current) return;
+    if (separationRunning || routingRunning || separatorInstallRef.current || separatorStartingRef.current) return;
     if (!stemSetPath) {
       setError("请先完成 stem 分离");
       return;
@@ -1578,11 +1666,20 @@ function App() {
             request.max_voices,
           )
         : null;
+    separatorStartingRef.current = true;
+    separatorCancelRequestedRef.current = false;
+    setSeparationCancelling(false);
     setRoutingRunning(true);
     setNotice(`正在生成路由试听：${routingMode}`);
     try {
       const base = await join(result?.result.output_dir ?? request.output, "routing", routingMode);
       const output = await invoke<string>("next_available_output", { path: base });
+      if (separatorCancelRequestedRef.current) {
+        setRoutingRunning(false);
+        setSeparationCancelling(false);
+        setNotice("已取消，未启动路由进程");
+        return;
+      }
       await invoke("start_routing", routingArgs({
         stem_set: stemSetPath,
         output,
@@ -1591,9 +1688,13 @@ function App() {
         plan: customPlan,
         worker_path: request.worker_path,
       }));
+      if (separatorCancelRequestedRef.current) await invoke("cancel_separation");
     } catch (reason) {
       setRoutingRunning(false);
+      setSeparationCancelling(false);
       setError(String(reason));
+    } finally {
+      separatorStartingRef.current = false;
     }
   }
 
@@ -1994,6 +2095,7 @@ function App() {
           <div className="toolbar-separator" />
 
           <div className="tool-cluster">
+            {analysisRunning && <button className="danger-button" disabled={analysisCancelling} onClick={() => void cancelAnalysis()}>{analysisCancelling ? "正在回收分析进程…" : "取消分析"}</button>}
             <button className="ghost-button" onClick={chooseInput}>
               载入素材
             </button>
@@ -2334,11 +2436,16 @@ function App() {
                 <span className="section-number">STEM</span>
                 <h2>分离与路由</h2>
               </div>
+              {(separationRunning || routingRunning) && (
+                <button className="danger-button" disabled={separationCancelling} onClick={() => void cancelSeparation()}>
+                  {separationCancelling ? "正在回收进程…" : "取消分离 / 路由"}
+                </button>
+              )}
               <button
                 className="primary-button"
                 onClick={() => void startSeparation()}
                 disabled={
-                  separationRunning ||
+                  separationRunning || routingRunning || separatorInstalling ||
                   (separatorStatus?.installed === true && separatorStatus.models.length === 0)
                 }
                 title={
@@ -2359,7 +2466,7 @@ function App() {
                   <span>选择本地 `separator-component-windows-x64.zip` 后即可分离四轨。</span>
                   <small>{separatorStatus.error ?? "基础包不包含 PyTorch/Demucs 运行时。"}</small>
                 </div>
-                <button className="primary-button" onClick={() => void installSeparator()}>
+                <button className="primary-button" disabled={separatorInstalling || separationRunning || routingRunning} onClick={() => void installSeparator()}>
                   选择组件 ZIP
                 </button>
               </div>
@@ -2488,7 +2595,7 @@ function App() {
                   <button
                     className="primary-button"
                     onClick={() => void startRouting()}
-                    disabled={routingRunning}
+                    disabled={routingRunning || separationRunning || separatorInstalling}
                   >
                     {routingRunning ? "路由中" : "生成所选路由试听"}
                   </button>
@@ -2916,6 +3023,7 @@ function App() {
               <div>
                 <span className="section-number">04</span>
                 <h2>结果、筛选与试听</h2>
+                {(running || stage === "failed" || stage === "cancelled") && <small>保留上次成功结果；新结果仅在处理成功后替换</small>}
               </div>
               <div className="button-row">
                 <button className="ghost-button" onClick={() => void openResult()}>

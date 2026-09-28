@@ -56,3 +56,9 @@ uv run --directory python pytest
 
 播放器交接继续使用冻结的 `events-v1.schema.json`；worker/report v3、Performance 和候选缓存只属于
 本工具内部及结果页重筛。所有 Schema 均以 `versions.json` 的 SHA256 验证一致。
+
+## 桌面取消事件 v1
+
+`desktop-cancellation-v1.schema.json` 定义分析、分离与路由的取消终态；仅在整个受管进程树
+回收完成后发出。点击取消不等同于收到此终态。此契约不改变 worker JSONL 或播放器事件格式。
+Rust 与前端共用 `tests/fixtures/desktop-cancellation-v1.json`，字段包括版本、操作和取消状态。

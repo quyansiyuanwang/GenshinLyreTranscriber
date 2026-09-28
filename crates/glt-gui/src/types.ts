@@ -356,3 +356,9 @@ export interface RoutingFinished {
   mode: string;
   active_routes: number;
 }
+
+export interface DesktopCancellation {
+  format_version: 1;
+  operation: "analysis" | "separation" | "routing";
+  state: "cancelled";
+}

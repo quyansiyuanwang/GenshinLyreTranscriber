@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:genshin-lyre-transcriber:schema:desktop-cancellation:v1",
+  "title": "Desktop Cancellation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "operation",
+    "state"
+  ],
+  "properties": {
+    "format_version": {
+      "const": 1
+    },
+    "operation": {
+      "enum": [
+        "analysis",
+        "separation",
+        "routing"
+      ]
+    },
+    "state": {
+      "const": "cancelled"
+    }
+  }
+}
