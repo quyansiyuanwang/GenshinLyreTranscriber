@@ -1,10 +1,12 @@
+import { useCanvasSize } from "./useCanvasSize";
+import { PlaybackPlayhead, PlaybackSeconds } from "./LivePlaybackViews";
+import { usePlaybackSpectrum } from "./playbackRuntime";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatRangeTime, normalizeRangeUs, type TimeRangeUs } from "./analysisSelection";
 import type {
   AnalysisManifest,
   SpectrogramImage,
-  SpectrumFrame,
   WaveformPayload,
 } from "./types";
 
@@ -12,8 +14,7 @@ interface AnalysisViewProps {
   manifest: AnalysisManifest;
   waveform: WaveformPayload;
   spectrogram: SpectrogramImage | null;
-  spectrum: SpectrumFrame | null;
-  positionUs: number;
+  onVisibilityChange: (visible: boolean) => void;
   selectionStartUs: number | null;
   selectionEndUs: number | null;
   onSeek: (positionUs: number) => void;
@@ -82,19 +83,6 @@ function selectionRange(
   return range.endUs > range.startUs ? range : null;
 }
 
-function Playhead({ positionUs, durationUs }: { positionUs: number; durationUs: number }) {
-  if (durationUs <= 0) return null;
-  const ratio = Math.min(1, Math.max(0, positionUs / durationUs));
-  return (
-    <div
-      className="analysis-playhead-track"
-      style={{ transform: `translateX(${ratio * 100}%)` }}
-    >
-      <i />
-    </div>
-  );
-}
-
 const WaveformCanvas = memo(function WaveformCanvas({
   waveform,
   durationUs,
@@ -109,6 +97,7 @@ const WaveformCanvas = memo(function WaveformCanvas({
   onSelectionChange: (startUs: number | null, endUs: number | null) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const size = useCanvasSize(ref);
   const dragRef = useRef<DragState | null>(null);
   const [previewSelection, setPreviewSelection] = useState<TimeRangeUs | null>(null);
   const visibleSelection = previewSelection ?? selection;
@@ -158,7 +147,7 @@ const WaveformCanvas = memo(function WaveformCanvas({
     context.stroke();
     context.globalAlpha = 1;
 
-  }, [durationUs, visibleSelection, waveform]);
+  }, [durationUs, visibleSelection, waveform, size]);
 
   function finishSelection(event: React.PointerEvent<HTMLCanvasElement>): void {
     const drag = dragRef.current;
@@ -223,6 +212,7 @@ const SpectrogramCanvas = memo(function SpectrogramCanvas({
   onSelectionChange: (startUs: number | null, endUs: number | null) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const size = useCanvasSize(ref);
   const dragRef = useRef<DragState | null>(null);
   const [previewSelection, setPreviewSelection] = useState<TimeRangeUs | null>(null);
   const visibleSelection = previewSelection ?? selection;
@@ -263,7 +253,7 @@ const SpectrogramCanvas = memo(function SpectrogramCanvas({
       context.lineTo(endX - 0.5, canvas.clientHeight);
       context.stroke();
     }
-  }, [durationUs, image, visibleSelection]);
+  }, [durationUs, image, visibleSelection, size]);
 
   function finishSelection(event: React.PointerEvent<HTMLCanvasElement>): void {
     const drag = dragRef.current;
@@ -314,14 +304,13 @@ const SpectrogramCanvas = memo(function SpectrogramCanvas({
 const WATERFALL_COLUMNS = 256;
 const WATERFALL_HEIGHT = 256;
 
-const SpectrumCanvas = memo(function SpectrumCanvas({
-  spectrum,
-}: {
-  spectrum: SpectrumFrame | null;
-}) {
+const SpectrumCanvas = memo(function SpectrumCanvas() {
+  const spectrum = usePlaybackSpectrum();
   const ref = useRef<HTMLCanvasElement>(null);
+  const size = useCanvasSize(ref);
   const bufferRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<ImageData | null>(null);
+  const lastSpectrum = useRef<typeof spectrum>(null);
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -340,7 +329,9 @@ const SpectrumCanvas = memo(function SpectrumCanvas({
       imageRef.current = image;
     }
 
-    if (spectrum) {
+    if (!spectrum) { image.data.fill(0); lastSpectrum.current = null; buffer.getContext("2d")?.putImageData(image, 0, 0); }
+    if (spectrum && spectrum !== lastSpectrum.current) {
+      lastSpectrum.current = spectrum;
       const data = image.data;
       data.copyWithin(0, 4);
       const source = spectrum.spectrum;
@@ -366,7 +357,7 @@ const SpectrumCanvas = memo(function SpectrumCanvas({
     context.fillRect(0, 0, width, height);
     context.imageSmoothingEnabled = false;
     context.drawImage(buffer, 0, 0, width, height);
-  }, [spectrum]);
+  }, [spectrum, size]);
   return <canvas ref={ref} className="waterfall-canvas" />;
 });
 
@@ -374,8 +365,7 @@ export default function AnalysisView({
   manifest,
   waveform,
   spectrogram,
-  spectrum,
-  positionUs,
+  onVisibilityChange,
   selectionStartUs,
   selectionEndUs,
   onSeek,
@@ -385,6 +375,17 @@ export default function AnalysisView({
   loopEnabled,
   onToggleLoop,
 }: AnalysisViewProps) {
+  const sectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const element = sectionRef.current;
+    if (!element) return;
+    let intersecting = false;
+    const update = () => onVisibilityChange(intersecting && !document.hidden);
+    const observer = new IntersectionObserver(([entry]) => { intersecting = entry.isIntersecting; update(); });
+    observer.observe(element);
+    document.addEventListener("visibilitychange", update);
+    return () => { observer.disconnect(); document.removeEventListener("visibilitychange", update); onVisibilityChange(false); };
+  }, [onVisibilityChange]);
   const durationUs = manifest.decode.duration_us;
   const selection = useMemo(
     () => selectionRange(selectionStartUs, selectionEndUs, durationUs),
@@ -392,13 +393,13 @@ export default function AnalysisView({
   );
   const selectionDurationUs = selection ? selection.endUs - selection.startUs : 0;
   return (
-    <section className="analysis-view">
+    <section ref={sectionRef} className="analysis-view">
       <div className="analysis-header">
         <div>
           <span className="section-number">LIVE ANALYSIS</span>
           <h3>波形、频谱与瀑布图</h3>
         </div>
-        <span className="analysis-time">{(positionUs / 1_000_000).toFixed(2)}s</span>
+        <span className="analysis-time"><PlaybackSeconds /></span>
       </div>
       <div className="waveform-stack">
         <WaveformCanvas
@@ -408,7 +409,7 @@ export default function AnalysisView({
           onSeek={onSeek}
           onSelectionChange={onSelectionChange}
         />
-        <Playhead positionUs={positionUs} durationUs={durationUs} />
+        <PlaybackPlayhead durationUs={durationUs} className="analysis-playhead-track" />
       </div>
       <div className="analysis-selection">
         <span>
@@ -446,7 +447,7 @@ export default function AnalysisView({
                 onSeek={onSeek}
                 onSelectionChange={onSelectionChange}
               />
-              <Playhead positionUs={positionUs} durationUs={durationUs} />
+              <PlaybackPlayhead durationUs={durationUs} className="analysis-playhead-track" />
             </div>
           ) : (
             <div className="analysis-placeholder">生成频谱缓存中…</div>
@@ -454,7 +455,7 @@ export default function AnalysisView({
         </div>
         <div className="analysis-tile">
           <span>实时分析 / 瀑布图</span>
-          <SpectrumCanvas spectrum={spectrum} />
+          <SpectrumCanvas />
         </div>
       </div>
     </section>

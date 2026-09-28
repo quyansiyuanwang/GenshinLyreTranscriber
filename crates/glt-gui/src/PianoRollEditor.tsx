@@ -1,3 +1,6 @@
+import { useCanvasSize } from "./useCanvasSize";
+import { PlaybackPlayhead } from "./LivePlaybackViews";
+import { playbackStore } from "./playbackRuntime";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -38,7 +41,6 @@ interface DragState {
 interface Props {
   document: PerformanceDocument;
   candidates: CandidateNote[];
-  positionUs: number;
   applying: boolean;
   onDocumentChange: (document: PerformanceDocument) => void;
   onApply: () => void;
@@ -166,7 +168,6 @@ function rectangle(
 export default function PianoRollEditor({
   document,
   candidates,
-  positionUs,
   applying,
   onDocumentChange,
   onApply,
@@ -186,6 +187,7 @@ export default function PianoRollEditor({
   });
   const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasSize = useCanvasSize(canvasRef);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const velocityRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -235,8 +237,7 @@ export default function PianoRollEditor({
     onDocumentChange(next);
   }
 
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
+  const handleKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement | null;
       if (!target?.closest(".piano-roll") || target.closest("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
@@ -260,10 +261,7 @@ export default function PianoRollEditor({
         event.preventDefault();
         commit(deleteNotes(localDocument.notes, selected));
       }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  });
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -349,7 +347,7 @@ export default function PianoRollEditor({
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 5);
     gl.deleteBuffer(buffer);
     gl.deleteProgram(program);
-  }, [selected, viewDurationUs, viewStartUs, visibleDocument]);
+  }, [selected, viewDurationUs, viewStartUs, visibleDocument, canvasSize]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -408,7 +406,7 @@ export default function PianoRollEditor({
       context.fillRect(left, top, width, height);
       context.strokeRect(left + 0.5, top + 0.5, width, height);
     }
-  }, [candidates, marquee, selected, viewDurationUs, viewStartUs, visibleDocument]);
+  }, [candidates, marquee, selected, viewDurationUs, viewStartUs, visibleDocument, canvasSize]);
 
   useEffect(() => {
     const canvas = velocityRef.current;
@@ -439,6 +437,7 @@ export default function PianoRollEditor({
     }
     const plotWidth = Math.max(1, width - VELOCITY_LABEL_WIDTH);
     for (const note of visibleDocument.notes) {
+      if (note.start_us < viewStartUs || note.start_us > viewStartUs + viewDurationUs) continue;
       const x =
         VELOCITY_LABEL_WIDTH +
         ((note.start_us - viewStartUs) / viewDurationUs) * plotWidth;
@@ -446,7 +445,7 @@ export default function PianoRollEditor({
       context.fillStyle = selected.has(note.id) ? "#ffd35d" : "#6b9fc7";
       context.fillRect(x, VELOCITY_HEIGHT - height, Math.max(2, plotWidth / Math.max(1, visibleDocument.notes.length * 12)), height);
     }
-  }, [selected, viewDurationUs, viewStartUs, visibleDocument]);
+  }, [selected, viewDurationUs, viewStartUs, visibleDocument, canvasSize]);
 
   function point(event: React.PointerEvent<HTMLCanvasElement>): { x: number; y: number; timeUs: number; lane: number } {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -610,12 +609,9 @@ export default function PianoRollEditor({
   const selectionLabel = selected.size
     ? `${selected.size} 个音符${selectedNote ? ` · ${selectedNote.key}/${pitchName(selectedNote.pitch)} · v${selectedNote.velocity}` : ""}`
     : "未选择音符";
-  const playheadRatio =
-    viewDurationUs > 0 ? (positionUs - viewStartUs) / viewDurationUs : 0;
-  const showPlayhead = playheadRatio >= 0 && playheadRatio <= 1;
 
   return (
-    <div className="piano-roll" tabIndex={0} aria-label="钢琴卷帘编辑区">
+    <div className="piano-roll" onKeyDown={handleKey} tabIndex={0} aria-label="钢琴卷帘编辑区">
       <div className="piano-toolbar">
         <div className="button-row">
           <button className={tool === "select" ? "primary-button" : "ghost-button"} onClick={() => setTool("select")}>选择</button>
@@ -657,14 +653,7 @@ export default function PianoRollEditor({
             setMarquee(null);
           }}
         />
-        {showPlayhead && (
-          <div
-            className="piano-playhead-track"
-            style={{ transform: `translateX(${playheadRatio * 100}%)` }}
-          >
-            <i />
-          </div>
-        )}
+        <PlaybackPlayhead startUs={viewStartUs} durationUs={viewDurationUs} className="piano-playhead-track" clip />
       </div>
       <div className="piano-lanes">
         <span>{formatTime(viewStartUs)}</span>
@@ -686,7 +675,7 @@ export default function PianoRollEditor({
         <button
           onClick={() => {
             if (!selectedNote) return;
-            commit(splitNote(localDocument.notes, selectedNote.id, positionUs));
+            commit(splitNote(localDocument.notes, selectedNote.id, playbackStore.getPosition()));
           }}
           disabled={!selectedNote}
         >

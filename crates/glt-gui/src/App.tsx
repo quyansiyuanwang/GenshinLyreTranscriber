@@ -34,8 +34,10 @@ import type {
   SpectrumFrame,
   WaveformPayload,
 } from "./types";
-import { LiveAnalysisView as AnalysisView, LivePianoRollEditor as PianoRollEditor, PlaybackClock } from "./LivePlaybackViews";
-import { playbackStore, startSerialPoll } from "./playbackRuntime";
+import AnalysisView from "./AnalysisView";
+import PianoRollEditor from "./PianoRollEditor";
+import { PlaybackClock } from "./LivePlaybackViews";
+import { playbackStore, startSerialPoll, createPollLane } from "./playbackRuntime";
 import {
   abSwitchPosition,
   findAbSource,
@@ -332,7 +334,10 @@ function App() {
   const [analysisDirectory, setAnalysisDirectory] = useState<string | null>(null);
   const [analysisWaveform, setAnalysisWaveform] = useState<WaveformPayload | null>(null);
   const [analysisSpectrogram, setAnalysisSpectrogram] = useState<SpectrogramImage | null>(null);
-  const setAnalysisSpectrum = playbackStore.setSpectrum;
+  const analysisLoadRef = useRef(0);
+  const [analysisVisible, setAnalysisVisible] = useState(false);
+  const statusLane = useRef(createPollLane());
+  const spectrumLane = useRef(createPollLane());
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [analysisCancelling, setAnalysisCancelling] = useState(false);
   const analysisStartingRef = useRef(false);
@@ -580,6 +585,7 @@ function App() {
   }, [request.input, request.worker_path]);
 
   useEffect(() => {
+    let current = true;
     const directory = result?.result.output_dir;
     if (!directory) {
       setPerformance(null);
@@ -587,14 +593,16 @@ function App() {
       return;
     }
     void invoke<PerformanceDocument>("read_performance", { resultDir: directory })
-      .then(setPerformance)
+      .then((value) => { if (current) setPerformance(value); })
       .catch((reason) => {
+        if (!current) return;
         setPerformance(null);
         setNotice(`performance: ${String(reason)}`);
       });
     void invoke<CandidateNote[]>("read_candidate_overlay", { resultDir: directory })
-      .then(setCandidateNotes)
-      .catch(() => setCandidateNotes([]));
+      .then((value) => { if (current) setCandidateNotes(value); })
+      .catch(() => { if (current) setCandidateNotes([]); });
+    return () => { current = false; };
   }, [result?.result.output_dir]);
 
   useEffect(() => {
@@ -725,7 +733,6 @@ function App() {
       setAnalysisRunning(false);
       setAnalysisCancelling(false);
       setAnalysisFraction(1);
-      setAnalysisDirectory(payload.directory);
       setNotice(payload.cache_hit ? "分析缓存已加载" : "音频分析完成");
       void loadAnalysisViews(payload.directory);
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
@@ -769,16 +776,15 @@ function App() {
         }
       } finally { loopSeekingRef.current = false; }
     }
-  }, (reason) => setPlaybackError(`无法更新播放状态：${String(reason)}`)), [loopEnabled, request.start_seconds, request.end_seconds]);
+  }, (reason) => { playbackStore.freeze(); setPlaybackError(`无法更新播放状态：${String(reason)}`); }, 50, statusLane.current), [loopEnabled, request.start_seconds, request.end_seconds]);
 
   useEffect(() => {
-    if (!analysisManifest?.spectral || !analysisDirectory) return;
+    if (!analysisManifest?.spectral || !analysisDirectory || !analysisVisible) return;
     let lastFrame = -1;
     let lastGeneration = -1;
     return startSerialPoll(async (isCurrent) => {
       if (document.hidden || playbackCommandBusyRef.current) return;
       const status = playbackStore.getStatus();
-      if (status.paused || !status.available) return;
       const generation = playbackStore.generation();
       const frame = Math.min(analysisManifest.spectral!.frames - 1, Math.max(0,
         Math.round(status.position_us / ((analysisManifest.spectral!.hop_size * 1_000_000) / analysisManifest.decode.sample_rate))));
@@ -788,8 +794,8 @@ function App() {
       playbackStore.setSpectrum(spectrum);
       lastFrame = frame;
       lastGeneration = generation;
-    }, (reason) => setPlaybackError(`频谱读取失败，已保留最后有效画面：${String(reason)}`));
-  }, [analysisDirectory, analysisManifest]);
+    }, (reason) => setPlaybackError(`频谱读取失败，已保留最后有效画面：${String(reason)}`), 50, spectrumLane.current);
+  }, [analysisDirectory, analysisManifest, analysisVisible]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -885,28 +891,26 @@ function App() {
   }
 
   async function loadAnalysisViews(directory: string) {
+    const session = ++analysisLoadRef.current;
     try {
       const manifest = await invoke<AnalysisManifest>("analysis_manifest", { directory });
-      setAnalysisManifest(manifest);
+      if (session !== analysisLoadRef.current) return;
       const level = Math.min(1, manifest.waveform.levels.length - 1);
-      const [waveform, spectrum] = await Promise.all([
+      const [waveform, image] = await Promise.all([
         invoke<WaveformPayload>("analysis_waveform", { directory, level }),
         manifest.spectral
-          ? invoke<SpectrumFrame>("analysis_spectrum", { directory, frame: 0 })
+          ? invoke<SpectrogramImage>("analysis_spectrogram_image", { directory, width: 1200, height: 256 })
           : Promise.resolve(null),
       ]);
+      if (session !== analysisLoadRef.current) return;
+      // Publish a coherent snapshot. Never combine new metadata with old pixels.
+      setAnalysisDirectory(directory);
+      setAnalysisManifest(manifest);
       setAnalysisWaveform(waveform);
-      setAnalysisSpectrum(spectrum);
-      if (manifest.spectral) {
-        const image = await invoke<SpectrogramImage>("analysis_spectrogram_image", {
-          directory,
-          width: 1200,
-          height: 256,
-        });
-        setAnalysisSpectrogram(image);
-      }
+      playbackStore.setSpectrum(null);
+      setAnalysisSpectrogram(image);
     } catch (reason) {
-      setError(String(reason));
+      if (session === analysisLoadRef.current) setError(String(reason));
     }
   }
 
@@ -1387,6 +1391,9 @@ function App() {
   }
 
   const seekAnalysis = useCallback(async (position: number) => {
+    if (playbackCommandBusyRef.current) return;
+    playbackCommandBusyRef.current = true;
+    setPlaybackBusy(true);
     playbackStore.invalidate();
     try {
       await invoke("seek_playback", { positionUs: position });
@@ -1394,26 +1401,45 @@ function App() {
       setNotice(`播放位置：${(position / 1_000_000).toFixed(2)}s`);
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      playbackCommandBusyRef.current = false;
+      setPlaybackBusy(false);
     }
   }, []);
 
   async function pausePreview() {
+    if (playbackCommandBusyRef.current) return;
+    playbackCommandBusyRef.current = true;
+    setPlaybackBusy(true);
     try {
+      playbackStore.invalidate();
       await invoke("pause_preview");
+      playbackStore.setStatus({ ...playbackStore.getStatus(), paused: true });
       setPlayback("paused");
       setNotice("试听已暂停");
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      playbackCommandBusyRef.current = false;
+      setPlaybackBusy(false);
     }
   }
 
   async function stopPreview() {
+    if (playbackCommandBusyRef.current) return;
+    playbackCommandBusyRef.current = true;
+    setPlaybackBusy(true);
     try {
+      playbackStore.invalidate();
       await invoke("stop_preview");
+      playbackStore.setStatus({ position_us: 0, paused: true, available: false });
       setPlayback("idle");
       setNotice("试听已停止");
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      playbackCommandBusyRef.current = false;
+      setPlaybackBusy(false);
     }
   }
 
@@ -2070,7 +2096,7 @@ function App() {
             <button
               className="transport-button"
               onClick={() => void pausePreview()}
-              disabled={!hasActiveAbSource}
+              disabled={!hasActiveAbSource || playbackBusy}
               title="暂停"
             >
               Ⅱ
@@ -2406,6 +2432,7 @@ function App() {
               </strong>
             </div>
             <AnalysisView
+              onVisibilityChange={setAnalysisVisible}
               manifest={analysisManifest}
               waveform={analysisWaveform}
               spectrogram={analysisSpectrogram}
@@ -3246,10 +3273,10 @@ function App() {
                   <button onClick={() => void playPreview()} disabled={!previewArtifact}>
                     重播 B
                   </button>
-                  <button onClick={() => void pausePreview()} disabled={!hasActiveAbSource}>
+                  <button onClick={() => void pausePreview()} disabled={!hasActiveAbSource || playbackBusy}>
                     暂停
                   </button>
-                  <button onClick={() => void stopPreview()} disabled={!hasActiveAbSource}>
+                  <button onClick={() => void stopPreview()} disabled={!hasActiveAbSource || playbackBusy}>
                     停止
                   </button>
                 </div>
