@@ -11,6 +11,7 @@ export function summarizeGate(report) {
   const errorMax = report.positions.length ? report.positions.reduce((max,p)=>Math.max(max,Math.abs(p.error_ms)+p.uncertainty_ms),0) : Infinity;
   const before = report.resources.find((r) => r.phase === "before-churn"), after = report.resources.find((r) => r.phase === "after-churn");
   const checks = {
+    visibleNativeWindow: report.viewport?.nativeVisible === true && report.viewport.hidden === false,
     fullTenMinuteFile: report.seconds >= 600 && report.measuredSteadySeconds >= 600 && report.continuityChecks >= report.seconds * 10 && report.discontinuities.length === 0 && report.sourceDurationUs >= 600_000_000 && report.requestedStarts.includes(0) && report.firstPositionUs <= 250_000 && report.lastPositionUs >= report.sourceDurationUs - 100_000,
     nonzeroSeekWorks: report.seekRecovered === true,
     zeroSeekWorks: report.zeroSeekVerified === true,

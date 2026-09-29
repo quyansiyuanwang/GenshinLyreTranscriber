@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { percentile, summarizeGate } from "./playback-gate-metrics.mjs";
 function report() {
   const resource = { dom: { nodes: 200, jsEventListeners: 30 }, metrics: [{ name: "JSHeapUsedSize", value: 10_000_000 }] };
-  return { zeroSeekVerified: true, seekRecovered: true, measuredSteadySeconds: 610, continuityChecks: 11000, discontinuities: [], seconds: 610, frames: Array(36600).fill(1000 / 60), interactions: Array(25).fill({ms:30}), positions:Array(2500).fill({error_ms:5,uncertainty_ms:1}), resources:[{phase:'before-churn',...resource},{phase:'after-churn',...resource}], sourceDurationUs:600_430_000,firstPositionUs:10000,lastPositionUs:600_430_000,requestedStarts:[0],maxInFlight:{playback_status:1},rpcFailures:[] };
+  return { viewport:{nativeVisible:true,hidden:false}, zeroSeekVerified: true, seekRecovered: true, measuredSteadySeconds: 610, continuityChecks: 11000, discontinuities: [], seconds: 610, frames: Array(36600).fill(1000 / 60), interactions: Array(25).fill({ms:30}), positions:Array(2500).fill({error_ms:5,uncertainty_ms:1}), resources:[{phase:'before-churn',...resource},{phase:'after-churn',...resource}], sourceDurationUs:600_430_000,firstPositionUs:10000,lastPositionUs:600_430_000,requestedStarts:[0],maxInFlight:{playback_status:1},rpcFailures:[] };
 }
 test('complete independent criteria accept a valid run',()=>assert.equal(summarizeGate(report()).accepted,true));
 test('180Hz is never reported as a passing 60Hz run',()=>{const r=report();r.frames.fill(1000/180);assert.equal(summarizeGate(r).checks.actual60Hz,false);assert.equal(summarizeGate(r).accepted,false)});

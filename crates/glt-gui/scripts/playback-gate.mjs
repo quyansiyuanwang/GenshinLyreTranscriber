@@ -123,7 +123,8 @@ try {
   await evaluate("document.querySelector('.piano-canvas-wrap').scrollIntoView({block:'center'})");
   await sleep(1200);
   report.viewport = await evaluate("({width:innerWidth,height:innerHeight,dpr:devicePixelRatio,hidden:document.hidden})");
-  if (report.viewport.hidden) throw new Error("Window is not foreground-visible");
+  report.viewport.nativeVisible = await evaluate("window.__TAURI_INTERNALS__.invoke('plugin:window|is_visible',{label:'main'})");
+  if (report.viewport.hidden || !report.viewport.nativeVisible) throw new Error("Window is not visible; off-screen rendering cannot pass this gate");
   await evaluate(`(()=>{
     const b=window.__gltGate={phase:'warmup',frames:[],longTasks:[],interactions:[],previous:performance.now(),running:true};
     function frame(t){if(!b.running)return;if(b.phase==='steady'&&b.previous!==null)b.frames.push(t-b.previous);b.previous=t;requestAnimationFrame(frame)}requestAnimationFrame(frame);
