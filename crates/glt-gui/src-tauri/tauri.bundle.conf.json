@@ -1,7 +1,10 @@
 {
   "bundle": {
     "resources": {
-      "../../../artifacts/worker/glt-worker": "glt-worker"
+      "../../../artifacts/worker/glt-worker": "glt-worker",
+      "../../../LICENSE": "LICENSE",
+      "../../../README.md": "README.md",
+      "../../../docs": "docs"
     }
   }
 }

@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 project_dir = Path(SPECPATH)
@@ -9,13 +10,14 @@ if not model_path.is_file():
     )
 
 schema_dir = project_dir.parent / "schemas"
-schema_files = sorted(schema_dir.glob("*.schema.json"))
-if len(schema_files) != 15:
-    raise SystemExit(f"Expected 15 protocol schemas, found {len(schema_files)}")
+sys.path.insert(0, str(source_dir))
+from glt_core.bundle_resources import schema_bundle_data
+
+schema_data = schema_bundle_data(schema_dir)
 
 datas = [
     (str(model_path), "glt_core/resources/models/basic_pitch"),
-    *[(str(schema), "glt_core/schemas") for schema in schema_files],
+    *schema_data,
 ]
 
 a = Analysis(
