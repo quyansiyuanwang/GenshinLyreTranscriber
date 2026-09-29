@@ -703,6 +703,7 @@ function App() {
     }).then((unlisten) => (disposed ? unlisten() : unlisteners.push(unlisten)));
 
     void listen<JobResult>("job-finished", async ({ payload }) => {
+      const completedKind = pendingRevisionRef.current?.kind;
       if (pendingDraftPublication.current && pendingRevisionRef.current?.kind === "performance-edit" && pendingRevisionRef.current.path === payload.result.output_dir) {
         const publication = pendingDraftPublication.current;
         pendingDraftPublication.current = null;
@@ -715,7 +716,7 @@ function App() {
       setFraction(1);
       setStage("completed");
       setResult(payload);
-      setLayout((current) => ({ ...current, view: pendingRevisionRef.current?.kind === "performance-edit" ? "editor" : "filter" }));
+      setLayout((current) => ({ ...current, view: completedKind === "performance-edit" ? "editor" : "filter" }));
       setRecentOutputs((current) => addRecentPath(current, payload.result.output_dir));
       setPlayback("idle");
       setNotice("转换完成");
