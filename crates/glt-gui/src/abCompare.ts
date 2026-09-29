@@ -30,7 +30,8 @@ export function validAlignment(value: AbAlignment | null | undefined): value is 
 export function positionOnTimeline(positionUs: number, source: AbAlignment | null, targetHash: string | null, targetOffsetUs: number): number | null {
   return validAlignment(source) && targetHash === source.sourceHash ? positionUs + source.offsetUs - targetOffsetUs : null;
 }
-export function planAbSwitch(from: AbSourceOption | null, to: AbSourceOption, positionUs: number, available: boolean): { positionUs: number; message: string; aligned: boolean } {
+export function planAbSwitch(from: AbSourceOption | null, to: AbSourceOption, positionUs: number, available: boolean, restart = false): { positionUs: number; message: string; aligned: boolean } {
+  if (restart) return { positionUs: 0, aligned: false, message: "从当前音源起点重新播放" };
   if (!available || !from) return { positionUs: 0, aligned: false, message: validAlignment(to.alignment) ? "从音源起点播放" : "缺少可靠时间元数据，独立试听" };
   if (from.path === to.path) return { positionUs: Math.max(0, Math.min(positionUs, validAlignment(to.alignment) ? to.alignment.durationUs - 1 : positionUs)), aligned: validAlignment(to.alignment), message: "继续当前音源" };
   if (!validAlignment(from.alignment) || !validAlignment(to.alignment) || from.alignment.sourceHash !== to.alignment.sourceHash) return { positionUs: 0, aligned: false, message: "无法确认同一素材与时间偏移，已降级为独立试听（从起点）" };

@@ -43,3 +43,8 @@ describe("A/B source-aware offsets", () => {
     expect(positionOnTimeline(5, original.alignment, "b".repeat(64), 0)).toBeNull();
   });
 });
+
+it("explicit replay restarts while A/B switching retains aligned time", () => {
+  expect(planAbSwitch(original, excerpt, 35_000_000, true).positionUs).toBe(5_000_000);
+  expect(planAbSwitch(excerpt, excerpt, 5_000_000, true, true).positionUs).toBe(0);
+});

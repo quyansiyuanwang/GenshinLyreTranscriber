@@ -396,6 +396,10 @@ function App() {
   const statusLane = useRef(createPollLane());
   const spectrumLane = useRef(createPollLane());
   const [analysisRunning, setAnalysisRunning] = useState(false);
+  const analysisRunningRef = useRef(false);
+  analysisRunningRef.current = analysisRunning;
+  const backgroundBusyRef = useRef(false);
+  backgroundBusyRef.current = analysisRunning || separationRunning || routingRunning;
   const [analysisCancelling, setAnalysisCancelling] = useState(false);
   const analysisStartingRef = useRef(false);
   const analysisCancelRequestedRef = useRef(false);
@@ -894,6 +898,7 @@ function App() {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     void getCurrentWebview()
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
@@ -901,12 +906,13 @@ function App() {
           void enqueueInputs(event.payload.paths);
           return;
         }
-        void applyInput(event.payload.paths[0]);
+        void applyInput(event.payload.paths[0]).catch((reason) => setError(`载入拖入素材失败：${String(reason)}`));
       })
       .then((handler) => {
-        unlisten = handler;
-      });
-    return () => unlisten?.();
+        if (disposed) handler(); else unlisten = handler;
+      })
+      .catch((reason) => { if (!disposed) setError(`拖放初始化失败，请使用选择文件：${String(reason)}`); });
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
   async function cancelAnalysis() {
@@ -920,7 +926,7 @@ function App() {
   }
 
   async function startAnalysis(path: string, output: string) {
-    if (analysisRunning || analysisStartingRef.current) return;
+    if (analysisRunningRef.current || analysisStartingRef.current) { setNotice("分析任务正在运行，请等待完成或取消后重试"); return; }
     if (!path.trim()) {
       setError("请先载入音频或视频素材");
       return;
@@ -945,6 +951,8 @@ function App() {
         setError("MIDI 输入无需音频分析，可直接开始转换");
         return;
       }
+      setLayout((current) => ({ ...current, view: "analysis" }));
+      setError(null);
       setNotice("正在分析当前范围");
       const directory = await join(output, "analysis");
       setAnalysisRunning(true);
@@ -962,10 +970,10 @@ function App() {
           input: path,
           output: directory,
           audio_track: jobRequestRef.current.audio_track,
-          start_us: jobRequestRef.current.start_seconds
+          start_us: jobRequestRef.current.start_seconds !== null
             ? Math.round(jobRequestRef.current.start_seconds * 1_000_000)
             : null,
-          end_us: jobRequestRef.current.end_seconds
+          end_us: jobRequestRef.current.end_seconds !== null
             ? Math.round(jobRequestRef.current.end_seconds * 1_000_000)
             : null,
           fft_size: 2048,
@@ -1010,14 +1018,14 @@ function App() {
   }
 
   async function applyInput(path: string, analyze = true, checkDraft = true) {
-    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再更换素材"); return; }
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current || backgroundBusyRef.current) { setError("任务运行中，请等待完成或取消后再更换素材"); return; }
     if (checkDraft && !(await requestDraftGuard("更换素材"))) return;
     if (await invoke<boolean>("path_is_directory", { path })) {
       await openResultPath(path);
       return;
     }
     const operation = operationForPath(path);
-    const output = request.output || (await defaultOutputFor(path));
+    const output = jobRequestRef.current.output || (await defaultOutputFor(path));
     setRecentInputs((current) => addRecentPath(current, path));
     setRequest((current) => ({
       ...current,
@@ -1342,7 +1350,7 @@ function App() {
   }
 
   async function createProject() {
-    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current || backgroundBusyRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
     const selected = await saveDialog({
       title: "创建 GenshinLyreTranscriber 工程",
       defaultPath: request.input ? `${request.input.split(/[/\\]/).pop()}.gltproj` : "project.gltproj",
@@ -1367,7 +1375,7 @@ function App() {
   }
 
   async function openProject() {
-    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current || backgroundBusyRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
     const selected = await openDialog({
       multiple: false,
       directory: false,
@@ -1400,7 +1408,7 @@ function App() {
   }
 
   async function closeProject() {
-    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
+    if (runningRef.current || jobLaunchRef.current || editLaunchRef.current || backgroundBusyRef.current) { setError("任务运行中，请等待完成或取消后再切换工程"); return; }
     if (!(await requestDraftGuard("关闭工程"))) return;
     try {
       await invoke("project_close");
@@ -1466,7 +1474,7 @@ function App() {
     }
   }
 
-  async function switchAbSource(sourceId: string) {
+  async function switchAbSource(sourceId: string, restart = false) {
     if (playbackCommandBusyRef.current) return;
     const option = findAbSource(abOptions, sourceId);
     if (!option?.path) {
@@ -1479,7 +1487,7 @@ function App() {
       playbackStore.invalidate();
       setNotice(`正在准备播放：${option.label}`);
       const status = await invoke<PlaybackStatus>("playback_status");
-      const plan = planAbSwitch(activeAudioRef.current, option, status.position_us, status.available);
+      const plan = planAbSwitch(activeAudioRef.current, option, status.position_us, status.available, restart);
       const position = plan.positionUs;
       await invoke("play_ab_source", {
         path: option.path,
@@ -1505,11 +1513,11 @@ function App() {
   }
 
   async function playPreview() {
-    await switchAbSource("preview");
+    await switchAbSource("preview", true);
   }
 
   async function playSource() {
-    await switchAbSource("original");
+    await switchAbSource("original", true);
   }
 
   const seekAnalysis = useCallback(async (position: number) => {
@@ -1686,6 +1694,8 @@ function App() {
     setSeparationRunning(true);
     setSeparationStage("validating");
     setSeparationFraction(0);
+    setLayout((current) => ({ ...current, view: "analysis" }));
+    setError(null);
     setNotice("正在校验分离组件");
     try {
       const status = await invoke<SeparatorComponentStatus>("separator_component_status", { directory: separatorDirectory });
@@ -1831,6 +1841,8 @@ function App() {
     separatorCancelRequestedRef.current = false;
     setSeparationCancelling(false);
     setRoutingRunning(true);
+    setLayout((current) => ({ ...current, view: "analysis" }));
+    setError(null);
     setNotice(`正在生成路由试听：${routingMode}`);
     try {
       const base = await join(result?.result.output_dir ?? request.output, "routing", routingMode);

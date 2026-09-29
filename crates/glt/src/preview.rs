@@ -271,11 +271,14 @@ impl PlaybackBackend for RodioBackend {
     }
 
     fn seek(&mut self, position: std::time::Duration) -> Result<(), PlaybackError> {
-        if position.is_zero() {
-            self.seek_offset = std::time::Duration::ZERO;
-            return Ok(());
-        }
-        if self.player.try_seek(position).is_ok() {
+        // Decoder seek(0) is unreliable for some formats, but returning success
+        // without rewinding leaves the transport's restart button ineffective.
+        // A fresh player/source also resets the position tracker after EOF.
+        if !position.is_zero()
+            && self.seek_offset.is_zero()
+            && !self.player.empty()
+            && self.player.try_seek(position).is_ok()
+        {
             self.seek_offset = std::time::Duration::ZERO;
             return Ok(());
         }
@@ -284,11 +287,21 @@ impl PlaybackBackend for RodioBackend {
             File::open(&self.path).map_err(|error| PlaybackError::Decode(error.to_string()))?;
         let source = Decoder::try_from(BufReader::new(file))
             .map_err(|error| PlaybackError::Decode(error.to_string()))?;
+        let was_paused = self.player.is_paused();
+        let replacement = Player::connect_new(self._device.mixer());
+        replacement.pause();
+        replacement.set_volume(self.volume);
+        if position.is_zero() {
+            replacement.append(source);
+        } else {
+            replacement.append(source.skip_duration(position));
+        }
         self.player.stop();
-        self.player.set_volume(self.volume);
-        self.player.append(source.skip_duration(position));
-        self.player.pause();
+        self.player = replacement;
         self.seek_offset = position;
+        if !was_paused {
+            self.player.play();
+        }
         Ok(())
     }
 
@@ -513,5 +526,68 @@ mod tests {
             error <= std::time::Duration::from_millis(50),
             "playback position error was {error:?}"
         );
+    }
+    #[test]
+    fn real_zero_seek_rewinds_and_preserves_pause_when_device_is_available() {
+        use std::time::Duration;
+        let path = std::env::temp_dir().join(format!(
+            "glt-zero-seek-{}-{}.wav",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sample_rate = 44_100_u32;
+        let data_bytes = sample_rate * 2;
+        let mut file = File::create(&path).unwrap();
+        file.write_all(b"RIFF").unwrap();
+        file.write_all(&(36 + data_bytes).to_le_bytes()).unwrap();
+        file.write_all(b"WAVEfmt ").unwrap();
+        file.write_all(&16_u32.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&sample_rate.to_le_bytes()).unwrap();
+        file.write_all(&(sample_rate * 2).to_le_bytes()).unwrap();
+        file.write_all(&2_u16.to_le_bytes()).unwrap();
+        file.write_all(&16_u16.to_le_bytes()).unwrap();
+        file.write_all(b"data").unwrap();
+        file.write_all(&data_bytes.to_le_bytes()).unwrap();
+        file.write_all(&vec![0_u8; data_bytes as usize]).unwrap();
+        drop(file);
+        let mut playback = PlaybackService::open_wav(path.clone());
+        if playback.error().is_some() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        playback.set_volume(0.0).unwrap();
+        playback.play().unwrap();
+        std::thread::sleep(Duration::from_millis(180));
+        assert!(playback.position() > Duration::from_millis(100));
+        playback.seek(Duration::ZERO).unwrap();
+        assert!(!playback.is_paused());
+        assert!(playback.position() < Duration::from_millis(50));
+        playback.pause().unwrap();
+        playback.seek(Duration::from_millis(400)).unwrap();
+        playback.seek(Duration::ZERO).unwrap();
+        assert!(playback.is_paused());
+        std::thread::sleep(Duration::from_millis(70));
+        assert!(playback.position() < Duration::from_millis(20));
+        playback.play().unwrap();
+        std::thread::sleep(Duration::from_millis(70));
+        assert!(playback.position() > Duration::from_millis(30));
+        playback.seek(Duration::from_millis(950)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !playback.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(playback.is_finished());
+        playback.seek(Duration::from_millis(400)).unwrap();
+        assert!(!playback.is_finished());
+        assert!(!playback.is_paused());
+        assert!(playback.position() >= Duration::from_millis(400));
+        assert!(playback.position() < Duration::from_millis(500));
+        playback.stop().unwrap();
+        let _ = std::fs::remove_file(path);
     }
 }
